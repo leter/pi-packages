@@ -1,6 +1,7 @@
 import {
   type HerdrDeliveryRequest,
   type HerdrDeliveryResult,
+  type HerdrEchoVerificationOptions,
   type ExpectedHerdrTarget,
   hasDeliveryEcho,
 } from "./delivery.js";
@@ -168,8 +169,12 @@ export class HerdrAdapter {
     });
   }
 
-  async deliverAndVerify(request: HerdrDeliveryRequest): Promise<HerdrDeliveryResult> {
+  async deliverAndVerify(
+    request: HerdrDeliveryRequest,
+    echoOptions: HerdrEchoVerificationOptions = { echoWindowMs: 0 },
+  ): Promise<HerdrDeliveryResult> {
     validateDeliveryRequest(request);
+    validateEchoOptions(echoOptions);
     let resolved: ResolvedHerdrTarget | undefined;
     try {
       resolved = await this.#resolveTerminal(request.target.terminalId);
@@ -212,24 +217,33 @@ export class HerdrAdapter {
       };
     }
 
-    let echoTarget: ResolvedHerdrTarget | undefined;
-    let echo: HerdrPaneRead;
-    try {
-      echoTarget = await this.#resolveTerminal(request.target.terminalId);
-      if (!echoTarget) throw new HerdrTargetLostError("target disappeared before echo verification");
-      echo = await this.#readTail(echoTarget.pane.paneId, 200);
-    } catch (error) {
-      return {
-        status: "ambiguous",
-        reason: "echo-read-failed",
-        pane: resolved.pane,
-        detail: errorMessage(error),
-      };
+    const echoDeadline = Date.now() + echoOptions.echoWindowMs;
+    const echoPollMs = echoOptions.echoPollMs ?? 100;
+    let lastEchoTarget = resolved;
+    while (true) {
+      let echoTarget: ResolvedHerdrTarget | undefined;
+      let echo: HerdrPaneRead;
+      try {
+        echoTarget = await this.#resolveTerminal(request.target.terminalId);
+        if (!echoTarget) throw new HerdrTargetLostError("target disappeared before echo verification");
+        lastEchoTarget = echoTarget;
+        echo = await this.#readTail(echoTarget.pane.paneId, 200);
+      } catch (error) {
+        return {
+          status: "ambiguous",
+          reason: "echo-read-failed",
+          pane: resolved.pane,
+          detail: errorMessage(error),
+        };
+      }
+      if (hasDeliveryEcho(echo.text, request.correlationId)) {
+        return { status: "verified", pane: echoTarget.pane, echo };
+      }
+      const remainingMs = echoDeadline - Date.now();
+      if (remainingMs <= 0) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(echoPollMs, remainingMs)));
     }
-    if (!hasDeliveryEcho(echo.text, request.correlationId)) {
-      return { status: "ambiguous", reason: "echo-not-found", pane: echoTarget.pane };
-    }
-    return { status: "verified", pane: echoTarget.pane, echo };
+    return { status: "ambiguous", reason: "echo-not-found", pane: lastEchoTarget.pane };
   }
 
   close(): void {
@@ -336,6 +350,18 @@ function validateDeliveryRequest(request: HerdrDeliveryRequest): void {
   if (!request.target.terminalId) throw new TypeError("delivery terminalId must not be empty");
   if (!request.correlationId) throw new TypeError("delivery correlationId must not be empty");
   if (!request.text) throw new TypeError("delivery text must not be empty");
+}
+
+function validateEchoOptions(options: HerdrEchoVerificationOptions): void {
+  if (!Number.isSafeInteger(options.echoWindowMs) || options.echoWindowMs < 0 || options.echoWindowMs > 300_000) {
+    throw new RangeError("echoWindowMs must be an integer from 0 to 300000");
+  }
+  if (
+    options.echoPollMs !== undefined &&
+    (!Number.isSafeInteger(options.echoPollMs) || options.echoPollMs < 1 || options.echoPollMs > 5_000)
+  ) {
+    throw new RangeError("echoPollMs must be an integer from 1 to 5000");
+  }
 }
 
 function validateResolvedTarget(

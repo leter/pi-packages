@@ -115,6 +115,29 @@ describe("Herdr atomic delivery and bounded reads", () => {
     adapter.close();
   });
 
+  it("boundedly re-reads within the startup window before declaring the echo missing", async () => {
+    let reads = 0;
+    const fake = await fakeServer((request, connection) => {
+      if (request.method === "session.snapshot") connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() });
+      else if (request.method === "pane.get") connection.sendResponse(request.id, { type: "pane_info", pane: targetPane });
+      else if (request.method === "pane.send_input") connection.sendResponse(request.id, { type: "ok" });
+      else if (request.method === "pane.read") {
+        reads += 1;
+        connection.sendResponse(request.id, {
+          type: "pane_read",
+          read: read(reads < 3 ? "render pending" : `│ ID: ${delivery.correlationId}`, false),
+        });
+      }
+    });
+    const adapter = await HerdrAdapter.connect({ socketPath: fake.socketPath, workspaceId: "w-current" });
+
+    await expect(
+      adapter.deliverAndVerify(delivery, { echoWindowMs: 100, echoPollMs: 1 }),
+    ).resolves.toEqual(expect.objectContaining({ status: "verified" }));
+    expect(reads).toBe(3);
+    adapter.close();
+  });
+
   it("does not trust truncated:false as proof that a missing echo means non-delivery", async () => {
     const fake = await fakeServer((request, connection) => {
       if (request.method === "session.snapshot") connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() });
@@ -241,10 +264,11 @@ async function waitFor(check: () => boolean, timeoutMs = 500): Promise<void> {
 }
 
 describe("hasDeliveryEcho", () => {
-  it("requires both the exact dispatch header and correlation ID", () => {
+  it("accepts a uniquely bounded correlation line with TUI framing", () => {
     expect(hasDeliveryEcho("[HERDR DISPATCH]\nID: hd_1", "hd_1")).toBe(true);
     expect(hasDeliveryEcho("[HERDR DISPATCH]", "hd_1")).toBe(false);
-    expect(hasDeliveryEcho("ID: hd_1", "hd_1")).toBe(false);
+    expect(hasDeliveryEcho("ID: hd_1", "hd_1")).toBe(true);
+    expect(hasDeliveryEcho("│ prompt border │ ID: hd_1 │", "hd_1")).toBe(true);
     expect(hasDeliveryEcho("[HERDR DISPATCH]\nID: hd_other", "hd_1")).toBe(false);
     expect(hasDeliveryEcho("[HERDR DISPATCH]\nID: hd_10", "hd_1")).toBe(false);
   });

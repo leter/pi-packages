@@ -13,6 +13,11 @@ export interface HerdrDeliveryRequest {
   text: string;
 }
 
+export interface HerdrEchoVerificationOptions {
+  echoWindowMs: number;
+  echoPollMs?: number;
+}
+
 export type HerdrDeliveryResult =
   | { status: "verified"; pane: HerdrPane; echo: HerdrPaneRead }
   | {
@@ -33,6 +38,14 @@ export type HerdrDeliveryResult =
     };
 
 export function hasDeliveryEcho(text: string, correlationId: string): boolean {
-  const lines = text.split(/\r?\n/u).map((line) => line.trim());
-  return lines.includes("[HERDR DISPATCH]") && lines.includes(`ID: ${correlationId}`);
+  const marker = `ID: ${correlationId}`;
+  return text.split(/\r?\n/u).some((line) => {
+    let index = line.indexOf(marker);
+    while (index >= 0) {
+      const following = line[index + marker.length];
+      if (following === undefined || !/[A-Za-z0-9_-]/u.test(following)) return true;
+      index = line.indexOf(marker, index + 1);
+    }
+    return false;
+  });
 }
