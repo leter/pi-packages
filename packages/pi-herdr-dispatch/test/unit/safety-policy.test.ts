@@ -92,6 +92,9 @@ describe("Herdr shell safety policy", () => {
     "/usr/local/bin/herdr pane run w1:p2 task",
     "command herdr pane run w1:p2 task",
     "env TRACE=1 herdr pane run w1:p2 task",
+    "env -u TRACE herdr pane run w1:p2 task",
+    "sudo -u root herdr pane run w1:p2 task",
+    "sudo --user root herdr pane run w1:p2 task",
     "herdr pane list; herdr pane run w1:p2 task",
     "herdr pane list | herdr pane run w1:p2 task",
   ])("finds Herdr invocations through direct shell composition: %s", (command) => {

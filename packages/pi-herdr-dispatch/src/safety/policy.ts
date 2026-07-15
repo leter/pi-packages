@@ -134,8 +134,8 @@ function operationConflictsWithLease(
   }
 
   if (bashEffect?.kind === "read-only") return false;
-  if (bashEffect?.kind === "mutating") {
-    return bashEffect.paths.some((path) => pathIsInside(root, path));
+  if (bashEffect?.kind === "mutating" || bashEffect?.kind === "unknown") {
+    if (bashEffect.paths.some((path) => pathIsInside(root, path))) return true;
   }
 
   return pathIsInside(root, resolve(operation.cwd)) || operation.command.includes(root);

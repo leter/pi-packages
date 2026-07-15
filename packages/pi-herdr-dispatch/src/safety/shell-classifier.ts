@@ -15,6 +15,28 @@ type Token =
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s;
 const REDIRECTION = /^\d*(?:>{1,2}|<{1,2}|<>|>&|<&)/;
 const WRAPPERS = new Set(["command", "env", "exec", "nohup", "sudo"]);
+const ENV_OPTIONS_WITH_VALUE = new Set(["-C", "--chdir", "-S", "--split-string", "-u", "--unset"]);
+const SUDO_OPTIONS_WITH_VALUE = new Set([
+  "-C",
+  "-D",
+  "-g",
+  "-h",
+  "-p",
+  "-r",
+  "-R",
+  "-T",
+  "-t",
+  "-u",
+  "--chdir",
+  "--close-from",
+  "--group",
+  "--host",
+  "--other-user",
+  "--prompt",
+  "--role",
+  "--type",
+  "--user",
+]);
 
 export function classifyShellInvocations(command: string): ShellClassification {
   const tokens = lexShell(command);
@@ -68,10 +90,15 @@ function resolveInvocation(words: readonly string[]): ShellInvocation | undefine
           continue;
         }
         if (word.startsWith("-")) {
-          index += 1;
+          index += ENV_OPTIONS_WITH_VALUE.has(word) ? 2 : 1;
           continue;
         }
         break;
+      }
+    } else if (wrapper === "sudo") {
+      while (index < words.length && words[index]?.startsWith("-")) {
+        const option = words[index]!;
+        index += SUDO_OPTIONS_WITH_VALUE.has(option) ? 2 : 1;
       }
     } else {
       while (words[index]?.startsWith("-")) index += 1;

@@ -86,12 +86,15 @@ describe("Worktree Write Lease guard", () => {
     ).toBe("deny");
   });
 
-  it("blocks an explicit leased path from a different cwd", () => {
+  it.each([
+    "rm -f /repo/worktree/generated.txt",
+    "git -C /repo/worktree add src/file.ts",
+    "cd /repo/worktree && touch generated.txt",
+    "cd ../worktree && echo x > generated.txt",
+    "cd ../worktree && unknown-build-command",
+  ])("blocks mutation reached from a different cwd: %s", (command) => {
     expect(
-      guardWorktreeOperation(
-        { kind: "bash", cwd: "/tmp", command: "rm -f /repo/worktree/generated.txt" },
-        context(),
-      ).action,
+      guardWorktreeOperation({ kind: "bash", cwd: "/repo/other", command }, context()).action,
     ).toBe("deny");
   });
 
