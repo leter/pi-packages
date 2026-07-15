@@ -120,6 +120,12 @@ async function harness(
   const registry = await openDispatchRegistry(join(root, "registry.sqlite"));
   registries.push(registry);
   registry.confirmDeliveryIntent(intent(intentOverrides));
+  registry.recordAudit(
+    "hd_monitor",
+    "worktree-before-snapshot",
+    { fingerprint: "before", entries: [] },
+    1_000,
+  );
   if (lifecycle === "active") registry.markActive("hd_monitor", 1_000);
   const herdr = new FakeMonitorHerdr();
   const clock = new FakeMonitorClock(1_000);
@@ -138,7 +144,11 @@ async function harness(
     clock,
     onSettled,
     onAttention,
-    captureWorktreeSnapshot: async () => ({ fingerprint: "after", entries: [" M src/a.ts"] }),
+    captureWorktreeSnapshot: async () => ({
+      fingerprint: "after",
+      entries: [" M src/a.ts"],
+      diffStat: "1 file changed, 1 insertion(+)",
+    }),
     resumedAfterOriginGap,
   });
   return { registry, herdr, clock, monitor, onSettled, onAttention };

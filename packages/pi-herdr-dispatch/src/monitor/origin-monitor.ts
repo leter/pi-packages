@@ -286,9 +286,11 @@ export class OriginMonitor {
         );
       const conclusion = overlappingWriter
         ? "inconclusive-overlapping-writer"
-        : before?.fingerprint === after.fingerprint
-          ? "unchanged"
-          : "observed-changes";
+        : !before
+          ? "inconclusive-missing-baseline"
+          : before.fingerprint === after.fingerprint
+            ? "unchanged"
+            : "observed-changes";
       this.#registry.recordAudit(
         dispatch.id,
         "worktree-after-snapshot",
@@ -297,6 +299,7 @@ export class OriginMonitor {
           beforeFingerprint: before?.fingerprint,
           afterFingerprint: after.fingerprint,
           changedEntries: after.entries,
+          diffStat: after.diffStat,
           attribution: "not-attributed-to-target",
         },
         this.#clock.now(),
@@ -458,7 +461,11 @@ function parseWorktreeSnapshot(value: unknown): WorktreeSnapshot | undefined {
   const candidate = value as Record<string, unknown>;
   if (typeof candidate.fingerprint !== "string" || !Array.isArray(candidate.entries)) return undefined;
   if (!candidate.entries.every((entry) => typeof entry === "string")) return undefined;
-  return { fingerprint: candidate.fingerprint, entries: candidate.entries as string[] };
+  return {
+    fingerprint: candidate.fingerprint,
+    entries: candidate.entries as string[],
+    diffStat: typeof candidate.diffStat === "string" ? candidate.diffStat : "",
+  };
 }
 
 function required(value: string, label: string): string {

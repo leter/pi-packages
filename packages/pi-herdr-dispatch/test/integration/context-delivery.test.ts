@@ -181,6 +181,9 @@ describe("Origin active-branch context delivery", () => {
     expect(context.sends).toBe(1);
     expect(context.getBranch().some((entry) => entry.type === "custom_message")).toBe(false);
     expect(registry.getContextDelivery("hd_context")?.deliveredAt).toBeUndefined();
+    context.branches.get("a")!.push(entry("unrelated-turn-entry", "root-a", "custom"));
+    expect(delivery.deliver("hd_context", context)).toBe("pending-branch-change");
+    expect(context.sends).toBe(1);
 
     context.deferAppend = false;
     context.flushNextTurn();
@@ -206,17 +209,20 @@ describe("Origin active-branch context delivery", () => {
     ).toHaveLength(1);
   });
 
-  it("leaves delivery pending on branch change and redirects to the new active branch", async () => {
+  it("redirects the queued nextTurn result when the active branch changes before persistence", async () => {
     const registry = await settledRegistry();
     const delivery = new OriginContextDelivery(registry, () => 2_000);
     const context = new FakeOriginContext();
-    context.switchAfterAppend = true;
+    context.deferAppend = true;
 
     expect(delivery.deliver("hd_context", context)).toBe("pending-branch-change");
     expect(registry.getContextDelivery("hd_context")?.deliveredAt).toBeUndefined();
+    context.active = "b";
+    context.deferAppend = false;
+    context.flushNextTurn();
 
     expect(delivery.deliver("hd_context", context)).toBe("delivered");
-    expect(context.sends).toBe(2);
+    expect(context.sends).toBe(1);
     expect(
       context
         .getBranch()

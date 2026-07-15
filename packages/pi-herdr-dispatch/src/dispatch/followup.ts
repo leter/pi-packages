@@ -88,19 +88,28 @@ export class DispatchFollowupService {
     this.#proposals.delete(proposal.nonce);
     const current = this.#registry.getDispatch(proposal.dispatchId);
     if (!current || current.lifecycle === "settled") throw new Error("Dispatch is already settled");
-    const result = await this.#herdr.deliverAndVerify(
-      {
-        target: {
-          terminalId: current.targetTerminalId,
-          expectedAgent: current.targetAgentLabel,
-          expectedCwd: current.targetCwd,
-          allowedStatuses: ["idle", "done", "working", "blocked", "unknown"],
+    let result: HerdrDeliveryResult;
+    try {
+      result = await this.#herdr.deliverAndVerify(
+        {
+          target: {
+            terminalId: current.targetTerminalId,
+            expectedAgent: current.targetAgentLabel,
+            expectedCwd: current.targetCwd,
+            allowedStatuses: ["idle", "done", "working", "blocked", "unknown"],
+          },
+          correlationId: proposal.nonce,
+          text: proposal.payload,
         },
-        correlationId: proposal.nonce,
-        text: proposal.payload,
-      },
-      { echoWindowMs: this.#config.startupWindowMs },
-    );
+        { echoWindowMs: this.#config.startupWindowMs },
+      );
+    } catch (error) {
+      result = {
+        status: "ambiguous",
+        reason: "response-unknown",
+        detail: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+      };
+    }
     this.#registry.recordAudit(
       current.id,
       `${proposal.kind}-request-${result.status}`,

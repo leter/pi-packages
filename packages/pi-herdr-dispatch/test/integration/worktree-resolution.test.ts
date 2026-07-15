@@ -30,12 +30,28 @@ describe("write worktree identity", () => {
     const root = await mkdtemp(join(tmpdir(), "pi-herdr-worktree-"));
     roots.push(root);
     await execFileAsync("git", ["init", "--quiet", root]);
+    await writeFile(join(root, "tracked.txt"), "before\n", "utf8");
+    await execFileAsync("git", ["-C", root, "add", "tracked.txt"]);
+    await execFileAsync("git", [
+      "-C",
+      root,
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.invalid",
+      "commit",
+      "--quiet",
+      "-m",
+      "fixture",
+    ]);
     const before = await captureWorktreeSnapshot(root);
+    await writeFile(join(root, "tracked.txt"), "after\n", "utf8");
     await writeFile(join(root, "new.txt"), "change\n", "utf8");
     const after = await captureWorktreeSnapshot(root);
 
     expect(before.entries).toEqual([]);
-    expect(after.entries).toEqual(["?? new.txt"]);
+    expect(after.entries).toEqual([" M tracked.txt", "?? new.txt"]);
+    expect(after.diffStat).toContain("tracked.txt");
     expect(after.fingerprint).not.toBe(before.fingerprint);
   });
 

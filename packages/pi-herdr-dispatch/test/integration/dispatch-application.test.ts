@@ -122,7 +122,7 @@ async function harness() {
     now: () => now,
     nextCorrelationId: () => `hd_test_${++sequence}`,
     resolveWorktree: async () => "/canonical/worktree",
-    captureWorktreeSnapshot: async () => ({ fingerprint: "before", entries: [] }),
+    captureWorktreeSnapshot: async () => ({ fingerprint: "before", entries: [], diffStat: "" }),
   });
   return {
     application,

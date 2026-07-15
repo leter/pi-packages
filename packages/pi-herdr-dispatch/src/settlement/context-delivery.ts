@@ -22,7 +22,7 @@ export interface OriginContextPort {
 export class OriginContextDelivery {
   readonly #registry: DispatchRegistry;
   readonly #now: () => number;
-  readonly #enqueuedAtLeaf = new Map<string, string>();
+  readonly #enqueued = new Set<string>();
 
   constructor(registry: DispatchRegistry, now: () => number = Date.now) {
     this.#registry = registry;
@@ -54,8 +54,8 @@ export class OriginContextDelivery {
     });
 
     let entry = findResultEntry(context.getBranch(), dispatchId);
-    if (!entry && this.#enqueuedAtLeaf.get(dispatchId) !== claimLeafId) {
-      this.#enqueuedAtLeaf.set(dispatchId, claimLeafId);
+    if (!entry && !this.#enqueued.has(dispatchId)) {
+      this.#enqueued.add(dispatchId);
       try {
         context.sendMessage(
           {
@@ -68,14 +68,14 @@ export class OriginContextDelivery {
         );
       } catch (error) {
         entry = findResultEntry(context.getBranch(), dispatchId);
-        if (!entry) this.#enqueuedAtLeaf.delete(dispatchId);
+        if (!entry) this.#enqueued.delete(dispatchId);
         throw error;
       }
       entry = findResultEntry(context.getBranch(), dispatchId);
     }
     if (!entry) return "pending-branch-change";
 
-    this.#enqueuedAtLeaf.delete(dispatchId);
+    this.#enqueued.delete(dispatchId);
     this.#registry.completeContextDelivery({
       dispatchId,
       originSessionId: dispatch.originSessionId,
