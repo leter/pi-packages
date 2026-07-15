@@ -4,6 +4,9 @@ import { DatabaseSync, type StatementSync } from "node:sqlite";
 
 import { migrateRegistry } from "./migrations.js";
 import type {
+  AttentionCondition,
+  AttentionRecord,
+  AuditEventRecord,
   ConfirmDeliveryIntent,
   DispatchLifecycle,
   DispatchMode,
@@ -231,6 +234,106 @@ export class DispatchRegistry {
     );
   }
 
+  markActive(dispatchId: string, activeAt: number): "changed" | "unchanged" {
+    validateTimestamp(activeAt, "activeAt");
+    return this.#mutate("mark dispatch active", () => {
+      const result = this.#database
+        .prepare(
+          `UPDATE dispatches
+           SET lifecycle = 'active', active_at = ?, updated_at = ?
+           WHERE id = ? AND lifecycle = 'delivering'`,
+        )
+        .run(activeAt, activeAt, dispatchId);
+      if (changes(result.changes) === 1) {
+        this.#appendAudit(dispatchId, "dispatch-active", {}, activeAt);
+        return "changed";
+      }
+
+      const lifecycle = this.#dispatchLifecycle(dispatchId);
+      if (lifecycle === "active") return "unchanged";
+      throw new RegistryStateError(`Dispatch ${dispatchId} cannot become active from ${lifecycle}`);
+    });
+  }
+
+  addAttention(
+    dispatchId: string,
+    condition: AttentionCondition,
+    details: unknown,
+    addedAt: number,
+  ): "added" | "unchanged" {
+    validateTimestamp(addedAt, "addedAt");
+    const detailsJson = serializeJson(details, "attention details");
+    return this.#mutate("add dispatch attention", () => {
+      this.#assertUnsettled(dispatchId);
+      const result = this.#database
+        .prepare(
+          `INSERT OR IGNORE INTO dispatch_attention(
+            dispatch_id, condition, details_json, added_at
+          ) VALUES (?, ?, ?, ?)`,
+        )
+        .run(dispatchId, condition, detailsJson, addedAt);
+      if (changes(result.changes) === 0) return "unchanged";
+      this.#appendAudit(dispatchId, "attention-added", { condition, details }, addedAt);
+      return "added";
+    });
+  }
+
+  clearAttention(
+    dispatchId: string,
+    condition: AttentionCondition,
+    clearedAt: number,
+  ): "cleared" | "unchanged" {
+    validateTimestamp(clearedAt, "clearedAt");
+    return this.#mutate("clear dispatch attention", () => {
+      this.#assertUnsettled(dispatchId);
+      const result = this.#database
+        .prepare("DELETE FROM dispatch_attention WHERE dispatch_id = ? AND condition = ?")
+        .run(dispatchId, condition);
+      if (changes(result.changes) === 0) return "unchanged";
+      this.#appendAudit(dispatchId, "attention-cleared", { condition }, clearedAt);
+      return "cleared";
+    });
+  }
+
+  listAttention(dispatchId: string): readonly AttentionRecord[] {
+    return this.#read("list dispatch attention", () =>
+      (this.#database
+        .prepare(
+          `SELECT condition, details_json, added_at
+           FROM dispatch_attention WHERE dispatch_id = ? ORDER BY added_at, condition`,
+        )
+        .all(dispatchId) as unknown as AttentionRow[]).map((row) => ({
+        condition: row.condition,
+        details: parseJson(row.details_json, "attention details"),
+        addedAt: row.added_at,
+      })),
+    );
+  }
+
+  listAuditEvents(dispatchId?: string): readonly AuditEventRecord[] {
+    return this.#read("list audit events", () => {
+      const rows = (dispatchId
+        ? this.#database
+            .prepare(
+              `SELECT id, dispatch_id, event_type, data_json, created_at
+               FROM audit_events WHERE dispatch_id = ? ORDER BY id`,
+            )
+            .all(dispatchId)
+        : this.#database
+            .prepare(
+              "SELECT id, dispatch_id, event_type, data_json, created_at FROM audit_events ORDER BY id",
+            )
+            .all()) as unknown as AuditRow[];
+      return rows.map((row) => ({
+        id: row.id,
+        ...(row.dispatch_id ? { dispatchId: row.dispatch_id } : {}),
+        eventType: row.event_type,
+        data: parseJson(row.data_json, "audit data"),
+        createdAt: row.created_at,
+      }));
+    });
+  }
+
   close(): void {
     if (this.#closed) return;
     this.#database.close();
@@ -264,6 +367,19 @@ export class DispatchRegistry {
         );
       }
     }
+  }
+
+  #dispatchLifecycle(dispatchId: string): DispatchLifecycle {
+    const row = this.#database
+      .prepare("SELECT lifecycle FROM dispatches WHERE id = ?")
+      .get(dispatchId) as { lifecycle: DispatchLifecycle } | undefined;
+    if (!row) throw new RegistryStateError(`Dispatch ${dispatchId} does not exist`);
+    return row.lifecycle;
+  }
+
+  #assertUnsettled(dispatchId: string): void {
+    const lifecycle = this.#dispatchLifecycle(dispatchId);
+    if (lifecycle === "settled") throw new RegistryStateError(`Dispatch ${dispatchId} is settled`);
   }
 
   #appendAudit(
@@ -397,6 +513,20 @@ interface WriteLeaseRow {
   acquired_at: number;
 }
 
+interface AttentionRow {
+  condition: AttentionCondition;
+  details_json: string;
+  added_at: number;
+}
+
+interface AuditRow {
+  id: number;
+  dispatch_id: string | null;
+  event_type: string;
+  data_json: string;
+  created_at: number;
+}
+
 function mapDispatch(row: DispatchRow): StoredDispatch {
   const constraints = JSON.parse(row.constraints_json) as unknown;
   if (!Array.isArray(constraints) || !constraints.every((item) => typeof item === "string")) {
@@ -463,6 +593,32 @@ function validateIntent(intent: ConfirmDeliveryIntent): void {
       throw new RegistryStateError(`${name} must be a positive integer`);
     }
   }
+}
+
+function validateTimestamp(value: number, name: string): void {
+  if (!Number.isSafeInteger(value)) throw new RegistryStateError(`${name} must be a safe integer`);
+}
+
+function serializeJson(value: unknown, name: string): string {
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) throw new Error("undefined is not JSON");
+    return serialized;
+  } catch (error) {
+    throw new RegistryStateError(`${name} must be JSON-serializable: ${String(error)}`);
+  }
+}
+
+function parseJson(value: string, name: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch (error) {
+    throw new Error(`Registry ${name} is invalid: ${String(error)}`);
+  }
+}
+
+function changes(value: number | bigint): number {
+  return typeof value === "bigint" ? Number(value) : value;
 }
 
 function count(statement: StatementSync, ...params: (string | number)[]): number {

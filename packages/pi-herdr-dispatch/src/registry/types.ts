@@ -1,6 +1,16 @@
 export type DispatchMode = "non-mutating" | "write";
 export type DispatchLifecycle = "delivering" | "active" | "settled";
 export type FinalOutcome = "done" | "blocked" | "failed" | "cancelled";
+export type AttentionCondition =
+  | "delivery-unverified"
+  | "unacknowledged"
+  | "overdue"
+  | "blocked-runtime"
+  | "monitoring-paused"
+  | "malformed-result"
+  | "result-missing"
+  | "target-lost"
+  | "target-moved";
 
 export interface ConfirmDeliveryIntent {
   id: string;
@@ -62,4 +72,18 @@ export interface WriteLeaseRecord {
   dispatchId: string;
   targetTerminalId: string;
   acquiredAt: number;
+}
+
+export interface AttentionRecord {
+  condition: AttentionCondition;
+  details: unknown;
+  addedAt: number;
+}
+
+export interface AuditEventRecord {
+  id: number;
+  dispatchId?: string;
+  eventType: string;
+  data: unknown;
+  createdAt: number;
 }
