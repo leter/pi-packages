@@ -48,7 +48,7 @@ The Origin Session is identified by Pi's stable session ID (`ctx.sessionManager.
 
 The extension identifies its Herdr location from `HERDR_PANE_ID` / `HERDR_WORKSPACE_ID`, then resolves the pane through Herdr to obtain its terminal ID. A Dispatch Target is selected only from that workspace.
 
-A proposal displays the target's Agent label, terminal ID, pane ID, status, status evidence, workspace, and cwd/worktree. The terminal ID is the stable dispatch identity. Pane ID is a short-lived delivery route that must be re-resolved and revalidated immediately before use.
+A proposal displays the target's Agent label, terminal ID, pane ID, status, status evidence, workspace, and cwd/worktree. The terminal ID is the dispatch identity. A pane ID is a stable handle while that pane remains in place, but moving the pane assigns a new pane ID; the route must therefore be re-resolved and revalidated immediately before use. Herdr officially guarantees that closed pane and tab IDs are not reused, so a closed route cannot later retarget a different resource ([Herdr agent skill](https://herdr.dev/docs/agent-skill/)).
 
 A Git worktree is identified by the real path of `git rev-parse --show-toplevel`. Separate Git worktrees are separate lease subjects. Write dispatch is rejected outside a Git worktree.
 
@@ -56,7 +56,7 @@ A Git worktree is identified by the real path of `git rev-parse --show-toplevel`
 
 Herdr statuses are interpreted as follows:
 
-- `idle` and `done`: **idle-like** — eligible for a new dispatch when no Target Occupancy exists; after work they trigger result lookup and, without a valid result, `result-missing`.
+- `idle` and `done`: **idle-like** — both mean the Agent is no longer working. Officially, `idle` means waiting with its result considered seen, while `done` means completed with its result unseen ([Herdr agent skill](https://herdr.dev/docs/agent-skill/)). Either is eligible for a new dispatch when no Target Occupancy exists; after work either triggers result lookup and, without a valid result, `result-missing`.
 - `working`: execution acknowledgement/progress.
 - `blocked`: runtime attention only; it is not the final `blocked` Dispatch Outcome.
 - `unknown`: ineligible and never interpreted as completion.
@@ -143,9 +143,9 @@ The extension then performs final target revalidation and sends one socket reque
 }
 ```
 
-`pane.send_input` makes text plus Enter one Herdr operation; it does **not** make target resolution plus send atomic. A pane may still close, move, or be reused between final `pane.get` and input handling. This residual race is disclosed in the confirmation's advisory warning.
+`pane.send_input` makes text plus Enter one Herdr operation; it does **not** make target resolution plus send atomic. A pane may still close or move between final `pane.get` and input handling. Herdr guarantees that closed resource IDs are not reused, so a stale closed pane ID cannot retarget a later pane; a move still changes the pane ID and can make the route stale. The residual stale-route/ambiguous-response race is disclosed in the confirmation's advisory warning ([Herdr agent skill](https://herdr.dev/docs/agent-skill/)).
 
-The adapter listens for `pane.closed` and `pane.moved` during the confirmation/delivery window and aborts before send when either event is observed. After send, it re-resolves the target terminal and performs Delivery Echo Verification against `recent_unwrapped` output. Echo verification detects many misdeliveries but cannot undo input already delivered to the wrong process.
+The adapter listens for `pane.closed` and `pane.moved` during the confirmation/delivery window and aborts before send when either event is observed. After send, it re-resolves the target terminal and performs Delivery Echo Verification against `recent_unwrapped` output. Echo verification distinguishes many successful deliveries from stale-route failures, but absence of an echo still cannot prove that no input was accepted.
 
 ### Normal completion of delivery
 
@@ -421,12 +421,16 @@ Defaults:
 
 Invalid configuration disables state-changing functionality. `catchUpLines` and inspection bounds are requests to Herdr, not guarantees about retained history; a shorter returned tail is accepted and absence never proves non-delivery.
 
+## Authoritative Herdr semantics
+
+The official [Herdr agent skill](https://herdr.dev/docs/agent-skill/) is an implementation reference alongside the installed CLI/schema. It explicitly guarantees that closed pane/tab IDs are not reused and defines `done` as completed with an unseen result, while `idle` is waiting with the result considered seen. On this machine the same skill is globally available to Pi at `~/.agents/skills/herdr/SKILL.md`.
+
 ## Required compatibility checks before implementation planning
 
 The design no longer depends on the answers, but a live spike must record installed Herdr 0.7.3 behavior for:
 
 - terminal ID continuity across server restart/update;
-- pane-ID reuse after close and pane-ID changes after move;
+- pane-ID changes after move (closed-ID non-reuse is an official contract, not an open assumption);
 - `recent_unwrapped` depth and requested line-count behavior with pane history enabled;
 - exact accepted `pane.send_input.keys` spelling for `enter`;
 - whether `screen_detection_skipped` positively identifies integration authority;
@@ -457,7 +461,7 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 - atomic `pane.send_input` payload and fail-closed protocol mismatch;
 - crash before send, during send, after Herdr success, and before `active` commit;
 - resume of `delivering` with result present, echo present, or neither present;
-- pane close/move/reuse between final revalidation and send;
+- pane close/move between final revalidation and send, including conformance with the official closed-ID non-reuse guarantee;
 - globally unique Target Occupancy and Worktree Write Leases across Pi processes;
 - two Origins racing to acquire the same target/worktree;
 - result settlement racing an emergency manual resolution;
@@ -490,8 +494,8 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 - **C2:** removed revision cursors and revision-based acceptance; bounded tail catch-up plus correlation/source/schema matching.
 - **H1:** removed coordinator takeover entirely.
 - **H2:** removed `guarded` from V1; all target constraints are advisory.
-- **H3:** immediate same-connection route revalidation, close/move observation, post-send echo verification, and documented residual race.
-- **H4:** `done` is idle-like for eligibility, result-missing, and manual cancellation guidance.
+- **H3:** immediate same-connection route revalidation, close/move observation, post-send echo verification, and a narrowed residual race; Herdr's official closed-ID non-reuse guarantee removes the pane-ID-retargeting worst case.
+- **H4:** `done` is idle-like for eligibility, result-missing, and manual cancellation guidance, matching Herdr's official “completed, result unseen” semantics.
 - **H5:** raw output exclusion is settlement-specific; explicit inspection uses untrusted framing.
 
 ## Decisions recorded separately

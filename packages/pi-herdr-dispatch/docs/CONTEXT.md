@@ -17,7 +17,7 @@ The specific Pi session that confirms a dispatch, monitors it while running, and
 _Avoid_: current Pi, any Pi, coordinator
 
 **Eligible Agent**:
-An Existing Agent in the Workspace Scope whose runtime status is idle-like, which includes Herdr `idle` and `done`, and which has no Target Occupancy.
+An Existing Agent in the Workspace Scope whose runtime status is idle-like and which has no Target Occupancy. Herdr `idle` means waiting with the result considered seen; `done` means completed with the result unseen, so both are idle-like.
 _Avoid_: self, working Agent, blocked Agent, unknown pane
 
 **Dispatch Target**:
