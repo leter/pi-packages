@@ -1,58 +1,99 @@
 # pi-herdr-dispatch Design
 
-Status: draft, awaiting final confirmation. This document describes the V1 design only; it is not an implementation plan approval.
+Status: revised after architecture review; awaiting follow-up review before implementation planning.
 
 ## Purpose
 
-`pi-herdr-dispatch` is a global Pi package for safely coordinating coding agents that already exist on one local Herdr server. Pi may inspect agent metadata, propose a task for an idle agent, and monitor confirmed work, but it cannot create panes, agents, workspaces, or worktrees.
+`pi-herdr-dispatch` is a global Pi package for dispatching confirmed work to coding agents that already exist in the Origin Pi's current workspace on one local Herdr server. It may inspect Agent metadata, propose work for an idle-like Agent, and monitor work confirmed by its Origin Session. It cannot create panes, Agents, workspaces, or worktrees.
 
 ## V1 boundaries
 
 - Local Herdr server/socket only; no SSH remote sessions.
-- Existing agents only; the Origin Pi cannot dispatch to itself.
+- Current Herdr workspace only; no cross-workspace dispatch.
+- Existing Agents only; the Origin Pi cannot dispatch to itself.
 - One dispatch per proposal and confirmation.
+- Every target-side safety instruction is advisory in V1.
 - No model wait tool and no autonomous continuation when a result arrives.
 - No recursive delegation by a Dispatch Target.
-- State-changing operations are TUI-only. Print, JSON, and RPC modes are read-only.
-- Default limits: four Active Dispatches per workspace and eight globally.
+- Dispatch, reply, cancellation, and manual resolution are TUI-only. Print, JSON, and RPC modes are read-only.
+- Only the TUI Origin Session monitors and settles the dispatches it confirmed. There is no coordinator election or takeover.
+- Default limits: four Active Dispatches per target workspace and eight globally.
+
+## Explicit V1 scope cuts
+
+The following are intentionally deferred:
+
+- coordinator lease, fencing, and monitoring takeover;
+- revision-cursor Recovery Scan;
+- cross-workspace dispatch and model access to foreign Agent metadata;
+- automatic forced cancellation (`Ctrl+C` must be performed by the user in the target pane);
+- target-side `guarded` enforcement claims;
+- Mutation Violation attribution;
+- model-callable reply and cancellation tools;
+- a custom interactive dispatch dashboard (V1 uses a text list plus commands).
+
+These cuts preserve the core confirmed-dispatch workflow while removing the least verifiable distributed-state behavior.
 
 ## Components
 
-1. **Pi extension** — commands, model tools, confirmation UI, dashboard, widget, result delivery, and local lease guard.
-2. **Herdr client** — connects to the local Unix socket, bootstraps from `session.snapshot`, subscribes to events, reads pane history, posts metadata/notifications, and sends messages atomically with `pane.send_input`.
-3. **Dispatch Registry** — SQLite in WAL mode, with transactions and unique constraints for coordinator and worktree leases.
-4. **Coordinator** — one Pi instance holds a 30-second lease renewed every 10 seconds. It monitors all local Active Dispatches; another Pi takes over after expiration.
-5. **Origin Session delivery** — settlement is global, but only the Origin Session claims the Sanitized Dispatch Result into model context. Claiming is idempotent and never starts a model turn.
+1. **Pi extension** — commands, model proposal tools, confirmation UI, status widget, Origin Session monitoring, result delivery, and a best-effort Pi-side lease guard.
+2. **Herdr adapter** — one local Unix-socket connection per monitoring Origin Session. It bootstraps from `session.snapshot`, subscribes to supported events, reads bounded pane tails, posts notifications/metadata, and delivers input with `pane.send_input`.
+3. **Dispatch Registry** — global SQLite storage in WAL mode, with transactions and unique constraints for target occupancy and worktree write leases.
+4. **Origin Monitor** — a TUI Pi session monitors only records whose persisted Origin Session ID equals its own session ID. Monitoring stops when that session is not running and resumes when the exact session resumes.
+5. **Lease Guard** — every Pi process loading the package reads global leases and guards covered Pi mutation paths, regardless of whether that process is an Origin Monitor.
 
-## Identity and scope
+## Identity and workspace scope
 
-A proposal displays the target's Agent label, status, status source, workspace, cwd/worktree, and Enforcement Level. Delivery uses the target `terminal_id`; the pane ID is retained for Herdr socket operations.
+The Origin Session is identified by Pi's stable session ID (`ctx.sessionManager.getSessionId()`), with the session file stored only as diagnostic metadata. A fork or clone has a different session ID and is not the Origin Session, even when its history contains the original confirmation.
 
-The default Workspace Scope is the Origin Pi's current Herdr workspace. Cross-workspace model proposals are accepted only when the latest user message contains a uniquely resolvable Agent name, terminal ID, or cwd. They still require full confirmation. The dashboard defaults to the current workspace and exposes an explicit `All workspaces` tab.
+The extension identifies its Herdr location from `HERDR_PANE_ID` / `HERDR_WORKSPACE_ID`, then resolves the pane through Herdr to obtain its terminal ID. A Dispatch Target is selected only from that workspace.
+
+A proposal displays the target's Agent label, terminal ID, pane ID, status, status evidence, workspace, and cwd/worktree. The terminal ID is the stable dispatch identity. Pane ID is a short-lived delivery route that must be re-resolved and revalidated immediately before use.
 
 A Git worktree is identified by the real path of `git rev-parse --show-toplevel`. Separate Git worktrees are separate lease subjects. Write dispatch is rejected outside a Git worktree.
+
+## Status semantics
+
+Herdr statuses are interpreted as follows:
+
+- `idle` and `done`: **idle-like** — eligible for a new dispatch when no Target Occupancy exists; after work they trigger result lookup and, without a valid result, `result-missing`.
+- `working`: execution acknowledgement/progress.
+- `blocked`: runtime attention only; it is not the final `blocked` Dispatch Outcome.
+- `unknown`: ineligible and never interpreted as completion.
+
+Status provenance is not assumed to be a direct `AgentInfo` field. Until a live compatibility probe proves integration authority semantics for the installed Herdr version, proposals label status as **screen-detected (best effort)**. A future reported status may be displayed only when the adapter can positively establish authority; absence of evidence never becomes `reported`.
+
+Screen-detected Agents remain supported because they are the normal case on the current machine. Ambiguous transitions add attention and never settle a dispatch.
 
 ## Proposal and confirmation
 
 A proposal is an immutable preview containing:
 
-- target identity and status provenance;
+- target identity and status evidence;
 - mode: `non-mutating` or `write`;
-- Enforcement Level: `guarded` or `advisory`;
+- an explicit advisory-safety warning;
 - confirmed directory/worktree;
 - deadline (default 30 minutes, allowed 1 minute–24 hours);
 - exact task and constraints;
-- dependency-install permission, if any;
+- project dependency-install permission, if any;
 - correlation ID;
 - exact Result Envelope contract.
 
-The confirmation UI offers **Approve**, **Edit**, and **Cancel**. Editing creates a new immutable proposal and requires another preview. Immediately before delivery, the extension revalidates terminal identity, workspace, status, cwd/worktree, concurrency limits, target occupancy, and worktree lease. Any drift invalidates the proposal.
+The confirmation UI offers **Approve**, **Edit**, and **Cancel**. Editing creates a new immutable proposal and requires another preview. Immediately before delivery, the extension re-resolves terminal ID to pane ID and revalidates on the same Herdr socket connection:
 
-Both `/herdr-dispatch` and `herdr_dispatch_propose` use this same path. No entry point has privileged confirmation bypass.
+- `pane.get` still returns the confirmed terminal ID and Agent;
+- target status is idle-like;
+- target workspace and `PaneInfo.cwd` still match;
+- Target Occupancy and Worktree Write Lease are available;
+- per-target-workspace and global concurrency limits allow the dispatch.
+
+Any mismatch invalidates the proposal. `foreground_cwd` is not used for worktree identity because transient child-shell `cd` operations would create false drift.
+
+Both `/herdr-dispatch` and `herdr_dispatch_propose` use this path. No entry point bypasses confirmation.
 
 ## Outbound message
 
-The complete outbound message is visible in confirmation and then delivered byte-for-byte. Its shape is:
+The complete outbound message is visible in confirmation and delivered byte-for-byte:
 
 ```text
 [HERDR DISPATCH]
@@ -60,7 +101,7 @@ ID: hd_<sortable-random-id>
 Mode: non-mutating | write
 Target directory: <path>
 Deadline: <timestamp>
-Enforcement: guarded | advisory
+Safety: advisory
 
 Task:
 <self-contained task>
@@ -77,9 +118,23 @@ Finish by printing exactly one single-line Result Envelope, not fenced in Markdo
 DISPATCH_RESULT {"id":"...","outcome":"done|blocked|failed|cancelled","summary":"..."}
 ```
 
-Project dependency installation is allowed only for a write proposal that explicitly lists it; resulting project and lockfile changes remain visible. The extension never permits global/system installation.
+Project dependency installation is allowed only for a write proposal that explicitly lists it; resulting project and lockfile changes remain visible. The extension never authorizes global/system installation.
 
-Delivery uses one socket request:
+## Delivery protocol and crash recovery
+
+Delivery crosses SQLite and Herdr and therefore cannot be atomic. V1 makes the ambiguity explicit instead of pretending a database transaction covers the socket side effect.
+
+### Durable intent
+
+On confirmation, one SQLite transaction:
+
+1. stores the immutable payload and its hash;
+2. changes lifecycle to `delivering`;
+3. acquires Target Occupancy;
+4. acquires a Worktree Write Lease when mode is write;
+5. appends the confirmation/delivery-intent audit events.
+
+The extension then performs final target revalidation and sends one socket request:
 
 ```json
 {
@@ -88,35 +143,78 @@ Delivery uses one socket request:
 }
 ```
 
-Protocol or method incompatibility fails closed. There is no fallback to separate text and Enter operations.
+`pane.send_input` makes text plus Enter one Herdr operation; it does **not** make target resolution plus send atomic. A pane may still close, move, or be reused between final `pane.get` and input handling. This residual race is disclosed in the confirmation's advisory warning.
+
+The adapter listens for `pane.closed` and `pane.moved` during the confirmation/delivery window and aborts before send when either event is observed. After send, it re-resolves the target terminal and performs Delivery Echo Verification against `recent_unwrapped` output. Echo verification detects many misdeliveries but cannot undo input already delivered to the wrong process.
+
+### Normal completion of delivery
+
+The Registry changes `delivering → active` only after `pane.send_input` returns success. Echo verification then searches a bounded tail for both `[HERDR DISPATCH]` and the unique `ID: hd_...`. If the expected echo does not appear within the startup window, `delivery-unverified` attention is added; the message is never resent automatically.
+
+### Origin crash while delivering
+
+When the exact Origin Session resumes, every record still in `delivering` is resolved conservatively with a 200-line `recent_unwrapped` Catch-Up Read from the confirmed target:
+
+1. a valid matching Result Envelope proves delivery and settles normally;
+2. the exact dispatch header plus correlation ID proves delivery and moves the record to `active`;
+3. neither signal adds `delivery-unverified` and leaves lifecycle at `delivering`, retaining occupancy and any write lease.
+
+The user must inspect and manually resolve a delivery-unverified record. V1 never automatically resends because absence from the bounded tail cannot prove non-delivery.
+
+A socket error after request submission is also treated as ambiguous and leaves `delivering` plus `delivery-unverified`. Only an error proven to occur before any input could be accepted may settle as failed and release reservations.
+
+## Origin Session monitoring
+
+There is no global coordinator. A TUI session starts an Origin Monitor only for unsettled records with its exact Origin Session ID.
+
+While running, the monitor:
+
+- subscribes to `pane.output_matched` for the escaped correlation ID and then reads/parses a bounded pane tail;
+- consumes `agent_status_changed`, `pane.closed`, and `pane.moved` events;
+- uses revision values only as an optional “output advanced” optimization, never as a line cursor or acceptance condition;
+- polls `PaneInfo.cwd` every five seconds and requires two consecutive mismatches before adding `target-moved`;
+- renews its own Herdr display metadata;
+- evaluates startup windows and deadlines.
+
+When the Origin Session is closed, no other Pi takes over. Results, notifications, and lease release are delayed; Target Occupancy and Worktree Write Leases remain durable. This is an explicit V1 trade-off.
+
+On `/resume`, `/reload`, or Herdr socket reconnect, the Origin Monitor obtains a fresh snapshot, resolves the stored terminal ID, and performs a bounded 200-line `recent_unwrapped` Catch-Up Read. This is tail catch-up, not a revision-based Recovery Scan. If the terminal ID no longer exists, the record becomes `target-lost`. V1 does not assume terminal IDs or history survive a Herdr restart and never retargets by Agent name.
+
+If the same terminal ID is attached to a new pane ID with the same workspace and cwd, the route may be updated after revalidation. A changed terminal ID is never accepted as continuity.
 
 ## Eligibility and acknowledgement
 
-Only an idle Existing Agent is eligible. Working, blocked, unknown, self, already occupied, or stale targets are rejected.
+Only an idle-like Existing Agent is eligible. Working, blocked, unknown, self, already occupied, or stale targets are rejected.
 
-Proposals disclose whether status comes from a reported Agent integration or screen detection. Both are allowed; ambiguous screen-detected transitions produce attention rather than inferred settlement.
+After delivery, the target should transition from idle-like to working within a startup window (default 30 seconds; configurable 5 seconds–5 minutes). Otherwise `unacknowledged` is added. For a screen-detected target this means only “no reliable start signal was observed”; it does not prove non-delivery. The dispatch and reservations remain, and the message is never automatically resent.
 
-After delivery, the target must transition from idle to working within a startup window (default 30 seconds; configurable 5 seconds–5 minutes). Otherwise `unacknowledged` attention is added. The dispatch and any lease remain; it is never automatically resent.
-
-The setup wizard offers detected Herdr status integrations individually. Runtime never modifies another Agent's config. Amp remains screen-detected unless Herdr gains an integration.
+The optional setup command may offer detected Herdr status integrations one by one. Runtime never modifies another Agent's config.
 
 ## Mutation and side-effect policy
 
+### All target constraints are advisory
+
+V1 does not claim target-side enforcement. An Existing Agent may ignore instructions, and Herdr cannot dynamically remove its tools. Every proposal states this clearly, especially for commit, push, deploy, publish, remote mutation, and destructive cleanup.
+
 ### Non-mutating
 
-Non-mutating is a contract, not a universal OS sandbox. For Git targets the coordinator records a before/after worktree snapshot and computes a Mutation Audit. For non-Git targets it is advisory only.
+Non-mutating requests investigation and reporting without file changes. For Git targets the Origin Monitor records before/after worktree snapshots and reports **observed changes during the dispatch** without attributing them to the target. For non-Git targets the mode is instruction-only.
 
-If a write dispatch overlaps the same worktree, the non-mutating audit is `inconclusive`, not a violation, because process attribution is unavailable.
+If a write dispatch overlaps the same worktree, the audit is `inconclusive`. The design has no Mutation Violation state because manual shells and user edits prevent sound process attribution.
 
-### Write
+### Write and Pi-side lease guard
 
-Write mode acquires a globally unique Worktree Write Lease. Every Pi instance loading this package blocks its own `edit`/`write` and clearly mutating `bash` calls in that worktree unless its terminal is the lease-holding target. Read-only operations remain available. Manual shells and processes without the package are outside this guard.
+Write mode acquires a globally unique Worktree Write Lease. Every Pi process loading the package consults the Registry and guards only the paths it can identify:
 
-Write mode permits local files and local verification only. Commit, push, deploy, publish, remote mutation, and destructive cleanup remain prohibited. `guarded` means the target harness actively enforces available controls; `advisory` means the outbound protocol and observable audit are the only controls. Advisory write proposals prominently warn that remote side effects cannot be audited.
+- built-in `edit` and `write` tool calls;
+- built-in `bash` tool calls through a best-effort mutation classifier;
+- `!` and `!!` commands through the separate `user_bash` event and the same classifier.
 
-A conflicting write proposal is rejected. There is no automatic preemption or downgrade.
+The guard does not cover unknown third-party mutating tools, manual shells, non-Pi agents, or commands the classifier cannot recognize. Documentation and UI must call it best-effort rather than an OS-level lock. Read-only built-in commands remain available.
 
-## Lifecycle, attention, and outcomes
+A conflicting write proposal is rejected. There is no preemption or downgrade.
+
+## Lifecycle, attention, and final outcomes
 
 Lifecycle is orthogonal to attention:
 
@@ -124,8 +222,11 @@ Lifecycle is orthogonal to attention:
 proposed -> delivering -> active -> settled
 ```
 
-Attention is a set, so conditions can coexist:
+`delivering` is durable and means the Registry holds dispatch intent/reservations while Herdr acceptance is not yet durably established.
 
+Attention Conditions may coexist:
+
+- `delivery-unverified`
 - `unacknowledged`
 - `overdue`
 - `blocked-runtime`
@@ -135,49 +236,90 @@ Attention is a set, so conditions can coexist:
 - `target-lost`
 - `target-moved`
 
-Terminal outcomes are `done`, `blocked`, `failed`, and `cancelled`. Every outcome settles the dispatch and releases its Worktree Write Lease. Continuing after `blocked` requires a new proposal and confirmation.
+Final Outcomes are `done`, `blocked`, `failed`, and `cancelled`. Every Final Outcome settles the dispatch and releases Target Occupancy and any Worktree Write Lease. Continuing after `blocked` requires a new proposal and confirmation.
 
-A deadline expiration adds `overdue`; it does not cancel, stop monitoring, or release a lease.
+A deadline expiration adds `overdue`; it does not cancel, stop monitoring, or release reservations.
 
-If Herdr reports runtime `blocked` without a Result Envelope, the coordinator adds `blocked-runtime`, reads 50 recent lines, and notifies the user. `/herdr-dispatch-reply` may send a fully previewed and confirmed reply under the same correlation ID. It does not extend the deadline unless explicitly changed.
+If Herdr reports runtime `blocked` without a Result Envelope, the record becomes a Blocked-Runtime Dispatch. The monitor captures 50 recent lines for human display as untrusted output and notifies the user while retaining reservations. `/herdr-dispatch-reply` is allowed for any Active Dispatch with an Attention Condition, not only blocked-runtime.
 
-If the target becomes idle without a valid result, `result-missing` is added. The coordinator does not nudge or infer completion.
+Before a reply is sent, confirmation displays the captured untrusted tail and warns that `pane.send_input` writes to whatever prompt or dialog currently has focus. Reply text may be consumed as dialog keystrokes. There is no safe compare-and-send primitive.
 
-If the target terminal disappears, `target-lost` is added. If it leaves the confirmed directory/worktree, `target-moved` is added. Normal automatic settlement pauses, and the original lease remains. No retargeting or lease transfer occurs.
+If the target becomes idle-like (`idle` or `done`) without a valid result, `result-missing` is added. The extension does not nudge or infer completion.
 
-If the Herdr socket is unavailable, `monitoring-paused` is added, one notification is emitted, and reconnection uses exponential backoff. Recovery revalidates targets and scans history; no task is failed and no lease is released merely because Herdr restarted.
+If the terminal ID disappears, `target-lost` is added. If two consecutive five-second polls show `PaneInfo.cwd` outside the confirmed directory/worktree, `target-moved` is added. These pausing Attention Conditions stop normal settlement and retain reservations until manual resolution.
+
+If the local Herdr socket is unavailable while the Origin Session is active, `monitoring-paused` is added, one notification is emitted, and reconnect uses exponential backoff. No outcome is inferred and no reservation is released.
 
 ## Cancellation and manual resolution
 
-A normal cancellation is itself previewed and confirmed. It asks the target to stop and return a `cancelled` Result Envelope. Occupancy and lease remain until that result arrives.
+A normal cancellation is previewed and confirmed through `/herdr-dispatch-cancel`. It asks the target to stop and emit a `cancelled` Result Envelope. Reservations remain until a valid result or manual resolution.
 
-If cancellation does not settle, the user may initiate forced cancellation only through the dashboard or slash command. After a second confirmation, the extension sends `Ctrl+C`, waits for idle, and completes the Mutation Audit. Only then does it settle as `cancelled` and release the lease. Failure to reach idle retains the lease.
+V1 does not send `Ctrl+C`. If normal cancellation does not settle, the UI instructs the user to focus the target pane, interrupt it manually, verify that it is idle-like, then run `/herdr-dispatch-resolve`.
 
-`result-missing` and `target-lost` have no standalone lease-release operation. `/herdr-dispatch-resolve` shows current worktree state, requires `failed` or `cancelled` plus a summary, then asks for a second confirmation. Settlement and lease release occur atomically.
+`delivery-unverified`, `result-missing`, `target-lost`, and `target-moved` have no standalone lease-release operation. Manual resolution:
 
-Model tools may propose ordinary replies and cancellation. They cannot propose forced cancellation or manual resolution.
+1. shows current target/worktree status and bounded untrusted output;
+2. requires `failed` or `cancelled` plus a summary;
+3. asks for a second confirmation;
+4. records the resolver session ID;
+5. atomically settles and releases reservations.
+
+The Origin Session normally resolves its own records. A different local TUI session may perform an explicitly labelled **emergency resolution** when the Origin Session is unavailable; it cannot adopt monitoring or inject a result into its own model context.
+
+Reply and cancellation are slash-command actions only in V1. They are not model tools.
 
 ## Result protocol
 
-A result must be a single line from the confirmed target pane after the delivery revision:
+A result is a single line from the confirmed terminal's pane output:
 
 ```text
 DISPATCH_RESULT {"id":"hd_...","outcome":"done","summary":"Implemented X","tests":["pnpm test"],"changedFiles":["src/x.ts"],"artifacts":[]}
 ```
 
-Required fields are `id`, `outcome`, and bounded `summary`. Accepted optional fields are `tests`, `changedFiles`, `artifacts`, and `blocker`. Types, counts, and lengths are bounded. Unknown fields remain only in the raw Registry envelope and never enter parent model context.
+Required fields are `id`, `outcome`, and bounded `summary`. Accepted optional fields are `tests`, `changedFiles`, `artifacts`, and `blocker`. Types, counts, and lengths are bounded. Unknown fields remain only in the raw Registry envelope.
 
-Acceptance requires correlation ID, source terminal, pane revision, and schema to match. A matching but malformed line adds `malformed-result`, stores a bounded raw line, and notifies; it never settles or triggers an automatic retry. Duplicate results are audit events and cannot settle twice.
+Acceptance requires:
 
-The Sanitized Dispatch Result is explicitly marked as untrusted data. Raw pane output and the raw envelope do not enter parent model context. Settlement independently computes Git status, changed files, and diff statistics; it does not run tests. Agent-reported tests remain untrusted.
+- the globally unique correlation ID to match an unsettled dispatch;
+- output to come from the currently resolved terminal ID for that dispatch;
+- lifecycle to be `delivering` or `active`;
+- schema validation to succeed.
 
-## Recovery and result delivery
+Pane revision is not an acceptance criterion. Correlation IDs are random and created immediately before confirmation, so a valid pre-delivery match is not expected. The residual risk that a compromised target emits an early false Result Envelope is accepted and tested explicitly.
 
-The Registry stores the pane revision captured at delivery. After coordinator takeover or reconnect, a bounded Recovery Scan starts there and searches for an exact result. Missing or cleared history becomes `result-missing`, never inferred success.
+A matching malformed line adds `malformed-result`, stores a bounded raw line, and notifies; it never settles or triggers an automatic retry. The first valid accepted result wins transactionally. Later duplicates or conflicts are audit events and cannot settle twice.
 
-Settlement records the result, outcome, audit data, and lease release in one transaction. It also emits a Herdr notification. The Origin Session claims its sanitized result while active or next resumed. The custom session entry includes the dispatch ID, making claim recovery idempotent if a process crashes between session append and Registry acknowledgement. Claiming never triggers a model turn.
+Settlement independently computes Git status, changed files, and diff statistics; it does not run tests. Agent-reported tests remain untrusted.
 
-## Registry
+## Untrusted output and model context
+
+Raw pane output never enters parent model context **through settlement**. The Origin Session receives only a bounded Sanitized Dispatch Result marked as untrusted data.
+
+An explicit Agent Output Inspection is a separate, user-authorized path that does return up to 200 ANSI-stripped lines to the model. Its tool result is wrapped as data:
+
+```text
+<untrusted-agent-output terminal="...">
+...
+</untrusted-agent-output>
+```
+
+The wrapper instructs the model to treat the body as data, not instructions. Blocked-runtime captures shown only in TUI/notifications do not enter model context unless the user explicitly invokes inspection.
+
+## Origin Session result delivery
+
+Settlement records the result, final outcome, audit data, and reservation release in one SQLite transaction and emits a Herdr notification.
+
+The Origin Session then appends one custom result message without triggering a model turn. Exactly-once delivery is checked against the **active branch**:
+
+1. identify the Origin Session by session ID;
+2. scan the active branch for a custom result message with the dispatch ID;
+3. append only when absent;
+4. verify that the entry is present on the still-active branch before marking context delivery complete;
+5. if the branch changed during the operation, leave delivery pending and retry against the new active branch.
+
+A later user-initiated branch navigation does not cause reinjection. Forks and clones have different session IDs and never claim the result.
+
+## Dispatch Registry
 
 Default path:
 
@@ -189,34 +331,31 @@ The directory is mode `0700` and the database mode `0600`. SQLite uses WAL, fore
 
 Conceptual records:
 
-- dispatch current state and immutable confirmed payload;
-- attention conditions;
-- globally unique target occupancy;
-- globally unique worktree write lease;
-- coordinator lease;
+- dispatch current state and immutable confirmed payload/hash;
+- Origin Session ID and diagnostic session path;
+- target terminal identity and current pane route;
+- Attention Conditions;
+- globally unique Target Occupancy;
+- globally unique Worktree Write Lease;
 - raw and sanitized results;
-- Origin Session delivery claims;
+- Origin Session active-branch context-delivery state;
 - append-only lightweight audit events.
 
-Current state is stored directly; events are for audit, not full event sourcing. Settled dispatches and their events are retained 30 days by default, configurable 1–365 days. Unsettled records are never automatically purged.
+There is no Coordinator Lease and no revision cursor. Current state is stored directly; events are for audit, not full event sourcing. Settled records and events are retained 30 days by default, configurable 1–365 days. Unsettled records are never automatically purged.
 
-Migration creates a timestamped database backup and runs transactionally. Corruption, migration failure, or unavailable transactional access fails closed: no new dispatch, reply, cancellation, settlement, or lease mutation. The package never creates an empty replacement or falls back to memory.
+Migration creates a timestamped database backup and runs transactionally. Corruption, migration failure, or unavailable transactional access fails closed: no new dispatch, reply, cancellation, settlement, or reservation mutation. The package never creates an empty replacement or falls back to memory.
 
-## Coordinator and Herdr UI
+Per-workspace concurrency is counted by **target workspace**. V1 target and origin workspaces are the same, but the resource definition remains explicit.
 
-Only the Coordinator Lease holder monitors and settles. All Pi instances may display Registry state and enforce worktree leases.
+## Herdr UI and metadata
 
-The coordinator publishes expiring pane metadata such as:
+The active Origin Monitor reports an expiring metadata token with a dedicated source such as `pi-herdr-dispatch:<origin-session-id>` and monotonically increasing `seq`. It does not overwrite pane title, displayed Agent, integration state labels, or another source's custom status. If the installed Herdr UI cannot display a dedicated `dispatch` token without conflicting configuration, V1 omits pane metadata and relies on the Pi widget plus notifications.
 
-```text
-dispatch hd_ab12 · active
-```
+Herdr notifications occur only for Final Outcomes and Attention Conditions:
 
-It renews TTL without changing pane name or Agent label. Herdr notifications occur only for terminal outcomes and attention conditions. Suggested sound policy:
-
-- `done`: `done`
-- blocked, failed, overdue, malformed, result-missing, target-lost, target-moved, monitoring-paused, unacknowledged: `request`
-- cancelled: `none`
+- `done`: sound `done`;
+- blocked, failed, overdue, malformed, result-missing, target-lost, target-moved, monitoring-paused, unacknowledged, delivery-unverified: sound `request`;
+- cancelled: sound `none`.
 
 Pi shows a one-line widget below the editor while records are active, for example `dispatches: 2 active · 1 attention`. It does not modify the existing custom footer.
 
@@ -224,30 +363,31 @@ Pi shows a one-line widget below the editor while records are active, for exampl
 
 ### Commands
 
-- `/herdr-agents` — current-workspace Agent metadata; explicit all-workspace view.
+- `/herdr-agents` — Agent metadata from the current Workspace Scope only.
 - `/herdr-dispatch` — manual proposal wizard.
-- `/herdr-dispatches` — interactive dashboard; text fallback in read-only modes.
-- `/herdr-dispatch-reply <id>` — previewed reply.
+- `/herdr-dispatches` — text list of current-workspace records and valid follow-up command hints; an explicit global view is for lease diagnosis only.
+- `/herdr-dispatch-reply <id>` — previewed reply for an Active Dispatch with attention.
 - `/herdr-dispatch-cancel <id>` — previewed normal cancellation.
-- `/herdr-dispatch-force-cancel <id>` — manual-only, double-confirmed.
-- `/herdr-dispatch-resolve <id>` — manual-only, double-confirmed.
-- `/herdr-agent-output <target> [lines]` — one bounded output inspection.
+- `/herdr-dispatch-resolve <id>` — double-confirmed manual/emergency resolution.
+- `/herdr-agent-output <target> [lines]` — one bounded, untrusted-framed output inspection.
 - `/herdr-dispatch-setup` — optional, per-integration installation prompts.
 
-The dashboard defaults to current workspace, with explicit active/history and all-workspace views. Actions include inspect, reply, cancel, rescan, force cancel, and resolve when valid for the selected record.
+There is no automatic force-cancel command in V1.
 
 ### Model tools
 
-- `herdr_agents_list`
+- `herdr_agents_list` — always restricted to the current Workspace Scope; no all-workspaces parameter.
 - `herdr_dispatch_propose`
 - `herdr_dispatch_status`
 - `herdr_agent_output_inspect`
-- `herdr_dispatch_reply_propose`
-- `herdr_dispatch_cancel_propose`
 
-There is no wait, force-cancel, resolve, agent-start, pane-create, workspace-create, or worktree-create tool.
+There is no model wait, reply, cancel, force-cancel, resolve, Agent-start, pane-create, workspace-create, or worktree-create tool.
 
-Agent output inspection is authorized by an explicit user request or Active Dispatch monitoring. A user request itself is sufficient; no redundant confirmation appears. Default output is the 50 most recent plain-text lines, with ANSI removed; the maximum is 200 lines. A single request authorizes one bounded read, not continuing surveillance.
+Agent output inspection is authorized by an explicit user request. A user request itself is sufficient; no redundant confirmation appears. Default output is the 50 most recent `recent_unwrapped` plain-text lines, with ANSI removed; the configured maximum is 200. One request authorizes one bounded read, not continuing surveillance.
+
+### Run-mode rules
+
+Proposal, reply, cancellation, resolution, Origin Monitoring, and context delivery require `ctx.mode === "tui"`; checking `ctx.hasUI` is insufficient because RPC reports UI capability. Non-TUI modes may list current state and perform an explicitly requested bounded inspection only. Lease Guard checks remain active in every mode because they prevent a non-Origin Pi process from mutating a leased worktree.
 
 ## Configuration
 
@@ -267,29 +407,47 @@ Defaults:
   "startupWindowMs": 30000,
   "minStartupWindowMs": 5000,
   "maxStartupWindowMs": 300000,
-  "coordinatorLeaseMs": 30000,
-  "coordinatorHeartbeatMs": 10000,
-  "maxActivePerWorkspace": 4,
+  "maxActivePerTargetWorkspace": 4,
   "maxActiveGlobal": 8,
   "retentionDays": 30,
   "inspectionLines": 50,
-  "maxInspectionLines": 200
+  "maxInspectionLines": 200,
+  "catchUpLines": 200,
+  "cwdPollMs": 5000,
+  "cwdDriftSamples": 2,
+  "metadataTtlMs": 30000
 }
 ```
 
-Invalid configuration fails validation and leaves state-changing functionality disabled.
+Invalid configuration disables state-changing functionality. `catchUpLines` and inspection bounds are requests to Herdr, not guarantees about retained history; a shorter returned tail is accepted and absence never proves non-delivery.
+
+## Required compatibility checks before implementation planning
+
+The design no longer depends on the answers, but a live spike must record installed Herdr 0.7.3 behavior for:
+
+- terminal ID continuity across server restart/update;
+- pane-ID reuse after close and pane-ID changes after move;
+- `recent_unwrapped` depth and requested line-count behavior with pane history enabled;
+- exact accepted `pane.send_input.keys` spelling for `enter`;
+- whether `screen_detection_skipped` positively identifies integration authority;
+- dedicated metadata token coexistence.
+
+Any failure tightens behavior to attention/fail-closed; it must not introduce heuristic retargeting, revision cursors, or split delivery.
 
 ## Test strategy
 
 ### Unit
 
-- lifecycle and orthogonal attention transitions;
-- result parsing, sanitization, bounds, and duplicate handling;
+- lifecycle, durable `delivering`, and orthogonal Attention Conditions;
+- Result Envelope parsing, sanitization, bounds, first-valid-wins, and conflicting duplicates;
 - proposal immutability and stale-target detection;
-- target resolution and cross-workspace explicit-target checks;
-- Git worktree identity and Mutation Audit comparisons;
-- outbound message construction;
-- command classification for the Pi-side lease guard;
+- current-workspace target resolution;
+- idle/done equivalence;
+- Git worktree identity and observed-change audits;
+- outbound message and delivery echo matching;
+- built-in tool plus `user_bash` lease-guard classification;
+- untrusted output framing;
+- Origin Session ID and active-branch delivery rules;
 - retention and notification policy.
 
 ### Integration
@@ -297,30 +455,48 @@ Invalid configuration fails validation and leaves state-changing functionality d
 Use a fake Herdr Unix socket and temporary SQLite database to test:
 
 - atomic `pane.send_input` payload and fail-closed protocol mismatch;
-- two Pi processes racing for Coordinator Lease;
-- globally unique target occupancy and worktree leases;
-- crash points around delivery, settlement, lease release, and Origin Session claim;
-- Herdr disconnect/reconnect and Recovery Scan;
+- crash before send, during send, after Herdr success, and before `active` commit;
+- resume of `delivering` with result present, echo present, or neither present;
+- pane close/move/reuse between final revalidation and send;
+- globally unique Target Occupancy and Worktree Write Leases across Pi processes;
+- two Origins racing to acquire the same target/worktree;
+- result settlement racing an emergency manual resolution;
+- active-branch result append crash/retry and branch change during append;
+- Herdr disconnect/reconnect with bounded Catch-Up Read;
+- target ending in `done` without a result;
+- terminal ID missing or changed after Herdr restart;
+- malformed and conflicting Result Envelopes;
 - migration backup and rollback;
 - corrupt/locked database fail-closed behavior;
-- screen-detected ambiguity versus reported status;
-- Origin Session offline result delivery.
+- non-TUI processes never starting monitors or state-changing operations.
 
 ### Live acceptance
 
-1. Dispatch a non-mutating review to an idle screen-detected Agent.
-2. Dispatch write work to a guarded Pi and verify the Origin Pi is blocked from editing that worktree.
-3. Attempt a second write dispatch to the same worktree and verify rejection.
-4. Restart the Coordinator Pi during work and verify takeover plus result recovery.
-5. Exercise blocked-runtime → confirmed reply → result.
-6. Exercise overdue, normal cancel, forced cancel, result-missing, target-lost, and target-moved.
-7. Verify cross-workspace dispatch rejection without an explicit target and success with one.
-8. Verify no result triggers a model turn.
-9. Verify raw pane output and unknown result fields never enter model context.
-10. Verify Registry failure preserves leases and disables state changes.
+1. Dispatch a non-mutating review to an idle and to a done screen-detected Agent.
+2. Dispatch write work and verify covered Pi mutation paths (`edit`, `write`, `bash`, `!`, `!!`) are blocked for non-holders.
+3. Attempt a second dispatch to the same target and a second write dispatch to the same worktree.
+4. Kill the Origin during `delivering`; resume with echo present and with no detectable echo.
+5. Close the Origin while the target finishes; resume and settle from the bounded tail.
+6. Exercise blocked-runtime → confirmed reply → valid result, with the focused-input warning visible.
+7. Exercise overdue, normal cancellation, manual interrupt guidance, result-missing, target-lost, and target-moved.
+8. Restart Herdr during active work and record identity/history behavior without assuming continuity.
+9. Verify no result triggers a model turn and forks/clones do not claim Origin results.
+10. Verify settlement injects only sanitized results while explicit inspection returns untrusted-framed output.
+11. Verify Registry failure preserves reservations and disables state changes.
+
+## Review findings addressed
+
+- **C1:** durable delivery intent plus Delivery Echo Verification and `delivery-unverified`; no automatic resend.
+- **C2:** removed revision cursors and revision-based acceptance; bounded tail catch-up plus correlation/source/schema matching.
+- **H1:** removed coordinator takeover entirely.
+- **H2:** removed `guarded` from V1; all target constraints are advisory.
+- **H3:** immediate same-connection route revalidation, close/move observation, post-send echo verification, and documented residual race.
+- **H4:** `done` is idle-like for eligibility, result-missing, and manual cancellation guidance.
+- **H5:** raw output exclusion is settlement-specific; explicit inspection uses untrusted framing.
 
 ## Decisions recorded separately
 
 - [ADR 0001: Use SQLite for the global Dispatch Registry](./adr/0001-sqlite-dispatch-registry.md)
 - [ADR 0002: Deliver dispatches through atomic Herdr pane input](./adr/0002-atomic-herdr-input-delivery.md)
 - [ADR 0003: Model lifecycle, attention, and outcome separately](./adr/0003-orthogonal-dispatch-state.md)
+- [ADR 0004: Use per-origin monitoring in V1](./adr/0004-per-origin-monitoring.md)

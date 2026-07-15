@@ -1,165 +1,175 @@
 # Agent Workspace Orchestration
 
-This context coordinates existing coding agents on one local Herdr server without creating agents, panes, worktrees, or workspaces. Remote Herdr sessions are outside V1.
+This context coordinates confirmed work sent to existing coding agents in one local Herdr workspace. It does not create agents, panes, workspaces, or worktrees.
 
-## Language
+## Actors and scope
 
 **Existing Agent**:
 A coding agent already running in a Herdr pane.
 _Avoid_: worker, subagent
 
+**Workspace Scope**:
+The local Herdr workspace containing the Origin Session and every Agent eligible for its dispatches.
+_Avoid_: all workspaces, remote workspace
+
+**Origin Session**:
+The specific Pi session that confirms a dispatch, monitors it while running, and receives its sanitized result. Forks and clones are different sessions.
+_Avoid_: current Pi, any Pi, coordinator
+
 **Eligible Agent**:
-An Existing Agent currently reported as idle, distinct from the Origin Session's own terminal ID, and not otherwise excluded by dispatch safety rules. A proposal identifies whether status came from an Agent integration or screen detection; screen-detected targets are allowed but ambiguous transitions require attention rather than inferred settlement.
-_Avoid_: self-dispatch, working agent, blocked agent, unknown pane, hidden status provenance
+An Existing Agent in the Workspace Scope whose runtime status is idle-like, which includes Herdr `idle` and `done`, and which has no Target Occupancy.
+_Avoid_: self, working Agent, blocked Agent, unknown pane
+
+**Dispatch Target**:
+The Eligible Agent selected to receive one dispatch, identified by its Herdr terminal identity rather than a mutable name or pane route.
+_Avoid_: Agent name alone, pane name
+
+**Target Occupancy**:
+The exclusive assignment of one unsettled dispatch to one Dispatch Target. An occupied target cannot receive another dispatch.
+_Avoid_: concurrent assignment
+
+## Proposal and delivery
 
 **Dispatch Proposal**:
-An immutable preview of the complete outbound message, target, Dispatch Mode, target directory or worktree, deadline, constraints, Dispatch Correlation ID, and Result Envelope contract that has not yet been sent. V1 constraints prohibit the Dispatch Target from delegating the work to another agent. Project dependency installation is allowed only when shown explicitly in a write proposal and must remain project-scoped with lockfile changes; global and system installation are forbidden.
-_Avoid_: task, command, hidden wrapper, recursive delegation, implicit dependency installation
+An immutable preview of the complete outbound message, Dispatch Target, mutation contract, confirmed location, deadline, constraints, correlation ID, and result contract.
+_Avoid_: task, hidden wrapper, batch
 
 **Dispatch Confirmation**:
-The user's approval of one current Dispatch Proposal, authorizing its delivery exactly as shown after target and lease revalidation; both manual commands and model-authored proposals require it.
-_Avoid_: automatic dispatch, stale approval, privileged entry point
+The user's approval of one current Dispatch Proposal, authorizing delivery exactly as previewed after revalidation.
+_Avoid_: automatic dispatch, stale approval
 
 **Revised Proposal**:
-A new immutable Dispatch Proposal produced after the user edits a target, mode, deadline, constraint, or message; it must be previewed and confirmed again.
+A new Dispatch Proposal produced after any confirmed field is edited; it requires another complete preview and confirmation.
 _Avoid_: edit-and-send
 
 **Stale Proposal**:
-A Dispatch Proposal invalidated because its target identity, workspace, directory or worktree, availability, or lease state changed before delivery; it must be regenerated and reconfirmed.
+A Dispatch Proposal invalidated because its target, location, availability, occupancy, or lease state changed before delivery.
 _Avoid_: best-effort delivery
 
-**Workspace Scope**:
-The Herdr workspace containing the Pi session that creates a Dispatch Proposal.
-_Avoid_: all panes, global workspace
+**Dispatch Correlation ID**:
+A unique identifier binding a confirmed outbound message, delivery evidence, and Result Envelope to one dispatch.
+_Avoid_: task name, pane status
 
-**Cross-Workspace Dispatch**:
-A Dispatch Proposal targeting an Existing Agent outside the Workspace Scope; it requires the user's latest message to contain a uniquely resolvable Agent name, terminal ID, or working directory, followed by normal full confirmation.
-_Avoid_: implicit cross-project dispatch, model-selected foreign target
+**Delivery Evidence**:
+Target output containing either the unique dispatch header or a valid matching Result Envelope, demonstrating that the dispatch reached the target.
+_Avoid_: send attempt, status transition
 
-**Dispatch Target**:
-The Existing Agent selected for a Dispatch Proposal, displayed with its label, working directory, and status and identified for delivery by its Herdr terminal ID.
-_Avoid_: agent name alone, pane name
-
-**Agent Output Inspection**:
-A single read of an Existing Agent's 50 most recent plain-text lines, configurable up to 200 lines, for progress or result reporting; it is authorized by an explicit user request or performed for an Active Dispatch, and the explicit request itself is sufficient authorization.
-_Avoid_: ANSI capture, unrestricted transcript scraping, repeated implicit reads
+## Lifecycle and attention
 
 **Dispatch Lifecycle**:
-The primary progression of one dispatch: proposed, delivering, active, then settled. Operational problems are separate Attention Conditions rather than additional lifecycle states.
+The primary progression of one dispatch: proposed, delivering, active, then settled. Operational problems are represented separately as Attention Conditions.
 _Avoid_: combinatorial state enum
 
-**Attention Condition**:
-A concurrent condition requiring visibility or user action, such as overdue, unacknowledged, blocked-runtime, monitoring-paused, malformed-result, result-missing, target-lost, or target-moved; multiple conditions may coexist.
-_Avoid_: primary lifecycle, single overwritten error state
-
-**Malformed Result**:
-A bounded `DISPATCH_RESULT` line with a matching correlation ID that fails JSON or schema validation; it is retained for audit and triggers attention but never settles a dispatch or causes an automatic retry.
-_Avoid_: guessed result, silent result-missing
+**Delivering Dispatch**:
+A confirmed dispatch whose Target Occupancy and any Worktree Write Lease are held while delivery remains incomplete or uncertain.
+_Avoid_: active dispatch, safe-to-resend dispatch
 
 **Active Dispatch**:
-A confirmed Dispatch Proposal that has been delivered, exclusively occupies its Dispatch Target, remains visible through renewable Herdr pane metadata without renaming the pane or Agent, and stays under automatic monitoring until it reaches a terminal outcome.
-_Avoid_: passive agent observation, concurrent assignment, pane rename
+A delivered dispatch that retains Target Occupancy and remains eligible for Origin Session monitoring until settlement, except while a pausing Attention Condition applies.
+_Avoid_: passive observation, concurrent assignment
+
+**Attention Condition**:
+A concurrent fact requiring visibility or user action without replacing the Dispatch Lifecycle. Multiple Attention Conditions may coexist.
+_Avoid_: lifecycle state, overwritten error
+
+**Delivery-Unverified Dispatch**:
+A Delivering Dispatch for which delivery success cannot be established. It retains all reservations and is never automatically resent.
+_Avoid_: undelivered dispatch, retryable dispatch
 
 **Unacknowledged Dispatch**:
-An Active Dispatch whose target did not transition from idle to working within the startup window after delivery; the window defaults to 30 seconds and is configurable from 5 seconds through 5 minutes. It retains its target occupancy and any Worktree Write Lease and is not automatically resent.
-_Avoid_: delivery success, automatic retry
+An Active Dispatch for which no reliable execution-start signal was observed after delivery.
+_Avoid_: undelivered dispatch, automatic retry
 
-**Dispatch Correlation ID**:
-A unique identifier embedded in a Dispatch Proposal and its required result marker, binding a reported outcome to one Active Dispatch.
-_Avoid_: pane status, task name
+**Blocked-Runtime Dispatch**:
+An Active Dispatch whose Agent reports Herdr's blocked runtime state without issuing a Final Outcome.
+_Avoid_: blocked Final Outcome, Attention-Required Dispatch
 
-**Dispatch Result**:
-A machine-readable terminal outcome emitted by the Dispatch Target for one Dispatch Correlation ID.
-_Avoid_: idle status, inferred completion
+**Overdue Dispatch**:
+An unsettled dispatch that has exceeded its confirmed deadline while retaining its reservations.
+_Avoid_: cancelled dispatch, released lease
 
-**Attention-Required Dispatch**:
-An Active Dispatch whose target reports Herdr's blocked runtime state without a Result Envelope; the coordinator reads 50 recent lines and notifies the user while retaining target occupancy and any Worktree Write Lease.
-_Avoid_: blocked Dispatch Outcome, autonomous reply
+**Malformed Result**:
+A matching result attempt that fails JSON or schema validation. It never settles the dispatch or causes an automatic retry.
+_Avoid_: guessed result, silent failure
 
 **Result-Missing Dispatch**:
-An Active Dispatch whose target is idle without emitting its required Dispatch Result; it requires user action and must not be automatically nudged.
-_Avoid_: completed dispatch
+An Active Dispatch whose target became idle-like without issuing a valid Result Envelope.
+_Avoid_: completed dispatch, inferred success
 
 **Target-Lost Dispatch**:
-An Active Dispatch whose terminal ID disappeared before settlement; monitoring pauses, the user is notified, and any Worktree Write Lease remains until the user inspects and resolves it.
-_Avoid_: automatic retargeting, automatic lease release
+An unsettled dispatch whose confirmed terminal identity disappeared before settlement.
+_Avoid_: automatic retargeting, automatic release
 
 **Target-Moved Dispatch**:
-An Active Dispatch whose target leaves its confirmed directory or worktree; normal settlement pauses, the original Worktree Write Lease remains, no lease is automatically acquired for the new location, and the user must inspect and resolve it.
-_Avoid_: automatic lease transfer, ignored directory drift
+An unsettled dispatch whose target persistently left its confirmed directory or worktree.
+_Avoid_: transient child-shell directory, automatic lease transfer
+
+**Monitoring-Paused Dispatch**:
+An unsettled dispatch temporarily unobservable because its Origin Session or local Herdr connection is unavailable. Reservations remain intact.
+_Avoid_: failed dispatch, takeover candidate
+
+## Mutation and safety
 
 **Dispatch Mode**:
-The declared mutation contract of a Dispatch Proposal: non-mutating requests investigation and reporting without file changes, while write is permitted only in a Git worktree and reserves that worktree for one Active Dispatch. Non-mutating is technically enforced only where the target harness provides such controls; otherwise it is audited for Git targets and advisory for non-Git targets. V1 write dispatches are limited to local file changes and local validation and may not commit, push, deploy, publish, mutate remote systems, or perform destructive cleanup.
-_Avoid_: read-only guarantee, implied write access, non-Git write dispatch, external side effects
+The declared mutation contract: non-mutating requests investigation without file changes; write permits local changes only in one confirmed Git worktree. Both are advisory to the Dispatch Target in V1.
+_Avoid_: read-only guarantee, external side-effect permission
 
-**Enforcement Level**:
-The proposal's disclosure of whether dispatch constraints are actively guarded by the target harness or are advisory instructions backed only by observable audits. Both levels may receive write dispatches after confirmation; advisory proposals explicitly warn that remote side effects cannot be audited.
-_Avoid_: hidden advisory enforcement, universal safety claim
-
-**Mutation Audit**:
-A before-and-after comparison of a Git worktree around a non-mutating Active Dispatch, used to detect observed changes without claiming process-level attribution; it is inconclusive when a write dispatch overlaps the same worktree. Settlement computes worktree status, changed files, and diff statistics but does not automatically execute tests or other project commands; tests reported by the Agent remain untrusted data.
-_Avoid_: sandbox, proof of authorship, automatic test execution
-
-**Mutation Violation**:
-A non-mutating Dispatch Result accompanied by an attributable worktree change; for changes that cannot be attributed, report an inconclusive audit instead.
-_Avoid_: silent mutation, inferred authorship
+**Observed Mutation**:
+A worktree change seen during a non-mutating dispatch without attributing authorship to the Dispatch Target. Overlapping known writers make the observation inconclusive.
+_Avoid_: Mutation Violation, proof of authorship
 
 **Worktree Write Lease**:
-The exclusive reservation created by a write-mode Active Dispatch for its target worktree. Every Pi instance using the extension blocks its own edit/write calls and clearly mutating shell calls in that worktree unless it is the lease-holding Dispatch Target; read-only operations remain available. Manual shells and processes without the extension remain outside this guard.
-_Avoid_: shared editing, unrestricted origin editing, claimed OS-level lock
+The exclusive reservation of one Git worktree for one write-mode Active or Delivering Dispatch. The package reduces covered Pi-side conflicts but does not claim an operating-system lock.
+_Avoid_: shared editing, universal mutation prevention
 
 **Write-Lease Conflict**:
-A proposed write dispatch targeting a worktree with an existing Worktree Write Lease anywhere in the Dispatch Registry; the proposal is rejected until the user waits for or cancels the lease holder.
-_Avoid_: automatic preemption, shared editing, workspace-local conflict detection
+A proposed write dispatch targeting a worktree with an existing Worktree Write Lease.
+_Avoid_: automatic preemption, automatic downgrade
 
-**Dispatch Outcome**:
-The terminal status of a Dispatch Result: done, blocked, failed, or cancelled. Every outcome settles the dispatch and releases any Worktree Write Lease; continuing after blocked requires a newly confirmed Dispatch Proposal.
-_Avoid_: free-form status, paused blocked state
+**Advisory Safety**:
+The explicit disclosure that target constraints depend on Agent compliance and observable audits rather than enforced removal of target tools.
+_Avoid_: guarded target, sandbox guarantee
+
+## Results and resolution
+
+**Final Outcome**:
+The result status that settles a dispatch: done, blocked, failed, or cancelled. Continuing after blocked requires a new confirmed dispatch.
+_Avoid_: terminal status, free-form status, paused blocked state
 
 **Result Envelope**:
-A single `DISPATCH_RESULT` line containing schema-validated JSON with a Dispatch Correlation ID, Dispatch Outcome, and bounded summary; accepted optional fields are tests, changed files, artifacts, and blocker, while unknown or oversized fields are excluded from parent context.
+A single machine-readable line containing a Dispatch Correlation ID, Final Outcome, and bounded summary, with optional bounded result metadata.
 _Avoid_: prose-only completion marker, unbounded result
 
 **Sanitized Dispatch Result**:
-A bounded, schema-valid subset of a Result Envelope marked as untrusted data before it enters the parent Pi session; the raw envelope remains in the Dispatch Registry only.
+The bounded, schema-valid subset of a Result Envelope marked as untrusted data before entering the Origin Session's model context.
 _Avoid_: raw pane output, trusted instructions
 
+**Agent Output Inspection**:
+A single user-authorized, bounded read of an Existing Agent's output, framed as untrusted data when returned to a model.
+_Avoid_: unrestricted transcript scraping, trusted pane text, continuing surveillance
+
 **Dispatch Settlement**:
-The atomic recording of a terminal result in the Dispatch Registry, release of an Active Dispatch's Worktree Write Lease, and a Herdr notification; notifications are emitted only for terminal outcomes and attention states, not normal acknowledgements or progress. The origin Pi session claims its Sanitized Dispatch Result while active or when next resumed, without triggering a model turn. Result-Missing and Target-Lost dispatches may settle only through a secondarily confirmed manual resolution that records failed or cancelled plus a summary after showing current worktree state; no standalone lease release exists.
-_Avoid_: autonomous continuation, cross-process session-file mutation, coordinator-session delivery, progress notification spam, orphaned manual lease release
-
-**Origin Session**:
-The Pi session that confirmed a Dispatch Proposal and is the sole destination for its Sanitized Dispatch Result in model context.
-_Avoid_: current coordinator session, any Pi session
-
-**Overdue Dispatch**:
-An Active Dispatch that has exceeded its confirmed deadline, defaulting to 30 minutes and constrained to 1 minute through 24 hours, while still being monitored and retaining any Worktree Write Lease; it requires the user to wait or cancel.
-_Avoid_: automatic cancellation, released lease
+The indivisible recording of a Final Outcome, release of Target Occupancy and any Worktree Write Lease, and availability of the Sanitized Dispatch Result to the Origin Session without starting a model turn.
+_Avoid_: autonomous continuation, partial release
 
 **Dispatch Reply**:
-A user-confirmed follow-up message sent to an Attention-Required Dispatch under the same Dispatch Correlation ID, target occupancy, and Worktree Write Lease; it does not extend the deadline unless the confirmation explicitly changes it.
-_Avoid_: new dispatch, autonomous reply, implicit deadline extension
+A separately confirmed follow-up sent to an unsettled dispatch with attention, retaining the same correlation ID and reservations.
+_Avoid_: new dispatch, autonomous reply
 
 **Cancellation Request**:
-A user-confirmed message asking the Dispatch Target to stop one Active Dispatch and return a cancelled Result Envelope; monitoring and any Worktree Write Lease continue until that result arrives.
-_Avoid_: immediate lease release, implicit interrupt
+A confirmed request asking the Dispatch Target to stop and issue a cancelled Result Envelope. It does not itself settle or release reservations.
+_Avoid_: forced interrupt, immediate release
 
-**Forced Cancellation**:
-A secondarily confirmed interrupt sent after a Cancellation Request fails to settle; it becomes a cancelled Dispatch Outcome and releases any Worktree Write Lease only after the target reports idle and the Mutation Audit completes.
-_Avoid_: immediate lease release, unconfirmed interrupt
+**Manual Resolution**:
+A double-confirmed Final Outcome recorded when automatic settlement is unsafe or impossible, after presenting current target and worktree evidence. It is the only manual way to release reservations.
+_Avoid_: standalone lease release, inferred outcome
+
+## Durable state
 
 **Dispatch Registry**:
-The global durable record of proposals, Active Dispatches, deadlines, outcomes, pane revisions, Worktree Write Leases, and append-only audit events across local Herdr workspaces, recoverable by Pi after Pi or Herdr restarts. Current state is stored directly rather than rebuilt through event sourcing. Settled records and their events are retained for 30 days by default, configurable from 1 through 365 days; unsettled records are never automatically purged. V1 proposals contain exactly one dispatch; independently confirmed dispatches are limited by default to four active per workspace and eight globally, with configurable limits. Registry corruption, failed migration, or unavailable transactional access fails closed and never falls back to an empty or in-memory registry.
-_Avoid_: chat-local state, pane-local state, per-workspace lease silo, permanent settled history, batch confirmation, unbounded fan-out, state-loss fallback, full event sourcing
+The durable source of truth for dispatches, reservations, results, context delivery, and audit history across local Pi processes. It fails closed rather than forgetting unsettled reservations.
+_Avoid_: chat-local state, in-memory fallback, full event sourcing
 
-**Recovery Scan**:
-A bounded scan of a Dispatch Target's pane history from the revision captured at delivery, used after coordinator takeover to recover an exact matching Result Envelope; missing history produces a Result-Missing Dispatch rather than an inferred outcome.
-_Avoid_: live-output-only recovery, inferred completion
-
-**Coordinator Lease**:
-The renewable, exclusive right held by one Pi instance to monitor and settle Active Dispatches; it lasts 30 seconds and is renewed every 10 seconds, and another Pi may take over only after it expires.
-_Avoid_: duplicate coordinators, permanent ownership
-
-**Monitoring-Paused Dispatch**:
-An Active Dispatch temporarily unobservable because the local Herdr server or socket is unavailable; target occupancy and leases remain, one notification is emitted, reconnection uses exponential backoff, and recovery revalidates the target and scans pane history.
-_Avoid_: failure settlement, lease release, retry spam
+**Origin Monitor**:
+The monitoring role performed only by the running TUI Origin Session for dispatches it confirmed. V1 has no takeover by another Pi session.
+_Avoid_: global coordinator, foreign-session settlement

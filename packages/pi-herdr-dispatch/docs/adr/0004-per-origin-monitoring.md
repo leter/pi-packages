@@ -1,0 +1,3 @@
+# Use per-origin monitoring in V1
+
+Only the running TUI Origin Session monitors and settles dispatches it confirmed; other Pi sessions may enforce global reservations and perform explicitly confirmed emergency resolution, but they do not take over monitoring. Coordinator election, fencing epochs, and revision-cursor recovery were rejected for V1 because they created distributed-state complexity around an external Herdr side effect and depended on pane-history cursor semantics the installed API does not expose. When the Origin Session is closed, settlement and lease release are delayed until that exact session resumes and performs a bounded tail catch-up; this reduced availability is an accepted V1 trade-off.
