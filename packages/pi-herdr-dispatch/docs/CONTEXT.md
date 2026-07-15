@@ -105,8 +105,8 @@ An unsettled dispatch whose target persistently left its confirmed directory or 
 _Avoid_: transient child-shell directory, automatic lease transfer
 
 **Monitoring-Paused Dispatch**:
-An unsettled dispatch temporarily unobservable because its Origin Session or local Herdr connection is unavailable. Reservations remain intact.
-_Avoid_: failed dispatch, takeover candidate
+An unsettled dispatch whose monitoring is temporarily paused. An active Origin Monitor stores this Attention Condition when its local Herdr connection is unavailable. When the Origin Session itself is closed, the monitoring gap is a derived fact recognized on resume, not a condition written while no monitor is running. Reservations remain intact in either case.
+_Avoid_: failed dispatch, takeover candidate, necessarily stored condition
 
 ## Mutation and safety
 
@@ -135,7 +135,7 @@ Any path that tasks or waits on another Agent outside a confirmed dispatch, leav
 _Avoid_: manual shell only, harmless command
 
 **Herdr Command Gate**:
-The best-effort Origin-side rule that allows recognized read-only Herdr inspection while denying recognized tasking, Agent creation, foreign-pane control, and blocking waits that would form a Dispatch Bypass.
+The best-effort Origin-side rule that allows scoped metadata inspection and reads of the current Pi pane while denying foreign output reads, cross-workspace snapshots, tasking, Agent creation, foreign-pane control, and blocking waits that would bypass typed policies.
 _Avoid_: shell sandbox, target-side enforcement
 
 ## Results and resolution
@@ -171,6 +171,10 @@ _Avoid_: forced interrupt, immediate release
 **Manual Resolution**:
 A double-confirmed Final Outcome recorded when automatic settlement is unsafe or impossible, after presenting current target and worktree evidence. It is the only manual way to release reservations.
 _Avoid_: standalone lease release, inferred outcome
+
+**Emergency Resolution**:
+A Manual Resolution performed by a non-Origin TUI session only after the user judges and twice confirms that the Origin Session is unavailable. It does not transfer monitoring or deliver context to the resolver. If it races automatic settlement, the first transactional settlement wins and the loser only reports the recorded Final Outcome.
+_Avoid_: automatic takeover, process-liveness proof, second settlement
 
 ## Durable state
 

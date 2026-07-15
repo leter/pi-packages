@@ -147,7 +147,30 @@ Verified and correct as claimed:
 - The notification sound mapping and metadata TTL approach match the installed API exactly; widget-instead-of-footer respects the machine's existing customization.
 - CONTEXT-MAP.md is appropriate: the two contexts are genuinely independent, and "no relationship yet" is honest.
 
-## Verdict
+---
+
+# Re-review after revision (2026-07-15, second pass)
+
+All 24 original findings (C1–C2, H1–H6, M1–M10, L1–L7) are substantively addressed and all eight scope cuts were adopted (verified against the revised DESIGN.md, CONTEXT.md, and ADRs 0001–0005). The revision introduced one genuine policy contradiction and three wording gaps:
+
+**N1 (Medium). The raw-CLI read allowlist contradicts two of the design's own policies** (DESIGN.md "Raw Herdr CLI gate" allow list vs "Model tools" / "Explicit V1 scope cuts")
+- **Observation**: The gate allows `herdr pane read`, `herdr agent read`, and `herdr api snapshot` through bash. The same document states (a) Agent Output Inspection is "one user-authorized bounded read, not continuing surveillance", and (b) V1 cuts "model access to foreign Agent metadata" — `herdr_agents_list` is workspace-restricted with "no all-workspaces parameter".
+- **Failure scenario**: Instead of calling `herdr_agent_output_inspect` (which requires an explicit user request), the model repeatedly runs `herdr pane read w8:p5` — the gate allows it (read-only), applies only untrusted framing, and performs **no authorization check**, achieving the prohibited continuous surveillance. Likewise one `herdr api snapshot` puts every workspace's Agents/cwds/status into model context, hollowing out the M9 fix via the bash path.
+- **Recommendation (smallest fix)**: Move foreign-pane `pane read`/`agent read` and `api snapshot` from the allow list to the deny list, redirecting to `herdr_agent_output_inspect` / `herdr_agents_list` (reads of the Pi's *own* pane may stay allowed). Alternatively, explicitly retract the one-read-per-authorization and workspace-scoping promises — but do not keep both the allowlist and the promises.
+
+**N2 (Low). Emergency resolution lacks a glossary entry and an availability rule.** DESIGN.md defines the flow for a non-Origin TUI session, but CONTEXT.md's Manual Resolution does not distinguish Origin vs emergency, and "when the Origin Session is unavailable" has no determination mechanism. State that availability is judged by the user (double-confirmed) and that a race with automatic settlement is resolved transactionally first-wins (the integration test already covers this).
+
+**N3 (Low). Terminology drift**: DESIGN.md "Status semantics" still says "final `blocked` Dispatch Outcome"; the glossary renamed the term to "Final Outcome".
+
+**N4 (Low). Monitoring-Paused semantics when the Origin is closed**: CONTEXT.md defines it to include "Origin Session … unavailable", but no process records that Attention Condition while the Origin is closed — it can only be derived at resume/display time. Distinguish stored conditions from derived facts in the wording.
+
+## Re-review verdict
+
+**Ready after specified design corrections** (the previous "requires architectural simplification" is lifted). Fix N1 plus the three wording items and the design is ready for implementation planning. The core dispatch lifecycle, crash consistency, and threat-model wording now hold, and nothing depends on nonexistent API semantics — the "Required compatibility checks" section properly converts all remaining unknowns into a pre-implementation spike list.
+
+---
+
+## Original verdict (first pass)
 
 **Requires architectural simplification before planning.**
 

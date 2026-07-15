@@ -59,7 +59,7 @@ Herdr statuses are interpreted as follows:
 
 - `idle` and `done`: **idle-like** — both mean the Agent is no longer working. Officially, `idle` means waiting with its result considered seen, while `done` means completed with its result unseen ([Herdr agent skill](https://herdr.dev/docs/agent-skill/)). Either is eligible for a new dispatch when no Target Occupancy exists; after work either triggers result lookup and, without a valid result, `result-missing`.
 - `working`: execution acknowledgement/progress.
-- `blocked`: runtime attention only; it is not the final `blocked` Dispatch Outcome.
+- `blocked`: runtime attention only; it is not the `blocked` Final Outcome.
 - `unknown`: ineligible and never interpreted as completion.
 
 Status provenance is not assumed to be a direct `AgentInfo` field. Until a live compatibility probe proves integration authority semantics for the installed Herdr version, proposals label status as **screen-detected (best effort)**. A future reported status may be displayed only when the adapter can positively establish authority; absence of evidence never becomes `reported`.
@@ -222,15 +222,16 @@ The globally installed official Herdr skill teaches Pi to use Herdr through ordi
 
 The extension's own typed Herdr socket adapter does not pass through this shell gate.
 
-Commands proven read-only are allowed, including:
+Commands proven read-only and not capable of bypassing typed inspection scope are allowed, including:
 
-- `herdr status`, `herdr api snapshot`, `herdr api schema`;
-- `herdr pane list|get|read|current|layout|process-info|neighbor|edges`;
-- `herdr agent list|get|read|explain`;
+- `herdr status`, `herdr api schema`;
+- `herdr pane list|get|current|layout|process-info|neighbor|edges`;
+- `herdr agent list|get|explain`;
 - `herdr workspace list|get`, `herdr tab list|get`, `herdr worktree list`;
-- `herdr integration status`.
+- `herdr integration status`;
+- `herdr pane read` only when the target is proven to be this Pi's own pane.
 
-Allowed pane/Agent read output is still untrusted. When it will enter model context, the corresponding tool result is wrapped in `<untrusted-herdr-cli-output>` framing just like Agent Output Inspection.
+Allowed Herdr output is still untrusted. When it will enter model context, the corresponding tool result is wrapped in `<untrusted-herdr-cli-output>` framing.
 
 Commands that task, create, control, close, or block on another pane are denied and direct the user/model to `/herdr-dispatch` or `herdr_dispatch_propose`. The deny set includes at minimum:
 
@@ -238,9 +239,11 @@ Commands that task, create, control, close, or block on another pane are denied 
 - `herdr pane split` (it creates another pane) and `herdr agent start`;
 - `herdr agent send` when it resolves to another Agent;
 - `herdr wait agent-status|output` for foreign targets;
+- `herdr pane read` for a foreign or ambiguous pane and every `herdr agent read`, redirected to one explicitly user-authorized `herdr_agent_output_inspect` call;
+- `herdr api snapshot`, redirected to typed, current-Workspace-Scope tools such as `herdr_agents_list`;
 - any non-allowlisted Herdr command whose effect on a foreign pane/resource cannot be proven read-only.
 
-An omitted, focused, name-based, or otherwise ambiguous target is treated as foreign. A compound shell command is allowed only when every Herdr invocation in it is classified read-only. A literal Herdr invocation that cannot be parsed is denied rather than guessed safe.
+An omitted, focused, name-based, or otherwise ambiguous target is treated as foreign. The current-pane exception is accepted only when the classifier proves the resolved pane ID equals `HERDR_PANE_ID`; it is never inferred from focus. A compound shell command is allowed only when every Herdr invocation in it is classified read-only. A literal Herdr invocation that cannot be parsed is denied rather than guessed safe.
 
 This gate preserves the skill's inspection value while preventing its documented tasking workflow from becoming the normal bypass. It is not a shell sandbox: indirection through generated scripts, aliases, alternate binaries, custom tools, direct socket code, or an external terminal may evade classification.
 
@@ -295,7 +298,9 @@ If the target becomes idle-like (`idle` or `done`) without a valid result, `resu
 
 If the terminal ID disappears, `target-lost` is added. If two consecutive five-second polls show `PaneInfo.cwd` outside the confirmed directory/worktree, `target-moved` is added. These pausing Attention Conditions stop normal settlement and retain reservations until manual resolution.
 
-If the local Herdr socket is unavailable while the Origin Session is active, `monitoring-paused` is added, one notification is emitted, and reconnect uses exponential backoff. No outcome is inferred and no reservation is released.
+If the local Herdr socket is unavailable while the Origin Session is active, the stored `monitoring-paused` Attention Condition is added, one notification is emitted, and reconnect uses exponential backoff. No outcome is inferred and no reservation is released.
+
+If the Origin Session is closed, no monitor exists to write that condition. The resulting monitoring gap is a derived fact recognized when the exact Origin Session resumes; emergency resolution relies on explicit user attestation of Origin unavailability rather than a stored `monitoring-paused` record.
 
 ## Cancellation and manual resolution
 
@@ -311,7 +316,9 @@ V1 does not send `Ctrl+C`. If normal cancellation does not settle, the UI instru
 4. records the resolver session ID;
 5. atomically settles and releases reservations.
 
-The Origin Session normally resolves its own records. A different local TUI session may perform an explicitly labelled **emergency resolution** when the Origin Session is unavailable; it cannot adopt monitoring or inject a result into its own model context.
+The Origin Session normally resolves its own records. A different local TUI session may perform an explicitly labelled **emergency resolution** only when the user judges the Origin Session unavailable. The UI shows the Origin Session ID and last-known evidence, requires the user to attest unavailability in the first confirmation, and repeats the emergency nature and reservation release in the second confirmation; process absence is not inferred as authoritative availability evidence. The emergency resolver cannot adopt monitoring or inject a result into its own model context.
+
+Automatic settlement and emergency resolution race through the same transactional unsettled-to-settled compare-and-set. First settlement wins; the loser reports the already-recorded Final Outcome and performs no second release or context delivery.
 
 Reply and cancellation are slash-command actions only in V1. They are not model tools.
 
@@ -350,7 +357,7 @@ An explicit Agent Output Inspection is a separate, user-authorized path that doe
 </untrusted-agent-output>
 ```
 
-The wrapper instructs the model to treat the body as data, not instructions. Allowed raw Herdr read commands invoked through `bash` use equivalent `<untrusted-herdr-cli-output>` framing before their output enters context. Blocked-runtime captures shown only in TUI/notifications do not enter model context unless the user explicitly invokes inspection.
+The wrapper instructs the model to treat the body as data, not instructions. Allowed current-pane Herdr reads invoked through `bash` use equivalent `<untrusted-herdr-cli-output>` framing before their output enters context. Blocked-runtime captures shown only in TUI/notifications do not enter model context unless the user explicitly invokes inspection.
 
 ## Origin Session result delivery
 
@@ -501,8 +508,10 @@ Any failure tightens behavior to attention/fail-closed; it must not introduce he
 - built-in tool plus `user_bash` lease-guard classification;
 - Herdr CLI allow/deny classification for direct, quoted, piped, compound, ambiguous-target, and unparseable invocations;
 - prompt guideline presence and precedence over skill-guided tasking;
-- untrusted output framing for inspection and allowed raw Herdr reads;
+- untrusted output framing for typed inspection and allowed current-pane Herdr reads;
 - Origin Session ID and active-branch delivery rules;
+- emergency-resolution eligibility, user attestation, and double confirmation;
+- stored socket-disconnect versus derived Origin-closed monitoring pauses;
 - retention and notification policy.
 
 ### Integration
@@ -515,9 +524,10 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 - pane close/move between final revalidation and send, including conformance with the official closed-ID non-reuse guarantee;
 - globally unique Target Occupancy and Worktree Write Leases across Pi processes;
 - raw `bash` and `user_bash` attempts to run `pane run`, `agent send/start`, `pane split`, and blocking waits;
-- read-only Herdr CLI commands remaining usable with untrusted output framing;
+- harmless Herdr metadata commands and current-pane reads remaining usable with untrusted output framing while foreign reads and `api snapshot` are denied;
 - two Origins racing to acquire the same target/worktree;
-- result settlement racing an emergency manual resolution;
+- result settlement racing an emergency manual resolution, with transactional first-wins behavior;
+- emergency resolution rejecting automatic liveness inference and requiring a non-Origin TUI plus user attestation;
 - active-branch result append crash/retry and branch change during append;
 - Herdr disconnect/reconnect with bounded Catch-Up Read;
 - target ending in `done` without a result;
@@ -539,7 +549,7 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 8. Restart Herdr during active work and record identity/history behavior without assuming continuity.
 9. Verify no result triggers a model turn and forks/clones do not claim Origin results.
 10. Verify settlement injects only sanitized results while explicit inspection returns untrusted-framed output.
-11. Ask Pi naturally to “use Herdr to task the adjacent Agent” and verify the official skill cannot bypass proposal/confirmation through `bash`, `!`, or `!!`; verify read-only inspection still works.
+11. Ask Pi naturally to “use Herdr to task the adjacent Agent” and verify the official skill cannot bypass proposal/confirmation through `bash`, `!`, or `!!`; verify current-pane reads still work, while repeated foreign reads and `api snapshot` redirect to typed tools.
 12. Verify Registry failure preserves reservations and disables state changes.
 
 ## Review findings addressed
@@ -550,8 +560,10 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 - **H2:** removed `guarded` from V1; all target constraints are advisory.
 - **H3:** immediate same-connection route revalidation, close/move observation, post-send echo verification, and a narrowed residual race; Herdr's official closed-ID non-reuse guarantee removes the pane-ID-retargeting worst case.
 - **H4:** `done` is idle-like for eligibility, result-missing, and manual cancellation guidance, matching Herdr's official “completed, result unseen” semantics.
-- **H5:** raw output exclusion is settlement-specific; explicit inspection and allowed raw Herdr reads use untrusted framing.
-- **H6:** the same origin-side classifier gates `bash` and `user_bash`, dispatch-sensitive raw Herdr commands are denied, read-only Herdr inspection remains available, and dispatch tools explicitly instruct the model to use `herdr_dispatch_propose`.
+- **H5:** raw output exclusion is settlement-specific; explicit inspection and allowed current-pane reads use untrusted framing.
+- **H6:** the same origin-side classifier gates `bash` and `user_bash`, dispatch-sensitive raw Herdr commands are denied, scoped metadata inspection and current-pane reads remain available, and dispatch tools explicitly instruct the model to use `herdr_dispatch_propose`.
+- **N1:** foreign pane/Agent reads and `api snapshot` are denied so raw CLI cannot bypass one-shot inspection authorization or Workspace Scope.
+- **N2–N4:** emergency availability is user-attested with transactional first-wins settlement; Final Outcome terminology is consistent; stored and derived monitoring-paused semantics are distinct.
 
 ## Decisions recorded separately
 
