@@ -68,6 +68,24 @@ describe("Registry lifecycle, attention, and audit", () => {
     ]);
   });
 
+  it("updates mutable pane routes without changing terminal identity and records monitor audit", async () => {
+    const { registry } = await openRegistry();
+    registry.confirmDeliveryIntent(intent());
+
+    expect(registry.updateTargetRoute("hd_lifecycle", "p-moved", 1_050)).toBe("changed");
+    expect(registry.updateTargetRoute("hd_lifecycle", "p-moved", 1_060)).toBe("unchanged");
+    registry.recordAudit("hd_lifecycle", "monitor-catch-up", { lines: 200 }, 1_070);
+
+    expect(registry.getDispatch("hd_lifecycle")).toEqual(
+      expect.objectContaining({ targetTerminalId: "term_target", targetPaneId: "p-moved" }),
+    );
+    expect(registry.listAuditEvents("hd_lifecycle").map((event) => event.eventType)).toEqual([
+      "delivery-intent-confirmed",
+      "target-route-updated",
+      "monitor-catch-up",
+    ]);
+  });
+
   it("stores coexisting Attention Conditions idempotently", async () => {
     const { registry } = await openRegistry();
     registry.confirmDeliveryIntent(intent());

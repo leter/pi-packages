@@ -94,9 +94,16 @@ describe("first-wins settlement and active-branch claims", () => {
         outcome: "failed",
         sanitizedResult: { id: "hd_settle", outcome: "failed", summary: "Failed early" },
         kind: "manual",
+        resolverSessionId: "session-resolver",
         settledAt: 1_100,
       }),
     ).toEqual({ status: "settled", outcome: "failed" });
+    expect(registry.listAuditEvents("hd_settle").at(-1)).toEqual(
+      expect.objectContaining({
+        eventType: "dispatch-settled",
+        data: expect.objectContaining({ resolverSessionId: "session-resolver" }),
+      }),
+    );
   });
 
   it("lets only the first conflicting settlement win across Registry connections", async () => {

@@ -240,6 +240,46 @@ export class DispatchRegistry {
     );
   }
 
+  updateTargetRoute(
+    dispatchId: string,
+    paneId: string,
+    updatedAt: number,
+  ): "changed" | "unchanged" {
+    if (!paneId) throw new TypeError("paneId must not be empty");
+    validateTimestamp(updatedAt, "updatedAt");
+    return this.#mutate("update target route", () => {
+      this.#assertUnsettled(dispatchId);
+      const current = this.#database
+        .prepare("SELECT target_pane_id FROM dispatches WHERE id = ?")
+        .get(dispatchId) as { target_pane_id: string };
+      if (current.target_pane_id === paneId) return "unchanged";
+      this.#database
+        .prepare("UPDATE dispatches SET target_pane_id = ?, updated_at = ? WHERE id = ?")
+        .run(paneId, updatedAt, dispatchId);
+      this.#appendAudit(
+        dispatchId,
+        "target-route-updated",
+        { previousPaneId: current.target_pane_id, paneId },
+        updatedAt,
+      );
+      return "changed";
+    });
+  }
+
+  recordAudit(dispatchId: string, eventType: string, data: unknown, createdAt: number): void {
+    if (!/^[a-z0-9-]{1,80}$/u.test(eventType)) throw new TypeError("invalid audit event type");
+    validateTimestamp(createdAt, "createdAt");
+    const dataJson = serializeJson(data, "audit data");
+    this.#mutate("record audit event", () => {
+      this.#dispatchLifecycle(dispatchId);
+      this.#database
+        .prepare(
+          "INSERT INTO audit_events(dispatch_id, event_type, data_json, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(dispatchId, eventType, dataJson, createdAt);
+    });
+  }
+
   markActive(dispatchId: string, activeAt: number): "changed" | "unchanged" {
     validateTimestamp(activeAt, "activeAt");
     return this.#mutate("mark dispatch active", () => {
@@ -402,7 +442,13 @@ export class DispatchRegistry {
       this.#appendAudit(
         input.dispatchId,
         "dispatch-settled",
-        { outcome: input.outcome, kind: input.kind },
+        {
+          outcome: input.outcome,
+          kind: input.kind,
+          ...(input.resolverSessionId === undefined
+            ? {}
+            : { resolverSessionId: input.resolverSessionId }),
+        },
         input.settledAt,
       );
       return { status: "settled", outcome: input.outcome };

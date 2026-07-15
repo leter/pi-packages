@@ -23,6 +23,10 @@ export type HerdrMonitorEvent =
   | { type: "agent-status-changed"; paneId: string; workspaceId: string; status: HerdrAgentStatus }
   | { type: "output-matched"; paneId: string; matchedLine: string; read: HerdrPaneRead };
 
+export type HerdrSubscriptionState =
+  | { status: "connected" }
+  | { status: "disconnected"; error: Error };
+
 export interface HerdrSubscriptionOptions {
   requestTimeoutMs?: number;
   reconnectMinMs?: number;
@@ -37,6 +41,7 @@ export class HerdrSubscriptionStream {
   readonly #reconnectMaxMs: number;
   #targets: HerdrMonitorTarget[] = [];
   #listener?: (event: HerdrMonitorEvent) => void;
+  #stateListener?: (state: HerdrSubscriptionState) => void;
   #client?: HerdrSocketClient;
   #timer?: NodeJS.Timeout;
   #stabilityTimer?: NodeJS.Timeout;
@@ -59,10 +64,12 @@ export class HerdrSubscriptionStream {
   async start(
     targets: readonly HerdrMonitorTarget[],
     listener: (event: HerdrMonitorEvent) => void,
+    stateListener?: (state: HerdrSubscriptionState) => void,
   ): Promise<void> {
     if (this.#closed) throw new HerdrDisconnectedError("subscription stream is closed", false);
     this.#targets = normalizeTargets(targets);
     this.#listener = listener;
+    this.#stateListener = stateListener;
     await this.#restart();
   }
 
@@ -119,8 +126,9 @@ export class HerdrSubscriptionStream {
       const event = parseMonitorEvent(envelope, this.#workspaceId);
       if (event) this.#listener?.(event);
     });
-    client.onDisconnect(() => {
+    client.onDisconnect((error) => {
       if (this.#client === client) this.#client = undefined;
+      this.#stateListener?.({ status: "disconnected", error });
       this.#scheduleReconnect(generation);
     });
     try {
@@ -129,6 +137,7 @@ export class HerdrSubscriptionStream {
         { subscriptions: buildSubscriptions(this.#targets) },
         "subscription_started",
       );
+      this.#stateListener?.({ status: "connected" });
       this.#clearStabilityTimer();
       this.#stabilityTimer = setTimeout(() => {
         if (this.#client === client) this.#attempt = 0;

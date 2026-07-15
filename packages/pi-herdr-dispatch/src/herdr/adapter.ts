@@ -24,6 +24,7 @@ import {
 import {
   type HerdrMonitorEvent,
   type HerdrMonitorTarget,
+  type HerdrSubscriptionState,
   HerdrSubscriptionStream,
 } from "./subscription.js";
 
@@ -144,6 +145,7 @@ export class HerdrAdapter {
   async monitorTargets(
     targets: readonly HerdrMonitorTarget[],
     listener: (event: HerdrMonitorEvent) => void,
+    stateListener?: (state: HerdrSubscriptionState) => void,
   ): Promise<void> {
     if (this.#closed) throw new HerdrDisconnectedError("Herdr adapter is closed", false);
     this.#subscription ??= new HerdrSubscriptionStream(
@@ -162,11 +164,15 @@ export class HerdrAdapter {
       },
     );
     this.#invalidatedPaneIds.clear();
-    await this.#subscription.start(targets, (event) => {
-      if (event.type === "pane-closed") this.#invalidatedPaneIds.add(event.paneId);
-      if (event.type === "pane-moved") this.#invalidatedPaneIds.add(event.previousPaneId);
-      listener(event);
-    });
+    await this.#subscription.start(
+      targets,
+      (event) => {
+        if (event.type === "pane-closed") this.#invalidatedPaneIds.add(event.paneId);
+        if (event.type === "pane-moved") this.#invalidatedPaneIds.add(event.previousPaneId);
+        listener(event);
+      },
+      stateListener,
+    );
   }
 
   async deliverAndVerify(

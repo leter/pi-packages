@@ -10,7 +10,11 @@ import type {
   HerdrEchoVerificationOptions,
 } from "../herdr/delivery.js";
 import type { HerdrPaneRead } from "../herdr/protocol.js";
-import type { HerdrMonitorEvent, HerdrMonitorTarget } from "../herdr/subscription.js";
+import type {
+  HerdrMonitorEvent,
+  HerdrMonitorTarget,
+  HerdrSubscriptionState,
+} from "../herdr/subscription.js";
 import {
   RegistryConflictError,
   type DispatchRegistry,
@@ -30,6 +34,7 @@ export interface HerdrDispatchPort {
   monitorTargets(
     targets: readonly HerdrMonitorTarget[],
     listener: (event: HerdrMonitorEvent) => void,
+    stateListener?: (state: HerdrSubscriptionState) => void,
   ): Promise<void>;
   deliverAndVerify(
     request: HerdrDeliveryRequest,
@@ -70,6 +75,8 @@ export interface DispatchApplicationOptions {
   now?: () => number;
   nextCorrelationId?: () => string;
   resolveWorktree?: (cwd: string) => Promise<string>;
+  prepareMonitoring?: (targets: readonly HerdrMonitorTarget[]) => Promise<void>;
+  onIntentRecorded?: () => void | Promise<void>;
 }
 
 export class ProposalTargetError extends Error {
@@ -95,6 +102,8 @@ export class DispatchApplication {
   readonly #now: () => number;
   readonly #nextCorrelationId?: () => string;
   readonly #resolveWorktree: (cwd: string) => Promise<string>;
+  readonly #prepareMonitoring: (targets: readonly HerdrMonitorTarget[]) => Promise<void>;
+  readonly #onIntentRecorded: () => void | Promise<void>;
   readonly #proposals = new Map<string, DispatchProposal>();
 
   constructor(options: DispatchApplicationOptions) {
@@ -106,6 +115,10 @@ export class DispatchApplication {
     this.#now = options.now ?? Date.now;
     this.#nextCorrelationId = options.nextCorrelationId;
     this.#resolveWorktree = options.resolveWorktree ?? resolveCanonicalWorktree;
+    this.#prepareMonitoring =
+      options.prepareMonitoring ??
+      ((targets) => this.#herdr.monitorTargets(targets, () => undefined));
+    this.#onIntentRecorded = options.onIntentRecorded ?? (() => undefined);
   }
 
   async listEligibleAgents(): Promise<readonly ProposalTarget[]> {
@@ -207,10 +220,10 @@ export class DispatchApplication {
       paneId: dispatch.targetPaneId,
       correlationId: dispatch.id,
     }));
-    await this.#herdr.monitorTargets(
-      [...existingTargets, { paneId: resolved.pane.paneId, correlationId: proposal.id }],
-      () => undefined,
-    );
+    await this.#prepareMonitoring([
+      ...existingTargets,
+      { paneId: resolved.pane.paneId, correlationId: proposal.id },
+    ]);
 
     const confirmedAt = this.#now();
     this.#registry.confirmDeliveryIntent({
@@ -236,6 +249,7 @@ export class DispatchApplication {
       maxActivePerTargetWorkspace: this.#config.maxActivePerTargetWorkspace,
       maxActiveGlobal: this.#config.maxActiveGlobal,
     });
+    await this.#onIntentRecorded();
 
     let delivery: HerdrDeliveryResult;
     try {

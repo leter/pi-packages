@@ -95,6 +95,7 @@ export interface SettleDispatchInput {
   rawEnvelope?: string;
   sanitizedResult: unknown;
   kind: "result" | "manual" | "emergency" | "delivery-failed";
+  resolverSessionId?: string;
   settledAt: number;
 }
 
