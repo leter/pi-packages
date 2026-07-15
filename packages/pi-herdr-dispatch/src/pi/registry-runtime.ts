@@ -22,6 +22,10 @@ export class RegistryRuntime {
     return this.#registry;
   }
 
+  get unavailableReason(): string | undefined {
+    return this.#registry ? undefined : this.#unavailableReason;
+  }
+
   async start(): Promise<boolean> {
     this.stop();
     try {

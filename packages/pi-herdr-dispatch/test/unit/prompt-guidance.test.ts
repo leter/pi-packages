@@ -19,8 +19,10 @@ describe("dispatch proposal prompt guidance", () => {
     );
   });
 
-  it("fails closed until the confirmed proposal flow is implemented", async () => {
-    const tool = createDispatchProposalToolDefinition();
+  it("delegates execution to the confirmed proposal flow", async () => {
+    const tool = createDispatchProposalToolDefinition(async (params) =>
+      `confirmed ${params.target}`,
+    );
 
     await expect(
       tool.execute(
@@ -34,6 +36,9 @@ describe("dispatch proposal prompt guidance", () => {
         undefined,
         undefined as never,
       ),
-    ).rejects.toThrow("not available until Phase 4");
+    ).resolves.toEqual({
+      content: [{ type: "text", text: "confirmed term_target" }],
+      details: {},
+    });
   });
 });

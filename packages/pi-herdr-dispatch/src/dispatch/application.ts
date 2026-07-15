@@ -237,23 +237,35 @@ export class DispatchApplication {
       maxActiveGlobal: this.#config.maxActiveGlobal,
     });
 
-    const delivery = await this.#herdr.deliverAndVerify(
-      {
-        target: {
-          terminalId: proposal.target.terminalId,
-          expectedAgent: proposal.target.agentLabel,
-          expectedCwd: proposal.target.cwd,
+    let delivery: HerdrDeliveryResult;
+    try {
+      delivery = await this.#herdr.deliverAndVerify(
+        {
+          target: {
+            terminalId: proposal.target.terminalId,
+            expectedAgent: proposal.target.agentLabel,
+            expectedCwd: proposal.target.cwd,
+          },
+          correlationId: proposal.id,
+          text: proposal.payload,
         },
-        correlationId: proposal.id,
-        text: proposal.payload,
-      },
-      { echoWindowMs: this.#config.startupWindowMs },
-    );
+        { echoWindowMs: this.#config.startupWindowMs },
+      );
+    } catch (error) {
+      const settled = this.#addDeliveryAttentionOrReadSettlement(
+        proposal.id,
+        { reason: "adapter-error", detail: errorMessage(error) },
+        this.#now(),
+      );
+      if (settled) return settled;
+      return { status: "delivery-unverified", dispatchId: proposal.id, lifecycle: "delivering" };
+    }
     return this.#recordDelivery(proposal, delivery);
   }
 
   getDispatch(dispatchId: string): StoredDispatch | undefined {
-    return this.#registry.getDispatch(dispatchId);
+    const dispatch = this.#registry.getDispatch(dispatchId);
+    return dispatch?.targetWorkspaceId === this.#workspaceId ? dispatch : undefined;
   }
 
   listUnsettled(originSessionId?: string): readonly StoredDispatch[] {
@@ -373,13 +385,33 @@ export class DispatchApplication {
         outcome: dispatch.finalOutcome ?? "unknown",
       };
     }
-    this.#registry.addAttention(
+    const settled = this.#addDeliveryAttentionOrReadSettlement(
       proposal.id,
-      "delivery-unverified",
       { reason: delivery.reason, detail: delivery.detail },
       now,
     );
+    if (settled) return settled;
     return { status: "delivery-unverified", dispatchId: proposal.id, lifecycle };
+  }
+
+  #addDeliveryAttentionOrReadSettlement(
+    dispatchId: string,
+    details: unknown,
+    addedAt: number,
+  ): Extract<ConfirmationResult, { status: "already-settled" }> | undefined {
+    try {
+      this.#registry.addAttention(dispatchId, "delivery-unverified", details, addedAt);
+      return undefined;
+    } catch (error) {
+      if (!(error instanceof RegistryStateError)) throw error;
+      const dispatch = this.#registry.getDispatch(dispatchId);
+      if (dispatch?.lifecycle !== "settled") throw error;
+      return {
+        status: "already-settled",
+        dispatchId,
+        outcome: dispatch.finalOutcome ?? "unknown",
+      };
+    }
   }
 
   #markActiveOrReadSettlement(
@@ -409,6 +441,10 @@ function required(value: string, label: string): string {
 
 function safeText(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ").slice(0, 160);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export { RegistryConflictError };

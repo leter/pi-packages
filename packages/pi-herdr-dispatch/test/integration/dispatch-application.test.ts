@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -59,7 +59,9 @@ class FakeHerdr implements HerdrDispatchPort {
   };
   resolved: ResolvedHerdrTarget | undefined = { pane, agent };
   beforeDelivery?: () => void;
+  deliveryError?: Error;
   monitored: HerdrMonitorTarget[] = [];
+  readLines?: 50 | 200;
 
   async currentWorkspaceSnapshot(): Promise<CurrentWorkspaceSnapshot> {
     return {
@@ -84,11 +86,22 @@ class FakeHerdr implements HerdrDispatchPort {
 
   async deliverAndVerify(): Promise<HerdrDeliveryResult> {
     this.beforeDelivery?.();
+    if (this.deliveryError) throw this.deliveryError;
     return this.delivery;
   }
 
-  async readTail(): Promise<never> {
-    throw new Error("not used");
+  async readTail(_paneId: string, lines: 50 | 200) {
+    this.readLines = lines;
+    return {
+      paneId: pane.paneId,
+      workspaceId: pane.workspaceId,
+      tabId: pane.tabId,
+      source: "recent_unwrapped" as const,
+      format: "text" as const,
+      text: Array.from({ length: 60 }, (_, index) => `line ${index + 1}`).join("\n"),
+      revision: 3,
+      truncated: false,
+    };
   }
 }
 
@@ -108,7 +121,7 @@ async function harness() {
     originTerminalId: "term-origin",
     now: () => now,
     nextCorrelationId: () => `hd_test_${++sequence}`,
-    resolveWorktree: async (cwd) => realpath(cwd),
+    resolveWorktree: async () => "/canonical/worktree",
   });
   return {
     application,
@@ -172,6 +185,38 @@ describe("DispatchApplication", () => {
     });
     expect(registry.getDispatch(proposal.id)?.lifecycle).toBe("active");
     expect(herdr.monitored).toEqual([{ paneId: "p-target", correlationId: proposal.id }]);
+    await expect(application.listEligibleAgents()).resolves.toEqual([]);
+    await expect(
+      application.createProposal({
+        target: "term-target",
+        mode: "non-mutating",
+        task: "Duplicate",
+      }),
+    ).rejects.toThrow("not an Eligible Agent");
+  });
+
+  it("resolves and atomically reserves the canonical worktree for write mode", async () => {
+    const { application, registry, herdr } = await harness();
+    const proposal = await application.createProposal({
+      target: "term-target",
+      mode: "write",
+      task: "Update the parser.",
+      deadlineMinutes: 15,
+      allowProjectDependencyInstall: true,
+    });
+    expect(proposal.target.worktreePath).toBe("/canonical/worktree");
+    herdr.beforeDelivery = () => {
+      expect(registry.listWriteLeases()).toEqual([
+        expect.objectContaining({
+          dispatchId: proposal.id,
+          worktreePath: "/canonical/worktree",
+        }),
+      ]);
+    };
+
+    await expect(application.confirmProposal(proposal, origin)).resolves.toEqual(
+      expect.objectContaining({ status: "active" }),
+    );
   });
 
   it("retains reservations and attention for both known-send and unknown-send ambiguity", async () => {
@@ -236,6 +281,65 @@ describe("DispatchApplication", () => {
     );
     expect(registry.getDispatch(proposal.id)).toBeUndefined();
     expect(registry.listTargetOccupancy()).toEqual([]);
+  });
+
+  it("keeps delivering reservations and adds attention on an unexpected adapter failure", async () => {
+    const { application, registry, herdr } = await harness();
+    const proposal = await application.createProposal({
+      target: "term-target",
+      mode: "non-mutating",
+      task: "Inspect",
+      deadlineMinutes: 15,
+      allowProjectDependencyInstall: false,
+    });
+    herdr.deliveryError = new Error("protocol stream failed");
+
+    await expect(application.confirmProposal(proposal, origin)).resolves.toEqual({
+      status: "delivery-unverified",
+      dispatchId: proposal.id,
+      lifecycle: "delivering",
+    });
+    expect(registry.getDispatch(proposal.id)?.lifecycle).toBe("delivering");
+    expect(registry.listAttention(proposal.id)).toEqual([
+      expect.objectContaining({ condition: "delivery-unverified" }),
+    ]);
+  });
+
+  it("treats settlement before markActive as a benign first-wins race", async () => {
+    const { application, registry, herdr } = await harness();
+    const proposal = await application.createProposal({
+      target: "term-target",
+      mode: "non-mutating",
+      task: "Inspect",
+      deadlineMinutes: 15,
+      allowProjectDependencyInstall: false,
+    });
+    herdr.beforeDelivery = () => {
+      registry.settle({
+        dispatchId: proposal.id,
+        outcome: "done",
+        sanitizedResult: { summary: "result arrived first" },
+        kind: "result",
+        settledAt: 1_750_000_000_001,
+      });
+    };
+
+    await expect(application.confirmProposal(proposal, origin)).resolves.toEqual({
+      status: "already-settled",
+      dispatchId: proposal.id,
+      outcome: "done",
+    });
+  });
+
+  it("supports one bounded explicit inspection while framing is left to the Pi adapter", async () => {
+    const { application, herdr } = await harness();
+
+    const inspected = await application.inspectAgent("Pi target", 12);
+
+    expect(herdr.readLines).toBe(50);
+    expect(inspected.target.terminalId).toBe("term-target");
+    expect(inspected.text.split("\n")).toHaveLength(12);
+    expect(inspected.text).toContain("line 60");
   });
 
   it("settles a proven not-sent delivery as failed and releases reservations", async () => {

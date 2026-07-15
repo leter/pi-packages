@@ -1,5 +1,5 @@
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export const HERDR_DISPATCH_PROMPT_GUIDELINE =
@@ -19,10 +19,22 @@ const proposalParameters = Type.Object({
   ),
 });
 
-export function createDispatchProposalToolDefinition(): ToolDefinition<
-  typeof proposalParameters,
-  Record<string, never>
-> {
+export interface DispatchProposalToolParams {
+  target: string;
+  task: string;
+  mode: "non-mutating" | "write";
+  deadlineMinutes?: number;
+  allowProjectDependencyInstall?: boolean;
+}
+
+export type DispatchProposalToolHandler = (
+  params: DispatchProposalToolParams,
+  ctx: ExtensionContext,
+) => Promise<string>;
+
+export function createDispatchProposalToolDefinition(
+  handler?: DispatchProposalToolHandler,
+): ToolDefinition<typeof proposalParameters, Record<string, never>> {
   return {
     name: "herdr_dispatch_propose",
     label: "Propose Herdr Dispatch",
@@ -31,8 +43,10 @@ export function createDispatchProposalToolDefinition(): ToolDefinition<
     promptSnippet: "Propose confirmed work for an existing Agent in the current Herdr workspace",
     promptGuidelines: [HERDR_DISPATCH_PROMPT_GUIDELINE],
     parameters: proposalParameters,
-    async execute() {
-      throw new Error("herdr_dispatch_propose is not available until Phase 4 is implemented");
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (!handler) throw new Error("herdr_dispatch_propose handler is not configured");
+      const text = await handler(params, ctx);
+      return { content: [{ type: "text", text }], details: {} };
     },
   };
 }
