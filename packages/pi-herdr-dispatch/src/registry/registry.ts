@@ -639,6 +639,12 @@ export class DispatchRegistry {
     } catch (error) {
       rollback(this.#database);
       if (error instanceof RegistryConflictError || error instanceof RegistryStateError) throw error;
+      if (isSqliteBusy(error)) {
+        throw new RegistryUnavailableError(
+          `Dispatch Registry ${operation} could not acquire its transaction before busy_timeout`,
+          error,
+        );
+      }
       this.#mutationsDisabledReason = `${operation} failed`;
       throw new RegistryUnavailableError(`Dispatch Registry ${operation} failed`, error);
     }
@@ -939,9 +945,14 @@ async function retrySqliteBusy(action: () => void, timeoutMs: number): Promise<v
 }
 
 function isSqliteBusy(error: unknown): boolean {
+  const errcode =
+    typeof error === "object" && error !== null && "errcode" in error
+      ? error.errcode
+      : undefined;
   return (
-    (typeof error === "object" && error !== null && "errcode" in error && error.errcode === 5) ||
-    (error instanceof Error && error.message.includes("database is locked"))
+    errcode === 5 ||
+    errcode === 6 ||
+    (error instanceof Error && /database is (?:busy|locked)/iu.test(error.message))
   );
 }
 

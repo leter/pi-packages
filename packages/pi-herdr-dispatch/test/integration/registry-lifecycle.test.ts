@@ -111,7 +111,7 @@ describe("Registry lifecycle, attention, and audit", () => {
     );
   });
 
-  it("disables further mutations after a lock error while retaining safe reads", async () => {
+  it("does not trip the structural mutation fuse when transient SQLITE_BUSY exhausts its timeout", async () => {
     const { registry, path } = await openRegistry(0);
     registry.confirmDeliveryIntent(intent());
     const blocker = new DatabaseSync(path, { timeout: 0 });
@@ -123,10 +123,8 @@ describe("Registry lifecycle, attention, and audit", () => {
     blocker.exec("ROLLBACK");
     blocker.close();
 
-    expect(registry.health().mutationsEnabled).toBe(false);
+    expect(registry.health().mutationsEnabled).toBe(true);
     expect(registry.getDispatch("hd_lifecycle")?.lifecycle).toBe("delivering");
-    expect(() => registry.addAttention("hd_lifecycle", "overdue", {}, 2_100)).toThrowError(
-      RegistryUnavailableError,
-    );
+    expect(registry.addAttention("hd_lifecycle", "overdue", {}, 2_100)).toBe("added");
   });
 });
