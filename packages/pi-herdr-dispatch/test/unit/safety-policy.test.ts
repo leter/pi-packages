@@ -33,23 +33,21 @@ describe("Herdr shell safety policy", () => {
     expect(classifyHerdrShell(command, context)).toEqual({ action: "allow" });
   });
 
-  it.each([
-    "herdr pane read w1:p1 --source recent-unwrapped --lines 50",
-    'herdr pane read "$HERDR_PANE_ID" --source recent-unwrapped | tail -20',
-  ])("allows a proven current-pane read and marks its output as untrusted: %s", (command) => {
-    expect(classifyHerdrShell(command, context)).toEqual({
-      action: "allow",
-      frameHerdrOutput: true,
-    });
-  });
-
-  it("does not trust a current-pane environment variable overridden by the command", () => {
+  it("allows a proven current-pane read and marks its output as untrusted", () => {
     expect(
       classifyHerdrShell(
-        'HERDR_PANE_ID=w1:p2 herdr pane read "$HERDR_PANE_ID"',
+        "herdr pane read w1:p1 --source recent-unwrapped --lines 50",
         context,
-      ).action,
-    ).toBe("deny");
+      ),
+    ).toEqual({ action: "allow", frameHerdrOutput: true });
+  });
+
+  it.each([
+    'herdr pane read "$HERDR_PANE_ID"',
+    'HERDR_PANE_ID=w1:p2 herdr pane read "$HERDR_PANE_ID"',
+    'export HERDR_PANE_ID=w1:p2; herdr pane read "$HERDR_PANE_ID"',
+  ])("treats shell-expanded pane targets as ambiguous: %s", (command) => {
+    expect(classifyHerdrShell(command, context).action).toBe("deny");
   });
 
   it.each([

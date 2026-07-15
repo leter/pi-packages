@@ -167,7 +167,7 @@ function classifyInvocation(
   }
 
   if (group === "pane" && subcommand === "read") {
-    return isProvenCurrentPane(target, invocation, context)
+    return isProvenCurrentPane(target, context)
       ? { action: "allow", frameHerdrOutput: true }
       : deny(
           "raw-herdr-output-read",
@@ -197,14 +197,9 @@ function classifyInvocation(
 
 function isProvenCurrentPane(
   target: string | undefined,
-  invocation: ShellInvocation,
   context: HerdrShellContext,
 ): boolean {
-  if (!target || !context.currentPaneId) return false;
-  if (target === context.currentPaneId) return true;
-
-  const referencesCurrentEnvironment = target === "$HERDR_PANE_ID" || target === "${HERDR_PANE_ID}";
-  return referencesCurrentEnvironment && !invocation.assignments.has("HERDR_PANE_ID");
+  return target !== undefined && context.currentPaneId !== undefined && target === context.currentPaneId;
 }
 
 function deny(
