@@ -22,6 +22,7 @@ export interface OriginContextPort {
 export class OriginContextDelivery {
   readonly #registry: DispatchRegistry;
   readonly #now: () => number;
+  readonly #enqueuedAtLeaf = new Map<string, string>();
 
   constructor(registry: DispatchRegistry, now: () => number = Date.now) {
     this.#registry = registry;
@@ -53,20 +54,28 @@ export class OriginContextDelivery {
     });
 
     let entry = findResultEntry(context.getBranch(), dispatchId);
-    if (!entry) {
-      context.sendMessage(
-        {
-          customType: DISPATCH_RESULT_CUSTOM_TYPE,
-          content: formatSanitizedResult(result.sanitizedResult),
-          display: true,
-          details: { dispatchId, outcome: result.outcome },
-        },
-        { deliverAs: "nextTurn", triggerTurn: false },
-      );
+    if (!entry && this.#enqueuedAtLeaf.get(dispatchId) !== claimLeafId) {
+      this.#enqueuedAtLeaf.set(dispatchId, claimLeafId);
+      try {
+        context.sendMessage(
+          {
+            customType: DISPATCH_RESULT_CUSTOM_TYPE,
+            content: formatSanitizedResult(result.sanitizedResult),
+            display: true,
+            details: { dispatchId, outcome: result.outcome },
+          },
+          { deliverAs: "nextTurn", triggerTurn: false },
+        );
+      } catch (error) {
+        entry = findResultEntry(context.getBranch(), dispatchId);
+        if (!entry) this.#enqueuedAtLeaf.delete(dispatchId);
+        throw error;
+      }
       entry = findResultEntry(context.getBranch(), dispatchId);
     }
     if (!entry) return "pending-branch-change";
 
+    this.#enqueuedAtLeaf.delete(dispatchId);
     this.#registry.completeContextDelivery({
       dispatchId,
       originSessionId: dispatch.originSessionId,

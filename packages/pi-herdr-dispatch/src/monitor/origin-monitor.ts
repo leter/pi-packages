@@ -167,7 +167,12 @@ export class OriginMonitor {
     if (!this.#running) return;
     if (event.type === "output-matched") {
       const dispatch = this.#dispatches().find((item) => item.targetPaneId === event.paneId);
-      if (dispatch) await this.#processRead(dispatch, event.read);
+      if (dispatch) {
+        const resolved = await this.#resolve(dispatch);
+        if (resolved?.pane.paneId === event.paneId && event.read.paneId === event.paneId) {
+          await this.#processRead(dispatch, event.read);
+        }
+      }
       return;
     }
     if (event.type === "pane-closed") {
@@ -244,7 +249,18 @@ export class OriginMonitor {
       kind: "result",
       settledAt: this.#clock.now(),
     });
-    if (settlement.status === "settled") await this.#onSettled(current.id);
+    if (settlement.status === "settled") {
+      try {
+        await this.#onSettled(current.id);
+      } catch (error) {
+        this.#registry.recordAudit(
+          current.id,
+          "context-delivery-pending",
+          { error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500) },
+          this.#clock.now(),
+        );
+      }
+    }
     return true;
   }
 

@@ -273,7 +273,22 @@ export class DispatchApplication {
         confirmedAt,
       );
     }
-    await this.#onIntentRecorded();
+    try {
+      await this.#onIntentRecorded();
+    } catch (error) {
+      this.#registry.settle({
+        dispatchId: proposal.id,
+        outcome: "failed",
+        sanitizedResult: {
+          id: proposal.id,
+          outcome: "failed",
+          summary: `Origin monitoring could not start before delivery: ${errorMessage(error).slice(0, 500)}`,
+        },
+        kind: "delivery-failed",
+        settledAt: this.#now(),
+      });
+      return { status: "failed", dispatchId: proposal.id, reason: "monitoring-unavailable" };
+    }
 
     let delivery: HerdrDeliveryResult;
     try {

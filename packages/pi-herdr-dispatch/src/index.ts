@@ -28,7 +28,7 @@ export default function piHerdrDispatch(pi: ExtensionAPI): void {
   pi.on("session_start", async (event, ctx) => {
     await runtime.start(ctx, event.reason);
   });
-  pi.on("session_tree", async (_event, ctx) => {
+  pi.on("agent_end", async (_event, ctx) => {
     await runtime.deliverPendingContext(ctx);
   });
   pi.on("session_shutdown", () => {

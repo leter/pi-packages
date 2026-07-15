@@ -29,6 +29,8 @@ class FakeOriginContext implements OriginContextPort {
   turns = 0;
   throwAfterAppend = false;
   switchAfterAppend = false;
+  deferAppend = false;
+  pendingMessage?: Parameters<OriginContextPort["sendMessage"]>[0];
   lastOptions?: { deliverAs: "nextTurn"; triggerTurn: false };
 
   constructor(readonly sessionId = "session-origin") {}
@@ -56,6 +58,29 @@ class FakeOriginContext implements OriginContextPort {
   ): void {
     this.sends += 1;
     this.lastOptions = options;
+    if (this.deferAppend) {
+      this.pendingMessage = message;
+      return;
+    }
+    this.#append(message);
+    if (this.switchAfterAppend) {
+      this.switchAfterAppend = false;
+      this.active = "b";
+    }
+    if (this.throwAfterAppend) {
+      this.throwAfterAppend = false;
+      throw new Error("simulated crash after append");
+    }
+  }
+
+  flushNextTurn(): void {
+    if (!this.pendingMessage) return;
+    const message = this.pendingMessage;
+    this.pendingMessage = undefined;
+    this.#append(message);
+  }
+
+  #append(message: Parameters<OriginContextPort["sendMessage"]>[0]): void {
     const branch = this.branches.get(this.active)!;
     branch.push({
       id: `result-${this.active}-${this.sends}`,
@@ -67,14 +92,6 @@ class FakeOriginContext implements OriginContextPort {
       display: message.display,
       details: message.details,
     } as SessionEntry);
-    if (this.switchAfterAppend) {
-      this.switchAfterAppend = false;
-      this.active = "b";
-    }
-    if (this.throwAfterAppend) {
-      this.throwAfterAppend = false;
-      throw new Error("simulated crash after append");
-    }
   }
 }
 
@@ -152,6 +169,23 @@ describe("Origin active-branch context delivery", () => {
     if (resultEntry?.type === "custom_message") {
       expect(String(resultEntry.content)).toContain("\\u003c/HERDR_DISPATCH_RESULT_UNTRUSTED\\u003e");
     }
+  });
+
+  it("keeps a nextTurn result pending without a turn, then completes after the user-started turn persists it", async () => {
+    const registry = await settledRegistry();
+    const delivery = new OriginContextDelivery(registry, () => 2_000);
+    const context = new FakeOriginContext();
+    context.deferAppend = true;
+
+    expect(delivery.deliver("hd_context", context)).toBe("pending-branch-change");
+    expect(context.sends).toBe(1);
+    expect(context.getBranch().some((entry) => entry.type === "custom_message")).toBe(false);
+    expect(registry.getContextDelivery("hd_context")?.deliveredAt).toBeUndefined();
+
+    context.deferAppend = false;
+    context.flushNextTurn();
+    expect(delivery.deliver("hd_context", context)).toBe("delivered");
+    expect(context.sends).toBe(1);
   });
 
   it("retries a crash after append without duplicating the active-branch entry", async () => {
