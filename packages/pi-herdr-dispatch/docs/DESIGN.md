@@ -1,6 +1,6 @@
 # pi-herdr-dispatch Design
 
-Status: implementation plan approved; Phase 1 safety layer complete and awaiting review before Phase 2.
+Status: implementation plan approved; Phase 2 Dispatch Registry complete and awaiting review before Phase 3.
 
 ## Purpose
 
