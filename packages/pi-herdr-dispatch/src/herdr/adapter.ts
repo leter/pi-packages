@@ -168,7 +168,9 @@ export class HerdrAdapter {
       targets,
       (event) => {
         if (event.type === "pane-closed") this.#invalidatedPaneIds.add(event.paneId);
-        if (event.type === "pane-moved") this.#invalidatedPaneIds.add(event.previousPaneId);
+        if (event.type === "pane-moved" && event.previousPaneId !== event.pane.paneId) {
+          this.#invalidatedPaneIds.add(event.previousPaneId);
+        }
         listener(event);
       },
       stateListener,

@@ -43,6 +43,19 @@ describe("Result Envelope", () => {
     expect(parseResultLine("ordinary output", "hd_1")).toEqual({ status: "ignore" });
   });
 
+  it("reconstructs a bounded Result Envelope hard-wrapped by a narrow TUI", () => {
+    const tail = `DISPATCH_RESULT
+ {"id":"hd_1","outcome":"done",
+ "summary":"accepted"}`;
+
+    expect(scanResultTail(tail, "hd_1").valid).toEqual(
+      expect.objectContaining({
+        status: "valid",
+        result: expect.objectContaining({ outcome: "done", summary: "accepted" }),
+      }),
+    );
+  });
+
   it("takes the first valid matching envelope outside Markdown fences", () => {
     const tail = `\`\`\`json
 DISPATCH_RESULT {"id":"hd_1","outcome":"failed","summary":"example"}

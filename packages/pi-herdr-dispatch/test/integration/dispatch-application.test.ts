@@ -266,6 +266,25 @@ describe("DispatchApplication", () => {
     expect(registry.listTargetOccupancy()).toHaveLength(1);
   });
 
+  it("accepts done-to-idle drift because both statuses are idle-like", async () => {
+    const { application, herdr } = await harness();
+    const proposal = await application.createProposal({
+      target: "term-target",
+      mode: "non-mutating",
+      task: "Inspect",
+      deadlineMinutes: 15,
+      allowProjectDependencyInstall: false,
+    });
+    herdr.resolved = {
+      pane: { ...pane, agentStatus: "idle" },
+      agent: { ...agent, agentStatus: "idle" },
+    };
+
+    await expect(application.confirmProposal(proposal, origin)).resolves.toEqual(
+      expect.objectContaining({ status: "active" }),
+    );
+  });
+
   it("invalidates stale proposals before acquiring any reservation", async () => {
     const { application, registry, herdr } = await harness();
     const proposal = await application.createProposal({

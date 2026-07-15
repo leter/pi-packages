@@ -393,7 +393,6 @@ export class DispatchApplication {
       resolved.pane.workspaceId !== proposal.target.workspaceId ||
       resolved.pane.cwd !== proposal.target.cwd ||
       actualAgent !== proposal.target.agentLabel ||
-      resolved.pane.agentStatus !== proposal.target.status ||
       provenance !== proposal.target.statusProvenance ||
       (resolved.pane.agentStatus !== "idle" && resolved.pane.agentStatus !== "done")
     ) {

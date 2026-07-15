@@ -61,18 +61,58 @@ export function parseResultLine(line: string, expectedId: string): ParsedResultL
 
 export function scanResultTail(text: string, expectedId: string): ResultTailScan {
   const malformed: Extract<ParsedResultLine, { status: "malformed" }>[] = [];
+  const lines = text.split(/\r?\n/u);
   let fenced = false;
-  for (const line of text.split(/\r?\n/u)) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
     if (line.trimStart().startsWith("```")) {
       fenced = !fenced;
       continue;
     }
-    if (fenced) continue;
-    const parsed = parseResultLine(line, expectedId);
-    if (parsed.status === "valid") return { valid: parsed, malformed };
-    if (parsed.status === "malformed") malformed.push(parsed);
+    if (fenced || !line.includes("DISPATCH_RESULT")) continue;
+
+    let reconstructed = "";
+    let lastMalformed: Extract<ParsedResultLine, { status: "malformed" }> | undefined;
+    const finalIndex = Math.min(lines.length - 1, index + 7);
+    for (let candidateIndex = index; candidateIndex <= finalIndex; candidateIndex += 1) {
+      const candidate = lines[candidateIndex]!;
+      if (candidateIndex > index && candidate.trimStart().startsWith("```")) break;
+      const trimmedCandidate = candidate.trim();
+      reconstructed +=
+        candidateIndex === index && trimmedCandidate.endsWith("DISPATCH_RESULT")
+          ? `${trimmedCandidate} `
+          : trimmedCandidate;
+      const parsed = parseResultLine(reconstructed, expectedId);
+      if (parsed.status === "valid") return { valid: parsed, malformed };
+      if (parsed.status === "ignore" && containsCompleteEnvelope(reconstructed)) {
+        index = candidateIndex;
+        break;
+      }
+      if (parsed.status === "malformed") {
+        lastMalformed = parsed;
+        if (!parsed.reason.startsWith("invalid JSON:")) {
+          malformed.push(parsed);
+          index = candidateIndex;
+          lastMalformed = undefined;
+          break;
+        }
+      }
+      if (candidateIndex > index && candidate.includes("DISPATCH_RESULT")) break;
+    }
+    if (lastMalformed) malformed.push(lastMalformed);
   }
   return { malformed };
+}
+
+function containsCompleteEnvelope(line: string): boolean {
+  const prefixAt = line.indexOf(PREFIX);
+  if (prefixAt < 0) return false;
+  try {
+    JSON.parse(line.slice(prefixAt + PREFIX.length));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function malformedIfMatching(

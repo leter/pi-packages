@@ -237,6 +237,40 @@ describe("Herdr atomic delivery and bounded reads", () => {
     adapter.close();
   });
 
+  it("does not invalidate a route when Herdr reports a same-pane tab move", async () => {
+    let stream: FakeHerdrConnection | undefined;
+    const fake = await fakeServer((request, connection) => {
+      if (request.method === "session.snapshot") {
+        connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() });
+      } else if (request.method === "events.subscribe") {
+        stream = connection;
+        connection.startSubscription(request.id);
+        stream.sendEvent("pane_moved", {
+          type: "pane_moved",
+          previous_pane_id: "p-target",
+          previous_workspace_id: "w-current",
+          pane: targetPane,
+        });
+      } else if (request.method === "pane.get") {
+        connection.sendResponse(request.id, { type: "pane_info", pane: targetPane });
+      } else if (request.method === "pane.send_input") {
+        connection.sendResponse(request.id, { type: "ok" });
+      } else if (request.method === "pane.read") {
+        connection.sendResponse(request.id, {
+          type: "pane_read",
+          read: read(`ID: ${delivery.correlationId}`, false),
+        });
+      }
+    });
+    const adapter = await HerdrAdapter.connect({ socketPath: fake.socketPath, workspaceId: "w-current" });
+    await adapter.monitorTargets([{ paneId: "p-target", correlationId: "hd_echo_1" }], () => undefined);
+
+    await expect(adapter.deliverAndVerify(delivery)).resolves.toEqual(
+      expect.objectContaining({ status: "verified" }),
+    );
+    adapter.close();
+  });
+
   it("permits only 50 or 200-line recent_unwrapped reads", async () => {
     const fake = await fakeServer((request, connection) => {
       if (request.method === "session.snapshot") connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() });
