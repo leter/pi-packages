@@ -1,6 +1,6 @@
 # pi-herdr-dispatch Design
 
-Status: revised after architecture review; awaiting follow-up review before implementation planning.
+Status: architecture review and compatibility spike complete; implementation plan drafted and awaiting user review before implementation.
 
 ## Purpose
 
@@ -38,7 +38,7 @@ These cuts preserve the core confirmed-dispatch workflow while removing the leas
 ## Components
 
 1. **Pi extension** — commands, model proposal tools, confirmation UI, status widget, Origin Session monitoring, result delivery, a best-effort Pi-side lease guard, and a raw Herdr CLI gate shared by `tool_call` and `user_bash`.
-2. **Herdr adapter** — one local Unix-socket connection per monitoring Origin Session. It bootstraps from `session.snapshot`, subscribes to supported events, reads bounded pane tails, posts notifications/metadata, and delivers input with `pane.send_input`.
+2. **Herdr adapter** — one local Unix-socket connection per monitoring Origin Session. It bootstraps from `session.snapshot`, subscribes to supported events, reads bounded pane tails, posts notifications, and delivers input with `pane.send_input`.
 3. **Dispatch Registry** — global SQLite storage in WAL mode, with transactions and unique constraints for target occupancy and worktree write leases.
 4. **Origin Monitor** — a TUI Pi session monitors only records whose persisted Origin Session ID equals its own session ID. Monitoring stops when that session is not running and resumes when the exact session resumes.
 5. **Origin-side Safety Gate** — every Pi process loading the package reads global leases, guards covered Pi mutation paths, and prevents recognized raw Herdr commands from bypassing confirmed dispatch, regardless of whether that process is an Origin Monitor.
@@ -62,7 +62,7 @@ Herdr statuses are interpreted as follows:
 - `blocked`: runtime attention only; it is not the `blocked` Final Outcome.
 - `unknown`: ineligible and never interpreted as completion.
 
-Status provenance is not assumed to be a direct `AgentInfo` field. Until a live compatibility probe proves integration authority semantics for the installed Herdr version, proposals label status as **screen-detected (best effort)**. A future reported status may be displayed only when the adapter can positively establish authority; absence of evidence never becomes `reported`.
+Herdr 0.7.3 exposes `screen_detection_skipped: true` only when recognized full-lifecycle integration authority is active; `agent explain` reports the reason as `full_lifecycle_hook_authority`. Proposals may label status as **reported** only when that value is explicitly `true`. A missing or `false` value is labelled **screen-detected (best effort)**; absence of evidence never becomes `reported`.
 
 Screen-detected Agents remain supported because they are the normal case on the current machine. Ambiguous transitions add attention and never settle a dispatch.
 
@@ -174,12 +174,13 @@ While running, the monitor:
 - consumes `agent_status_changed`, `pane.closed`, and `pane.moved` events;
 - uses revision values only as an optional “output advanced” optimization, never as a line cursor or acceptance condition;
 - polls `PaneInfo.cwd` every five seconds and requires two consecutive mismatches before adding `target-moved`;
-- renews its own Herdr display metadata;
 - evaluates startup windows and deadlines.
 
 When the Origin Session is closed, no other Pi takes over. Results, notifications, and lease release are delayed; Target Occupancy and Worktree Write Leases remain durable. This is an explicit V1 trade-off.
 
-On `/resume`, `/reload`, or Herdr socket reconnect, the Origin Monitor obtains a fresh snapshot, resolves the stored terminal ID, and performs a bounded 200-line `recent_unwrapped` Catch-Up Read. This is tail catch-up, not a revision-based Recovery Scan. If the terminal ID no longer exists, the record becomes `target-lost`. V1 does not assume terminal IDs or history survive a Herdr restart and never retargets by Agent name.
+On `/resume`, `/reload`, or Herdr socket reconnect, the Origin Monitor obtains a fresh snapshot, resolves the stored terminal ID, and performs a bounded 200-line `recent_unwrapped` Catch-Up Read. This is tail catch-up, not a revision-based Recovery Scan. If the terminal ID no longer exists, the record becomes `target-lost`.
+
+Herdr 0.7.3 regenerates terminal IDs across a clean server restart even when workspace and pane IDs are restored. Therefore every unsettled record whose pre-restart terminal ID disappears follows `target-lost`; V1 never claims continuity from a matching pane ID, cwd, Agent label, or retained history.
 
 If the same terminal ID is attached to a new pane ID with the same workspace and cwd, the route may be updated after revalidation. A changed terminal ID is never accepted as continuity.
 
@@ -403,7 +404,7 @@ Per-workspace concurrency is counted by **target workspace**. V1 target and orig
 
 ## Herdr UI and metadata
 
-The active Origin Monitor reports an expiring metadata token with a dedicated source such as `pi-herdr-dispatch:<origin-session-id>` and monotonically increasing `seq`. It does not overwrite pane title, displayed Agent, integration state labels, or another source's custom status. If the installed Herdr UI cannot display a dedicated `dispatch` token without conflicting configuration, V1 omits pane metadata and relies on the Pi widget plus notifications.
+Herdr 0.7.3 protocol 16 has no dedicated pane metadata-token field, and independently sourced `custom_status` reports replace one another in the effective Agent view. V1 therefore emits **no pane metadata** and never calls `pane.report_metadata`. It relies on the Pi widget plus Herdr notifications, avoiding interference with integration-owned title, displayed Agent, state labels, and custom status.
 
 Herdr notifications occur only for Final Outcomes and Attention Conditions:
 
@@ -470,8 +471,7 @@ Defaults:
   "maxInspectionLines": 200,
   "catchUpLines": 200,
   "cwdPollMs": 5000,
-  "cwdDriftSamples": 2,
-  "metadataTtlMs": 30000
+  "cwdDriftSamples": 2
 }
 ```
 
@@ -483,16 +483,16 @@ The official [Herdr agent skill](https://herdr.dev/docs/agent-skill/) is an impl
 
 ## Required compatibility checks before implementation planning
 
-The design no longer depends on the answers, but a live spike must record installed Herdr 0.7.3 behavior for:
+The live Herdr 0.7.3 spike is complete; methods and evidence are recorded in [SPIKE-RESULTS.md](./SPIKE-RESULTS.md). It established:
 
-- terminal ID continuity across server restart/update;
-- pane-ID changes after move (closed-ID non-reuse is an official contract, not an open assumption);
-- `recent_unwrapped` depth and requested line-count behavior with pane history enabled;
-- exact accepted `pane.send_input.keys` spelling for `enter`;
-- whether `screen_detection_skipped` positively identifies integration authority;
-- dedicated metadata token coexistence.
+- terminal IDs change across a clean server restart, so missing stored identity becomes `target-lost`;
+- moving a pane across workspaces changes pane ID while retaining terminal ID, and closed IDs were not reused;
+- `recent_unwrapped` defaults to 80 logical lines, honors requests through 1000, and silently clamps larger requests to 1000; V1 requests only 50 or 200 and never interprets missing tail content as proof;
+- `pane.send_input.keys: ["enter"]` is accepted atomically (the installed server also accepts aliases, which V1 does not use);
+- explicit `screen_detection_skipped: true` positively identifies recognized full-lifecycle integration authority; missing/false remains screen-detected;
+- dedicated metadata-token coexistence is unavailable, so V1 omits pane metadata.
 
-Any failure tightens behavior to attention/fail-closed; it must not introduce heuristic retargeting, revision cursors, or split delivery.
+These results tighten behavior to attention/fail-closed. They do not introduce heuristic retargeting, revision cursors, or split delivery.
 
 ## Test strategy
 
@@ -512,7 +512,8 @@ Any failure tightens behavior to attention/fail-closed; it must not introduce he
 - Origin Session ID and active-branch delivery rules;
 - emergency-resolution eligibility, user attestation, and double confirmation;
 - stored socket-disconnect versus derived Origin-closed monitoring pauses;
-- retention and notification policy.
+- retention and notification policy;
+- omission of `pane.report_metadata` on Herdr 0.7.3.
 
 ### Integration
 
@@ -531,7 +532,8 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 - active-branch result append crash/retry and branch change during append;
 - Herdr disconnect/reconnect with bounded Catch-Up Read;
 - target ending in `done` without a result;
-- terminal ID missing or changed after Herdr restart;
+- terminal ID changing after Herdr restart, adding `target-lost`, and requiring manual resolution before settlement;
+- no pane-ID/cwd/Agent-label heuristic retargeting after restart;
 - malformed and conflicting Result Envelopes;
 - migration backup and rollback;
 - corrupt/locked database fail-closed behavior;

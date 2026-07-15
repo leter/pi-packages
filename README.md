@@ -6,7 +6,7 @@ A public monorepo for Pi extensions, skills, prompts, and themes maintained by [
 
 | Package | Status | Description |
 |---|---|---|
-| [`pi-herdr-dispatch`](./packages/pi-herdr-dispatch) | Implementation planning | Safely dispatch work from Pi to existing agents in a local Herdr workspace. |
+| [`pi-herdr-dispatch`](./packages/pi-herdr-dispatch) | Implementation plan review | Safely dispatch work from Pi to existing agents in a local Herdr workspace. |
 
 ## Repository layout
 
