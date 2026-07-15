@@ -1,0 +1,17 @@
+node_modules/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+coverage/
+dist/
+*.tsbuildinfo
+
+# Pi and Herdr runtime data
+.pi/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+sessions/
+/workflows/

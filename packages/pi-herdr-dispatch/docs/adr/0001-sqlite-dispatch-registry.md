@@ -1,0 +1,3 @@
+# Use SQLite for the global Dispatch Registry
+
+The orchestration extension will persist dispatches, coordinator leases, and globally unique worktree write leases in a SQLite database using WAL mode and transactions. A single JSON file was rejected because coordinating multiple Pi processes would require a custom locking and compare-and-set protocol, while Herdr pane metadata is display-oriented rather than a durable transactional source of truth. Registry corruption, migration failure, or unavailable transactional access fails closed; the extension must not create an empty replacement or fall back to memory because doing so would silently discard active write leases.

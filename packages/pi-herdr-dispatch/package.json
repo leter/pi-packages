@@ -1,0 +1,17 @@
+{
+  "name": "pi-herdr-dispatch",
+  "version": "0.0.0-development",
+  "private": true,
+  "description": "Safely dispatch work from Pi to existing agents on a local Herdr server",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "herdr",
+    "coding-agent",
+    "orchestration"
+  ],
+  "engines": {
+    "node": ">=24"
+  }
+}
