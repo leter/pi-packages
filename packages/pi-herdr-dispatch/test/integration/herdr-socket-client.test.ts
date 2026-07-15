@@ -86,6 +86,19 @@ describe("HerdrSocketClient", () => {
     expect(fake.requests).toHaveLength(1);
   });
 
+  it("marks an explicitly closed in-flight request as submitted", async () => {
+    const fake = await server(() => undefined);
+    const client = await HerdrSocketClient.connect(fake.socketPath);
+    const pending = client.request("pane.send_input", { pane_id: "p1", text: "x" }, "ok");
+    while (fake.requests.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+
+    client.close();
+
+    await expect(pending).rejects.toEqual(
+      expect.objectContaining<Partial<HerdrDisconnectedError>>({ submitted: true }),
+    );
+  });
+
   it("marks disconnects in the middle of a response frame as submitted", async () => {
     const fake = await server((request, connection) => {
       connection.sendRaw(`{"id":"${request.id}","result":`);

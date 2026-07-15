@@ -130,6 +130,30 @@ describe("Herdr atomic delivery and bounded reads", () => {
     adapter.close();
   });
 
+  it("maps adapter shutdown during an in-flight send to ambiguity", async () => {
+    const fake = await fakeServer((request, connection) => {
+      if (request.method === "session.snapshot") connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() });
+      else if (request.method === "pane.get") connection.sendResponse(request.id, { type: "pane_info", pane: targetPane });
+      // Deliberately retain the pane.send_input connection without a response.
+    });
+    const adapter = await HerdrAdapter.connect({
+      socketPath: fake.socketPath,
+      workspaceId: "w-current",
+      requestTimeoutMs: 1_000,
+    });
+    const pending = adapter.deliverAndVerify(delivery);
+    await waitFor(() => fake.requests.some((request) => request.method === "pane.send_input"));
+
+    adapter.close();
+
+    await expect(
+      Promise.race([
+        pending,
+        new Promise((resolve) => setTimeout(() => resolve({ status: "timed-out" }), 100)),
+      ]),
+    ).resolves.toEqual(expect.objectContaining({ status: "ambiguous", reason: "response-unknown" }));
+  });
+
   it("returns typed ambiguity after a request-boundary disconnect and never resends", async () => {
     const fake = await fakeServer((request, connection) => {
       if (request.method === "session.snapshot") connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() });
@@ -207,6 +231,14 @@ describe("Herdr atomic delivery and bounded reads", () => {
     adapter.close();
   });
 });
+
+async function waitFor(check: () => boolean, timeoutMs = 500): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for fake Herdr request");
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+}
 
 describe("hasDeliveryEcho", () => {
   it("requires both the exact dispatch header and correlation ID", () => {

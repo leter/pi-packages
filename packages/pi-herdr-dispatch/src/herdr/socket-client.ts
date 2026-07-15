@@ -134,7 +134,7 @@ export class HerdrSocketClient {
     if (this.#closed) return;
     this.#closed = true;
     this.#socket.destroy();
-    this.#rejectAll(new HerdrDisconnectedError("Herdr socket was closed", false));
+    this.#rejectAll(new HerdrDisconnectedError("Herdr socket was closed", true));
   }
 
   #receive(chunk: string): void {
@@ -244,6 +244,8 @@ export class HerdrSocketClient {
 export class HerdrUnaryTransport {
   readonly #socketPath: string;
   readonly #options: HerdrSocketClientOptions;
+  readonly #activeClients = new Set<HerdrSocketClient>();
+  #closed = false;
 
   constructor(socketPath: string, options: HerdrSocketClientOptions = {}) {
     if (!socketPath) throw new TypeError("socketPath must not be empty");
@@ -257,13 +259,29 @@ export class HerdrUnaryTransport {
     expectedType: string,
     beforeRequest?: () => void,
   ): Promise<Record<string, unknown>> {
+    if (this.#closed) {
+      throw new HerdrDisconnectedError("Herdr unary transport is closed", false);
+    }
     const client = await HerdrSocketClient.connect(this.#socketPath, this.#options);
+    if (this.#closed) {
+      client.close();
+      throw new HerdrDisconnectedError("Herdr unary transport closed before request submission", false);
+    }
+    this.#activeClients.add(client);
     try {
       beforeRequest?.();
       return await client.request(method, params, expectedType);
     } finally {
+      this.#activeClients.delete(client);
       client.close();
     }
+  }
+
+  close(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    for (const client of this.#activeClients) client.close();
+    this.#activeClients.clear();
   }
 }
 

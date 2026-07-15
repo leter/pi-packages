@@ -236,6 +236,7 @@ export class HerdrAdapter {
     if (this.#closed) return;
     this.#closed = true;
     this.#subscription?.close();
+    this.#unary.close();
   }
 
   async #performReconnect(): Promise<void> {
