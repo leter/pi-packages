@@ -16,7 +16,7 @@
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run"
   },
   "pi": {
     "extensions": [
