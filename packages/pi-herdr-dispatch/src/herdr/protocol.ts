@@ -20,10 +20,12 @@ export interface HerdrPane {
   agentStatus: HerdrAgentStatus;
   revision: number;
   agent?: string;
+  label?: string;
   cwd?: string;
 }
 
 export interface HerdrAgent extends HerdrPane {
+  name?: string;
   screenDetectionSkipped: boolean;
 }
 
@@ -117,6 +119,7 @@ export function parsePane(value: Record<string, unknown>): HerdrPane {
     throw new HerdrProtocolError(`unknown pane agent_status ${status}`);
   }
   const agent = optionalString(value.agent, "pane.agent");
+  const label = optionalString(value.label, "pane.label");
   const cwd = optionalString(value.cwd, "pane.cwd");
   return {
     paneId: string(value.pane_id, "pane.pane_id"),
@@ -127,6 +130,7 @@ export function parsePane(value: Record<string, unknown>): HerdrPane {
     agentStatus: status as HerdrAgentStatus,
     revision: nonnegativeInteger(value.revision, "pane.revision"),
     ...(agent === undefined ? {} : { agent }),
+    ...(label === undefined ? {} : { label }),
     ...(cwd === undefined ? {} : { cwd }),
   };
 }
@@ -135,8 +139,10 @@ function parseAgent(value: Record<string, unknown>): HerdrAgent {
   if (value.screen_detection_skipped !== undefined && typeof value.screen_detection_skipped !== "boolean") {
     throw new HerdrProtocolError("agent.screen_detection_skipped must be a boolean when present");
   }
+  const name = optionalString(value.name, "agent.name");
   return {
     ...parsePane(value),
+    ...(name === undefined ? {} : { name }),
     screenDetectionSkipped: value.screen_detection_skipped === true,
   };
 }

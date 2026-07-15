@@ -9,6 +9,7 @@ export interface ProposalTarget {
   paneId: string;
   workspaceId: string;
   agentLabel: string;
+  displayName?: string;
   cwd: string;
   worktreePath?: string;
   status: "idle" | "done";
@@ -134,6 +135,9 @@ function validateTarget(target: ProposalTarget, mode: DispatchMode): void {
     if (!value || /[\u0000-\u001f\u007f]/u.test(value)) {
       throw new TypeError(`target ${label} is empty or contains control characters`);
     }
+  }
+  if (target.displayName && /[\u0000-\u001f\u007f]/u.test(target.displayName)) {
+    throw new TypeError("target displayName contains control characters");
   }
   if (target.status !== "idle" && target.status !== "done") {
     throw new TypeError("proposal target must be idle-like");
