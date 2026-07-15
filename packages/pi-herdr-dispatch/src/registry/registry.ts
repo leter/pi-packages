@@ -7,10 +7,15 @@ import type {
   AttentionCondition,
   AttentionRecord,
   AuditEventRecord,
+  ClaimContextDeliveryInput,
+  CompleteContextDeliveryInput,
   ConfirmDeliveryIntent,
+  ContextDeliveryRecord,
+  DispatchResultRecord,
   DispatchLifecycle,
   DispatchMode,
   FinalOutcome,
+  SettleDispatchInput,
   StoredDispatch,
   TargetOccupancyRecord,
   WriteLeaseRecord,
@@ -334,6 +339,186 @@ export class DispatchRegistry {
     });
   }
 
+  settle(
+    input: SettleDispatchInput,
+  ): { status: "settled" | "already-settled"; outcome: FinalOutcome } {
+    validateTimestamp(input.settledAt, "settledAt");
+    const sanitizedJson = serializeJson(input.sanitizedResult, "sanitized result");
+
+    return this.#mutate("settle dispatch", () => {
+      const dispatch = this.#database
+        .prepare("SELECT lifecycle, final_outcome FROM dispatches WHERE id = ?")
+        .get(input.dispatchId) as
+        | { lifecycle: DispatchLifecycle; final_outcome: FinalOutcome | null }
+        | undefined;
+      if (!dispatch) throw new RegistryStateError(`Dispatch ${input.dispatchId} does not exist`);
+
+      if (dispatch.lifecycle === "settled") {
+        this.#appendAudit(
+          input.dispatchId,
+          "settlement-duplicate",
+          {
+            attemptedOutcome: input.outcome,
+            existingOutcome: dispatch.final_outcome,
+            kind: input.kind,
+          },
+          input.settledAt,
+        );
+        return { status: "already-settled", outcome: dispatch.final_outcome! };
+      }
+
+      this.#database
+        .prepare(
+          `INSERT INTO dispatch_results(
+            dispatch_id, outcome, source_terminal_id, raw_envelope, sanitized_json, accepted_at
+          ) VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.dispatchId,
+          input.outcome,
+          input.sourceTerminalId ?? null,
+          input.rawEnvelope ?? null,
+          sanitizedJson,
+          input.settledAt,
+        );
+
+      const updated = this.#database
+        .prepare(
+          `UPDATE dispatches
+           SET lifecycle = 'settled', final_outcome = ?, settled_at = ?, updated_at = ?
+           WHERE id = ? AND lifecycle IN ('delivering', 'active')`,
+        )
+        .run(input.outcome, input.settledAt, input.settledAt, input.dispatchId);
+      if (changes(updated.changes) !== 1) {
+        throw new Error(`Dispatch ${input.dispatchId} settlement compare-and-set failed`);
+      }
+
+      this.#database.prepare("DELETE FROM dispatch_attention WHERE dispatch_id = ?").run(input.dispatchId);
+      this.#database.prepare("DELETE FROM target_occupancy WHERE dispatch_id = ?").run(input.dispatchId);
+      this.#database
+        .prepare("DELETE FROM worktree_write_leases WHERE dispatch_id = ?")
+        .run(input.dispatchId);
+      this.#appendAudit(
+        input.dispatchId,
+        "dispatch-settled",
+        { outcome: input.outcome, kind: input.kind },
+        input.settledAt,
+      );
+      return { status: "settled", outcome: input.outcome };
+    });
+  }
+
+  getResult(dispatchId: string): DispatchResultRecord | undefined {
+    return this.#read("read dispatch result", () => {
+      const row = this.#database
+        .prepare("SELECT * FROM dispatch_results WHERE dispatch_id = ?")
+        .get(dispatchId) as ResultRow | undefined;
+      return row ? mapResult(row) : undefined;
+    });
+  }
+
+  claimContextDelivery(
+    input: ClaimContextDeliveryInput,
+  ): "claimed" | "already-claimed" | "reassigned" | "delivered" {
+    validateTimestamp(input.claimedAt, "claimedAt");
+    return this.#mutate("claim context delivery", () => {
+      const dispatch = this.#database
+        .prepare("SELECT lifecycle, origin_session_id FROM dispatches WHERE id = ?")
+        .get(input.dispatchId) as
+        | { lifecycle: DispatchLifecycle; origin_session_id: string }
+        | undefined;
+      if (!dispatch) throw new RegistryStateError(`Dispatch ${input.dispatchId} does not exist`);
+      if (dispatch.origin_session_id !== input.originSessionId) {
+        throw new RegistryStateError(`Session ${input.originSessionId} is not the Origin Session`);
+      }
+      if (dispatch.lifecycle !== "settled") {
+        throw new RegistryStateError(`Dispatch ${input.dispatchId} is not settled`);
+      }
+
+      const existing = this.#contextDeliveryRow(input.dispatchId);
+      if (!existing) {
+        this.#database
+          .prepare(
+            `INSERT INTO context_delivery_claims(
+              dispatch_id, origin_session_id, branch_leaf_id, claimed_at
+            ) VALUES (?, ?, ?, ?)`,
+          )
+          .run(input.dispatchId, input.originSessionId, input.branchLeafId, input.claimedAt);
+        this.#appendAudit(
+          input.dispatchId,
+          "context-delivery-claimed",
+          { branchLeafId: input.branchLeafId },
+          input.claimedAt,
+        );
+        return "claimed";
+      }
+      if (existing.delivered_at !== null) return "delivered";
+      if (existing.branch_leaf_id === input.branchLeafId) return "already-claimed";
+
+      this.#database
+        .prepare(
+          `UPDATE context_delivery_claims
+           SET branch_leaf_id = ?, claimed_at = ?
+           WHERE dispatch_id = ? AND delivered_at IS NULL`,
+        )
+        .run(input.branchLeafId, input.claimedAt, input.dispatchId);
+      this.#appendAudit(
+        input.dispatchId,
+        "context-delivery-reassigned",
+        { previousBranchLeafId: existing.branch_leaf_id, branchLeafId: input.branchLeafId },
+        input.claimedAt,
+      );
+      return "reassigned";
+    });
+  }
+
+  completeContextDelivery(
+    input: CompleteContextDeliveryInput,
+  ): "completed" | "unchanged" {
+    validateTimestamp(input.completedAt, "completedAt");
+    return this.#mutate("complete context delivery", () => {
+      const existing = this.#contextDeliveryRow(input.dispatchId);
+      if (!existing) throw new RegistryStateError(`Dispatch ${input.dispatchId} has no context claim`);
+      if (existing.origin_session_id !== input.originSessionId) {
+        throw new RegistryStateError(`Session ${input.originSessionId} does not own the context claim`);
+      }
+      if (existing.delivered_at !== null) {
+        if (
+          existing.branch_leaf_id === input.branchLeafId &&
+          existing.delivered_entry_id === input.entryId
+        ) {
+          return "unchanged";
+        }
+        throw new RegistryStateError(`Dispatch ${input.dispatchId} context is already delivered`);
+      }
+      if (existing.branch_leaf_id !== input.branchLeafId) {
+        throw new RegistryStateError("Active branch changed before context delivery completed");
+      }
+
+      this.#database
+        .prepare(
+          `UPDATE context_delivery_claims
+           SET delivered_entry_id = ?, delivered_at = ?
+           WHERE dispatch_id = ? AND delivered_at IS NULL`,
+        )
+        .run(input.entryId, input.completedAt, input.dispatchId);
+      this.#appendAudit(
+        input.dispatchId,
+        "context-delivery-completed",
+        { branchLeafId: input.branchLeafId, entryId: input.entryId },
+        input.completedAt,
+      );
+      return "completed";
+    });
+  }
+
+  getContextDelivery(dispatchId: string): ContextDeliveryRecord | undefined {
+    return this.#read("read context delivery", () => {
+      const row = this.#contextDeliveryRow(dispatchId);
+      return row ? mapContextDelivery(row) : undefined;
+    });
+  }
+
   close(): void {
     if (this.#closed) return;
     this.#database.close();
@@ -367,6 +552,12 @@ export class DispatchRegistry {
         );
       }
     }
+  }
+
+  #contextDeliveryRow(dispatchId: string): ContextClaimRow | undefined {
+    return this.#database
+      .prepare("SELECT * FROM context_delivery_claims WHERE dispatch_id = ?")
+      .get(dispatchId) as ContextClaimRow | undefined;
   }
 
   #dispatchLifecycle(dispatchId: string): DispatchLifecycle {
@@ -525,6 +716,46 @@ interface AuditRow {
   event_type: string;
   data_json: string;
   created_at: number;
+}
+
+interface ResultRow {
+  dispatch_id: string;
+  outcome: FinalOutcome;
+  source_terminal_id: string | null;
+  raw_envelope: string | null;
+  sanitized_json: string;
+  accepted_at: number;
+}
+
+interface ContextClaimRow {
+  dispatch_id: string;
+  origin_session_id: string;
+  branch_leaf_id: string;
+  claimed_at: number;
+  delivered_entry_id: string | null;
+  delivered_at: number | null;
+}
+
+function mapResult(row: ResultRow): DispatchResultRecord {
+  return {
+    dispatchId: row.dispatch_id,
+    outcome: row.outcome,
+    ...(row.source_terminal_id ? { sourceTerminalId: row.source_terminal_id } : {}),
+    ...(row.raw_envelope ? { rawEnvelope: row.raw_envelope } : {}),
+    sanitizedResult: parseJson(row.sanitized_json, "sanitized result"),
+    acceptedAt: row.accepted_at,
+  };
+}
+
+function mapContextDelivery(row: ContextClaimRow): ContextDeliveryRecord {
+  return {
+    dispatchId: row.dispatch_id,
+    originSessionId: row.origin_session_id,
+    branchLeafId: row.branch_leaf_id,
+    claimedAt: row.claimed_at,
+    ...(row.delivered_entry_id ? { deliveredEntryId: row.delivered_entry_id } : {}),
+    ...(row.delivered_at !== null ? { deliveredAt: row.delivered_at } : {}),
+  };
 }
 
 function mapDispatch(row: DispatchRow): StoredDispatch {

@@ -87,3 +87,46 @@ export interface AuditEventRecord {
   data: unknown;
   createdAt: number;
 }
+
+export interface SettleDispatchInput {
+  dispatchId: string;
+  outcome: FinalOutcome;
+  sourceTerminalId?: string;
+  rawEnvelope?: string;
+  sanitizedResult: unknown;
+  kind: "result" | "manual" | "emergency";
+  settledAt: number;
+}
+
+export interface DispatchResultRecord {
+  dispatchId: string;
+  outcome: FinalOutcome;
+  sourceTerminalId?: string;
+  rawEnvelope?: string;
+  sanitizedResult: unknown;
+  acceptedAt: number;
+}
+
+export interface ClaimContextDeliveryInput {
+  dispatchId: string;
+  originSessionId: string;
+  branchLeafId: string;
+  claimedAt: number;
+}
+
+export interface CompleteContextDeliveryInput {
+  dispatchId: string;
+  originSessionId: string;
+  branchLeafId: string;
+  entryId: string;
+  completedAt: number;
+}
+
+export interface ContextDeliveryRecord {
+  dispatchId: string;
+  originSessionId: string;
+  branchLeafId: string;
+  claimedAt: number;
+  deliveredEntryId?: string;
+  deliveredAt?: number;
+}
