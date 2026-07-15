@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 
 import type { CreateProposalRequest, DispatchApplication } from "../dispatch/application.js";
 import { DispatchController } from "./dispatch-controller.js";
+import { FollowupController } from "./followup-controller.js";
 import {
   formatAgentData,
   formatConfirmationResult,
@@ -14,6 +15,7 @@ export function registerDispatchCommands(
   pi: ExtensionAPI,
   runtime: DispatchRuntime,
   controller: DispatchController,
+  followup: FollowupController,
 ): void {
   pi.registerCommand("herdr-agents", {
     description: "List Eligible Agents in the current Herdr workspace",
@@ -75,6 +77,33 @@ export function registerDispatchCommands(
       }),
   });
 
+  pi.registerCommand("herdr-dispatch-reply", {
+    description: "Preview and confirm a reply to an Active Dispatch with attention",
+    handler: async (args, ctx) =>
+      handle(ctx, async () => {
+        const id = requiredDispatchId(args, "/herdr-dispatch-reply <id>");
+        ctx.ui.notify(await followup.reply(id, followupContext(ctx)), "info");
+      }),
+  });
+
+  pi.registerCommand("herdr-dispatch-cancel", {
+    description: "Preview and confirm a normal cancellation request",
+    handler: async (args, ctx) =>
+      handle(ctx, async () => {
+        const id = requiredDispatchId(args, "/herdr-dispatch-cancel <id>");
+        ctx.ui.notify(await followup.cancel(id, followupContext(ctx)), "warning");
+      }),
+  });
+
+  pi.registerCommand("herdr-dispatch-resolve", {
+    description: "Manually or emergently resolve a dispatch with confirmation",
+    handler: async (args, ctx) =>
+      handle(ctx, async () => {
+        const id = requiredDispatchId(args, "/herdr-dispatch-resolve <id>");
+        ctx.ui.notify(await followup.resolve(id, followupContext(ctx)), "warning");
+      }),
+  });
+
   pi.registerCommand("herdr-agent-output", {
     description: "Read one bounded current-workspace Agent output tail",
     handler: async (args, ctx) =>
@@ -95,6 +124,16 @@ function application(runtime: DispatchRuntime): DispatchApplication {
     throw new Error(runtime.mutationUnavailableReason ?? "Dispatch runtime unavailable");
   }
   return runtime.application;
+}
+
+function followupContext(ctx: ExtensionCommandContext) {
+  return { mode: ctx.mode, ui: ctx.ui, sessionId: ctx.sessionManager.getSessionId() };
+}
+
+function requiredDispatchId(args: string, usage: string): string {
+  const id = args.trim();
+  if (!/^hd_[A-Za-z0-9_-]+$/u.test(id)) throw new Error(`Usage: ${usage}`);
+  return id;
 }
 
 function interactionContext(ctx: ExtensionCommandContext) {

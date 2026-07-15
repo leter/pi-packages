@@ -47,6 +47,9 @@ describe("Pi extension Phase 4 registration", () => {
       "herdr-agents",
       "herdr-dispatch",
       "herdr-dispatches",
+      "herdr-dispatch-reply",
+      "herdr-dispatch-cancel",
+      "herdr-dispatch-resolve",
       "herdr-agent-output",
     ]);
   });
