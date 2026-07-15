@@ -1,6 +1,6 @@
 # pi-herdr-dispatch Design
 
-Status: implementation plan approved; Phase 3 Herdr Adapter complete and awaiting review before Phase 4.
+Status: implementation plan approved; Phase 4 proposal and confirmation flow complete and awaiting review before Phase 5.
 
 ## Purpose
 
@@ -150,7 +150,7 @@ The adapter listens for `pane.closed` and `pane.moved` during the confirmation/d
 
 ### Normal completion of delivery
 
-The Registry changes `delivering → active` only after `pane.send_input` returns success. Echo verification then searches a bounded tail for both `[HERDR DISPATCH]` and the unique `ID: hd_...`. If the expected echo does not appear within the startup window, `delivery-unverified` attention is added; the message is never resent automatically.
+The Registry changes `delivering → active` only after `pane.send_input` returns success. Echo verification performs bounded 200-line re-reads through the startup window and searches for the uniquely bounded `ID: hd_...` marker anywhere within a rendered line. This tolerates TUI whitespace, borders, and prompt prefixes observed in the [real Pi echo probe](./SPIKE-RESULTS.md#8-real-pi-tui-delivery-echo-timing-and-shape). If the expected marker does not appear within the startup window, `delivery-unverified` attention is added; the message is never resent automatically.
 
 Phase 4/5 must treat `markActive` losing its compare-and-set because the dispatch already settled as a benign race: a valid result may settle before echo verification, or emergency resolution may settle first. The delivery path reports the recorded Final Outcome and must not reinterpret this `RegistryStateError` as delivery failure.
 
@@ -159,7 +159,7 @@ Phase 4/5 must treat `markActive` losing its compare-and-set because the dispatc
 When the exact Origin Session resumes, every record still in `delivering` is resolved conservatively with a 200-line `recent_unwrapped` Catch-Up Read from the confirmed target:
 
 1. a valid matching Result Envelope proves delivery and settles normally;
-2. the exact dispatch header plus correlation ID proves delivery and moves the record to `active`;
+2. a rendered line containing the uniquely bounded correlation marker `ID: hd_...` proves delivery and moves the record to `active`;
 3. neither signal adds `delivery-unverified` and leaves lifecycle at `delivering`, retaining occupancy and any write lease.
 
 The user must inspect and manually resolve a delivery-unverified record. V1 never automatically resends because absence from the bounded tail cannot prove non-delivery.
@@ -496,7 +496,9 @@ The live Herdr 0.7.3 spike is complete; methods and evidence are recorded in [SP
 - `recent_unwrapped` defaults to 80 logical lines, honors requests through 1000, and silently clamps larger requests to 1000; V1 requests only 50 or 200 and never interprets missing tail content as proof;
 - `pane.send_input.keys: ["enter"]` is accepted atomically (the installed server also accepts aliases, which V1 does not use);
 - explicit `screen_detection_skipped: true` positively identifies recognized full-lifecycle integration authority; missing/false remains screen-detected;
-- dedicated metadata-token coexistence is unavailable, so V1 omits pane metadata.
+- dedicated metadata-token coexistence is unavailable, so V1 omits pane metadata;
+- unary sockets accept one request while `events.subscribe` owns a separate long-lived stream;
+- a real Pi TUI probe rendered the random ID with leading whitespace and exposed it on the first post-send bounded read, so V1 still performs bounded startup-window re-reads and matches the uniquely bounded marker within a rendered line.
 
 These results tighten behavior to attention/fail-closed. They do not introduce heuristic retargeting, revision cursors, or split delivery.
 

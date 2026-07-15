@@ -1,6 +1,6 @@
 # pi-herdr-dispatch implementation plan
 
-Status: approved; Phase 3 complete and awaiting phase review before Phase 4.
+Status: approved; Phase 4 complete and awaiting phase review before Phase 5.
 
 ## Inputs and non-negotiable constraints
 
@@ -270,7 +270,7 @@ Implement the first usable confirmed-dispatch vertical slice:
 - `herdr_dispatch_propose` plus `/herdr-dispatch` sharing one application path;
 - Approve/Edit/Cancel UI; Edit produces a new immutable proposal;
 - final target/status/workspace/cwd/reservation/concurrency revalidation;
-- durable intent transaction followed by atomic Herdr delivery and echo-based outcome;
+- durable intent transaction followed by atomic Herdr delivery and bounded startup-window echo re-reads;
 - `delivery-unverified` on ambiguity and no automatic resend;
 - `herdr_dispatch_status` and text dispatch listing;
 - sanitize all model-visible metadata and output.

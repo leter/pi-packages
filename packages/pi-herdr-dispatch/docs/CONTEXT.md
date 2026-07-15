@@ -51,7 +51,7 @@ A unique identifier binding a confirmed outbound message, delivery evidence, and
 _Avoid_: task name, pane status
 
 **Delivery Evidence**:
-Target output containing either the unique dispatch header or a valid matching Result Envelope, demonstrating that the dispatch reached the target.
+Target output containing either the uniquely bounded correlation marker `ID: hd_...` or a valid matching Result Envelope, demonstrating that the dispatch reached the target.
 _Avoid_: send attempt, status transition
 
 ## Lifecycle and attention

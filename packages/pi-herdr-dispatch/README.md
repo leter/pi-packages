@@ -1,8 +1,8 @@
 # pi-herdr-dispatch
 
-A proposed Pi package for safely dispatching confirmed work to coding agents that already exist on one local Herdr server.
+A Pi package under staged development for safely dispatching confirmed work to coding agents that already exist on one local Herdr server.
 
-> **Status:** Phase 3 Herdr Adapter complete and awaiting review before Phase 4. This package is not yet usable or installable.
+> **Status:** Phase 4 proposal and confirmation flow complete and awaiting review before Phase 5. This package is not yet usable or installable.
 
 ## Documents
 

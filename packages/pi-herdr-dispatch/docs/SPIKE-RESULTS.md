@@ -23,6 +23,7 @@ All temporary panes and workspaces were closed after the checks. The named test 
 | `screen_detection_skipped` authority signal | **Explicit `true` positively identifies recognized full-lifecycle authority** | Only `true` is reported provenance; missing/false is screen-detected |
 | Dedicated metadata-token coexistence | **Unavailable in protocol 16** | Omit pane metadata in V1 |
 | Socket request lifecycle | **Unary connections accept one request; `events.subscribe` owns a long-lived stream** | Use fresh connections for consecutive unary requests and one reconnecting subscription stream |
+| Real Pi TUI delivery echo | **Visible on the first post-send bounded read; rendered ID line had leading TUI whitespace** | Boundedly re-read through the startup window and match the uniquely bounded `ID: hd_...` marker inside a rendered line |
 
 ## 1. Terminal ID continuity across service restart
 
@@ -173,6 +174,30 @@ The server closed the unary socket after its first response. Writing the second 
 - Every snapshot, pane lookup, bounded read, notification, and `pane.send_input` unary request opens a fresh socket and fails closed on transport or envelope errors.
 - Final terminal-to-pane resolution, pane validation, and `pane.send_input` remain tightly adjacent consecutive unary requests. Close/move observation is checked immediately before the send socket writes.
 - Herdr exposes no batch or compare-and-send primitive, so the already disclosed residual route-validation/input-handling race remains. This finding does not justify split delivery or automatic resend.
+
+## 8. Real Pi TUI delivery-echo timing and shape
+
+### Verification method
+
+1. Created a disposable pane in the current Herdr workspace and launched a real interactive Pi Agent.
+2. Waited for Pi to become idle, then delivered a complete dispatch-shaped probe through the protocol-16 Adapter.
+3. Timed `deliverAndVerify`, followed it with bounded 200-line `recent_unwrapped` reads, and captured every rendered line containing the random correlation ID.
+4. Closed the disposable pane and removed its temporary directory.
+
+### Observed result
+
+The adapter's first post-send verification succeeded. The full resolve/send/re-resolve/read sequence returned `verified` after approximately 529 ms; the immediately following read also contained the ID. The input was rendered as ` ID: hd_echo_probe_...` with leading TUI whitespace, and the Result Envelope later contained the JSON `id` separately.
+
+A single read succeeded in this probe, but that timing is not a protocol guarantee. TUI rendering and Agent startup can vary independently of `pane.send_input` acknowledgement.
+
+A follow-up Phase 4 vertical acceptance used a fresh temporary Registry and a second disposable real Pi pane. The application created an immutable proposal, atomically persisted `delivering` plus Target Occupancy before send, verified the real echo within the startup window, and returned `active`; the Registry independently showed `active` and one occupancy record. The test then settled its temporary record and removed the pane, database, and directory.
+
+### Impact on the design
+
+- Phase 4 performs bounded 200-line re-reads through the configured startup window before adding `delivery-unverified` for a missing echo.
+- Delivery evidence matches a uniquely bounded `ID: hd_...` marker anywhere within one rendered line, tolerating whitespace, borders, and prompt prefixes.
+- The random correlation ID remains the anti-collision evidence. A missing marker still proves nothing and never triggers automatic resend.
+- Result Envelope validation remains separate and stricter than delivery-echo matching.
 
 ## Result
 
