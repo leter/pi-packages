@@ -68,6 +68,7 @@ export class OriginMonitor {
   #targets: HerdrMonitorTarget[] = [];
   #running = false;
   #initializing = false;
+  #reconfiguring = false;
 
   constructor(options: OriginMonitorOptions) {
     this.#registry = options.registry;
@@ -117,11 +118,16 @@ export class OriginMonitor {
     if (!this.#running) return;
     this.#targets = dedupeTargets(targets);
     if (this.#targets.length === 0) return;
-    await this.#herdr.monitorTargets(
-      this.#targets,
-      (event) => this.#handleEvent(event),
-      (state) => this.#handleConnectionState(state),
-    );
+    this.#reconfiguring = true;
+    try {
+      await this.#herdr.monitorTargets(
+        this.#targets,
+        (event) => this.#handleEvent(event),
+        (state) => this.#handleConnectionState(state),
+      );
+    } finally {
+      this.#reconfiguring = false;
+    }
   }
 
   stop(): void {
@@ -225,7 +231,7 @@ export class OriginMonitor {
     for (const dispatch of this.#dispatches()) {
       this.#clearAttentionBenign(dispatch.id, "monitoring-paused");
     }
-    if (!this.#initializing) await this.#catchUpAll();
+    if (!this.#initializing && !this.#reconfiguring) await this.#catchUpAll();
   }
 
   async #processRead(dispatch: StoredDispatch, read: HerdrPaneRead): Promise<boolean> {

@@ -313,7 +313,18 @@ export class DispatchApplication {
       if (settled) return settled;
       return { status: "delivery-unverified", dispatchId: proposal.id, lifecycle: "delivering" };
     }
-    return this.#recordDelivery(proposal, delivery);
+    const recorded = this.#recordDelivery(proposal, delivery);
+    try {
+      await this.#onIntentRecorded();
+    } catch (error) {
+      this.#registry.recordAudit(
+        proposal.id,
+        "monitor-refresh-failed",
+        { error: errorMessage(error).slice(0, 500) },
+        this.#now(),
+      );
+    }
+    return recorded;
   }
 
   getDispatch(dispatchId: string): StoredDispatch | undefined {

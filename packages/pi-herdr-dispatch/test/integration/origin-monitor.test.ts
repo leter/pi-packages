@@ -145,6 +145,30 @@ async function harness(
 }
 
 describe("OriginMonitor", () => {
+  it("does not run recovery catch-up during deliberate pre-delivery subscription reconfiguration", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-herdr-monitor-"));
+    roots.push(root);
+    const registry = await openDispatchRegistry(join(root, "registry.sqlite"));
+    registries.push(registry);
+    const herdr = new FakeMonitorHerdr();
+    const monitor = new OriginMonitor({
+      registry,
+      herdr,
+      config: DEFAULT_DISPATCH_CONFIG,
+      originSessionId: "session-origin",
+      clock: new FakeMonitorClock(1_000),
+    });
+    await monitor.start();
+    await monitor.watchTargets([{ paneId: "p-target", correlationId: "hd_monitor" }]);
+    registry.confirmDeliveryIntent(intent());
+
+    await monitor.refresh();
+
+    expect(registry.getDispatch("hd_monitor")?.lifecycle).toBe("delivering");
+    expect(registry.listAttention("hd_monitor")).toEqual([]);
+    monitor.stop();
+  });
+
   it("recovers only exact-Origin durable records from bounded echo without resending", async () => {
     const { registry, herdr, monitor } = await harness("delivering");
     registry.confirmDeliveryIntent(
