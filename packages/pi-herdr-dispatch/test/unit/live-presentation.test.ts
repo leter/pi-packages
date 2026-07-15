@@ -32,9 +32,18 @@ describe("dispatch widget", () => {
     );
     expect(presentation.setWidget).toHaveBeenCalledWith(
       "pi-herdr-dispatch",
-      ["dispatches: 1 delivering · 1 active · 1 attention"],
+      expect.any(Function),
       { placement: "belowEditor" },
     );
+    const factory = (presentation.setWidget as ReturnType<typeof vi.fn>).mock.calls[0]![1] as (
+      tui: unknown,
+      theme: unknown,
+    ) => { render(width: number): string[] };
+    const fakeTheme = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
+    const rendered = factory(undefined, fakeTheme).render(120).join(" ");
+    expect(rendered).toContain("1 delivering");
+    expect(rendered).toContain("1 active");
+    expect(rendered).toContain("1 attention");
     expect(presentation.setFooter).not.toHaveBeenCalled();
 
     clearDispatchWidget(presentation);

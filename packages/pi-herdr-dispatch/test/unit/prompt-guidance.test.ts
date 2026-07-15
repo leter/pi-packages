@@ -20,9 +20,10 @@ describe("dispatch proposal prompt guidance", () => {
   });
 
   it("delegates execution to the confirmed proposal flow", async () => {
-    const tool = createDispatchProposalToolDefinition(async (params) =>
-      `confirmed ${params.target}`,
-    );
+    const tool = createDispatchProposalToolDefinition(async (params) => ({
+      text: `confirmed ${params.target}`,
+      details: { status: "active", dispatchId: "hd_test" },
+    }));
 
     await expect(
       tool.execute(
@@ -38,7 +39,7 @@ describe("dispatch proposal prompt guidance", () => {
       ),
     ).resolves.toEqual({
       content: [{ type: "text", text: "confirmed term_target" }],
-      details: {},
+      details: { status: "active", dispatchId: "hd_test" },
     });
   });
 });

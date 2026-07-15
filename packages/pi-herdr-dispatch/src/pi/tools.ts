@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import type { CreateProposalRequest, DispatchApplication } from "../dispatch/application.js";
@@ -11,6 +12,15 @@ import {
   formatDispatchStatus,
   formatInspectionData,
 } from "./presentation.js";
+import {
+  renderAgentsResult,
+  renderInspectionResult,
+  renderStatusResult,
+  type AgentsResultDetails,
+  type ConfirmationResultDetails,
+  type InspectionResultDetails,
+  type StatusResultDetails,
+} from "./renderers.js";
 import type { DispatchRuntime } from "./dispatch-runtime.js";
 
 const emptyParameters = Type.Object({});
@@ -41,7 +51,13 @@ export function registerDispatchTools(
           : { allowProjectDependencyInstall: params.allowProjectDependencyInstall }),
       };
       const result = await controller.proposeAndConfirm(request, interactionContext(ctx));
-      return formatConfirmationResult(result);
+      const details: ConfirmationResultDetails = {
+        status: result.status,
+        ...("dispatchId" in result && result.dispatchId ? { dispatchId: result.dispatchId } : {}),
+        ...("outcome" in result && result.outcome ? { outcome: String(result.outcome) } : {}),
+        ...("reason" in result && result.reason ? { reason: result.reason } : {}),
+      };
+      return { text: formatConfirmationResult(result), details };
     }),
   );
   pi.registerTool(createAgentsTool(runtime));
@@ -51,7 +67,7 @@ export function registerDispatchTools(
 
 function createAgentsTool(
   runtime: DispatchRuntime,
-): ToolDefinition<typeof emptyParameters, Record<string, never>> {
+): ToolDefinition<typeof emptyParameters, AgentsResultDetails> {
   return {
     name: "herdr_agents_list",
     label: "List Herdr Agents",
@@ -60,14 +76,20 @@ function createAgentsTool(
     parameters: emptyParameters,
     async execute() {
       const targets = await application(runtime).listEligibleAgents();
-      return { content: [{ type: "text", text: formatAgentData(targets) }], details: {} };
+      return {
+        content: [{ type: "text", text: formatAgentData(targets) }],
+        details: { targets: [...targets] },
+      };
+    },
+    renderResult(result, _options, theme) {
+      return renderAgentsResult(result.details, theme) ?? fallbackText(result.content);
     },
   };
 }
 
 function createInspectionTool(
   runtime: DispatchRuntime,
-): ToolDefinition<typeof inspectParameters, Record<string, never>> {
+): ToolDefinition<typeof inspectParameters, InspectionResultDetails> {
   return {
     name: "herdr_agent_output_inspect",
     label: "Inspect Herdr Agent Output",
@@ -79,22 +101,33 @@ function createInspectionTool(
     parameters: inspectParameters,
     async execute(_id, params) {
       const inspected = await application(runtime).inspectAgent(params.target, params.lines ?? 50);
+      const text = inspected.text;
       return {
         content: [
           {
             type: "text",
-            text: formatInspectionData(inspected.target.terminalId, inspected.text),
+            text: formatInspectionData(inspected.target.terminalId, text),
           },
         ],
-        details: {},
+        details: {
+          terminalId: inspected.target.terminalId,
+          lineCount: text.length === 0 ? 0 : text.split(/\r?\n/u).length,
+          text,
+        },
       };
+    },
+    renderResult(result, options, theme) {
+      return (
+        renderInspectionResult(result.details, theme, options.expanded) ??
+        fallbackText(result.content)
+      );
     },
   };
 }
 
 function createStatusTool(
   runtime: DispatchRuntime,
-): ToolDefinition<typeof statusParameters, Record<string, never>> {
+): ToolDefinition<typeof statusParameters, StatusResultDetails> {
   return {
     name: "herdr_dispatch_status",
     label: "Herdr Dispatch Status",
@@ -102,18 +135,43 @@ function createStatusTool(
     parameters: statusParameters,
     async execute(_id, params, _signal, _onUpdate, ctx) {
       const app = application(runtime);
-      const text = params.id
-        ? statusById(app, params.id)
-        : formatDispatchList(app.listUnsettled(ctx.sessionManager.getSessionId()));
-      return { content: [{ type: "text", text }], details: {} };
+      const now = Date.now();
+      if (params.id) {
+        const dispatch = app.getDispatch(params.id);
+        if (!dispatch) {
+          return {
+            content: [
+              { type: "text", text: `Dispatch ${sanitizeIdentifier(params.id)} was not found.` },
+            ],
+            details: { now },
+          };
+        }
+        const attention = app.listAttention(params.id);
+        return {
+          content: [{ type: "text", text: formatDispatchStatus(dispatch, attention) }],
+          details: { dispatch, attention: [...attention], now },
+        };
+      }
+      const list = app.listUnsettled(ctx.sessionManager.getSessionId());
+      const listAttention = Object.fromEntries(
+        list.map((dispatch) => [dispatch.id, [...app.listAttention(dispatch.id)]]),
+      );
+      return {
+        content: [{ type: "text", text: formatDispatchList(list) }],
+        details: { list: [...list], listAttention, now },
+      };
+    },
+    renderResult(result, options, theme) {
+      return (
+        renderStatusResult(result.details, theme, options.expanded) ??
+        fallbackText(result.content)
+      );
     },
   };
 }
 
-function statusById(application: DispatchApplication, dispatchId: string): string {
-  const dispatch = application.getDispatch(dispatchId);
-  if (!dispatch) return `Dispatch ${sanitizeIdentifier(dispatchId)} was not found.`;
-  return formatDispatchStatus(dispatch, application.listAttention(dispatchId));
+function fallbackText(content: readonly { type: string; text?: string }[] | undefined) {
+  return new Text(content?.map((item) => item.text ?? "").join("\n") ?? "", 0, 0);
 }
 
 function application(runtime: DispatchRuntime): DispatchApplication {

@@ -3,6 +3,7 @@ import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import type { HerdrNotification } from "../herdr/adapter.js";
 import type { DispatchRegistry } from "../registry/registry.js";
 import type { AttentionCondition, FinalOutcome } from "../registry/types.js";
+import { renderDispatchWidget } from "./renderers.js";
 
 export const DISPATCH_WIDGET_KEY = "pi-herdr-dispatch";
 
@@ -12,19 +13,23 @@ export function updateDispatchWidget(
   originSessionId: string,
 ): string {
   const dispatches = registry.listUnsettled(originSessionId);
-  const delivering = dispatches.filter((dispatch) => dispatch.lifecycle === "delivering").length;
-  const active = dispatches.filter((dispatch) => dispatch.lifecycle === "active").length;
-  const attention = dispatches.reduce(
-    (total, dispatch) => total + registry.listAttention(dispatch.id).length,
-    0,
-  );
+  const counts = {
+    delivering: dispatches.filter((dispatch) => dispatch.lifecycle === "delivering").length,
+    active: dispatches.filter((dispatch) => dispatch.lifecycle === "active").length,
+    attention: dispatches.reduce(
+      (total, dispatch) => total + registry.listAttention(dispatch.id).length,
+      0,
+    ),
+  };
   const segments = [
-    delivering > 0 ? `${delivering} delivering` : undefined,
-    `${active} active`,
-    `${attention} attention`,
+    counts.delivering > 0 ? `${counts.delivering} delivering` : undefined,
+    `${counts.active} active`,
+    `${counts.attention} attention`,
   ].filter((segment): segment is string => segment !== undefined);
   const text = `dispatches: ${segments.join(" · ")}`;
-  ui.setWidget(DISPATCH_WIDGET_KEY, [text], { placement: "belowEditor" });
+  ui.setWidget(DISPATCH_WIDGET_KEY, (_tui, theme) => renderDispatchWidget(counts, theme), {
+    placement: "belowEditor",
+  });
   return text;
 }
 

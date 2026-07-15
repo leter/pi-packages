@@ -1,6 +1,9 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+
+import { renderConfirmationResult, type ConfirmationResultDetails } from "./renderers.js";
 
 export const HERDR_DISPATCH_PROMPT_GUIDELINE =
   "Use herdr_dispatch_propose for every request to task another Herdr Agent. Do not use bash, user_bash, or raw herdr pane / herdr agent / herdr wait commands to send work or wait for it.";
@@ -27,14 +30,19 @@ export interface DispatchProposalToolParams {
   allowProjectDependencyInstall?: boolean;
 }
 
+export interface DispatchProposalToolOutcome {
+  text: string;
+  details: ConfirmationResultDetails;
+}
+
 export type DispatchProposalToolHandler = (
   params: DispatchProposalToolParams,
   ctx: ExtensionContext,
-) => Promise<string>;
+) => Promise<DispatchProposalToolOutcome>;
 
 export function createDispatchProposalToolDefinition(
   handler?: DispatchProposalToolHandler,
-): ToolDefinition<typeof proposalParameters, Record<string, never>> {
+): ToolDefinition<typeof proposalParameters, ConfirmationResultDetails> {
   return {
     name: "herdr_dispatch_propose",
     label: "Propose Herdr Dispatch",
@@ -45,8 +53,18 @@ export function createDispatchProposalToolDefinition(
     parameters: proposalParameters,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       if (!handler) throw new Error("herdr_dispatch_propose handler is not configured");
-      const text = await handler(params, ctx);
-      return { content: [{ type: "text", text }], details: {} };
+      const outcome = await handler(params, ctx);
+      return { content: [{ type: "text", text: outcome.text }], details: outcome.details };
+    },
+    renderResult(result, _options, theme) {
+      return (
+        renderConfirmationResult(result.details, theme) ??
+        new Text(resultText(result.content), 0, 0)
+      );
     },
   };
+}
+
+function resultText(content: readonly { type: string; text?: string }[] | undefined): string {
+  return content?.map((item) => item.text ?? "").join("\n") ?? "";
 }

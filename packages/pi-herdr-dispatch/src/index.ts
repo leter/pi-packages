@@ -4,10 +4,15 @@ import { registerDispatchCommands } from "./pi/commands.js";
 import { DispatchController } from "./pi/dispatch-controller.js";
 import { DispatchRuntime } from "./pi/dispatch-runtime.js";
 import { FollowupController } from "./pi/followup-controller.js";
+import { renderDispatchResultMessage } from "./pi/renderers.js";
 import { registerSafetyGate } from "./pi/safety-gate.js";
 import { registerDispatchTools } from "./pi/tools.js";
+import { DISPATCH_RESULT_CUSTOM_TYPE } from "./settlement/context-delivery.js";
 
 export default function piHerdrDispatch(pi: ExtensionAPI): void {
+  pi.registerMessageRenderer(DISPATCH_RESULT_CUSTOM_TYPE, (message, options, theme) =>
+    renderDispatchResultMessage(message, options.expanded, theme),
+  );
   const runtime = new DispatchRuntime({
     sendContextMessage: (message, options) => pi.sendMessage(message, options),
   });

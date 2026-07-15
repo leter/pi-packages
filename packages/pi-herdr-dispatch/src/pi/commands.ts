@@ -3,12 +3,13 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import type { CreateProposalRequest, DispatchApplication } from "../dispatch/application.js";
 import { DispatchController } from "./dispatch-controller.js";
 import { FollowupController } from "./followup-controller.js";
+import { formatConfirmationResult } from "./presentation.js";
 import {
-  formatAgentData,
-  formatConfirmationResult,
-  formatDispatchList,
-  formatInspectionData,
-} from "./presentation.js";
+  agentRow,
+  formatAgentTable,
+  formatDispatchTable,
+  formatInspectionText,
+} from "./visual.js";
 import type { DispatchRuntime } from "./dispatch-runtime.js";
 
 export function registerDispatchCommands(
@@ -21,7 +22,7 @@ export function registerDispatchCommands(
     description: "List Eligible Agents in the current Herdr workspace",
     handler: async (_args, ctx) =>
       handle(ctx, async () => {
-        ctx.ui.notify(formatAgentData(await application(runtime).listEligibleAgents()), "info");
+        ctx.ui.notify(formatAgentTable(await application(runtime).listEligibleAgents()), "info");
       }),
   });
 
@@ -34,10 +35,10 @@ export function registerDispatchCommands(
         const app = application(runtime);
         const targets = await app.listEligibleAgents();
         if (targets.length === 0) throw new Error("No Eligible Agents are available");
-        const options = targets.map(
-          (target) =>
-            `${target.displayName ?? target.agentLabel} · ${target.status} (${target.statusProvenance}) · ${target.terminalId}`,
-        );
+        const options = targets.map((target) => {
+          const row = agentRow(target);
+          return `${row.mark.glyph} ${row.label} · ${row.status} ${row.provenance} · ${row.cwd} · ${row.terminalId}`;
+        });
         const selected = await ctx.ui.select("Choose an Eligible Agent", options);
         if (!selected) return;
         const target = targets[options.indexOf(selected)];
@@ -70,8 +71,13 @@ export function registerDispatchCommands(
     description: "List unsettled dispatches for this Origin Session",
     handler: async (_args, ctx) =>
       handle(ctx, async () => {
+        const app = application(runtime);
         ctx.ui.notify(
-          formatDispatchList(application(runtime).listUnsettled(ctx.sessionManager.getSessionId())),
+          formatDispatchTable(
+            app.listUnsettled(ctx.sessionManager.getSessionId()),
+            (dispatchId) => app.listAttention(dispatchId),
+            Date.now(),
+          ),
           "info",
         );
       }),
@@ -142,7 +148,7 @@ export function registerDispatchCommands(
           target,
           linesText === undefined ? 50 : Number(linesText),
         );
-        ctx.ui.notify(formatInspectionData(inspected.target.terminalId, inspected.text), "info");
+        ctx.ui.notify(formatInspectionText(inspected.target.terminalId, inspected.text), "info");
       }),
   });
 }

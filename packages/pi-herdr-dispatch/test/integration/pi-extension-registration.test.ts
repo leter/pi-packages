@@ -31,6 +31,7 @@ describe("Pi extension Phase 4 registration", () => {
     const tools: ToolDefinition[] = [];
     const commands: string[] = [];
     const pi = {
+      registerMessageRenderer: (() => undefined) as never,
       registerTool: (tool: ToolDefinition) => tools.push(tool),
       registerCommand: (name: string) => commands.push(name),
       on: vi.fn(),
@@ -63,6 +64,7 @@ describe("Pi extension Phase 4 registration", () => {
       .mockResolvedValueOnce({ stdout: "status", stderr: "", code: 0 })
       .mockResolvedValueOnce({ stdout: "installed", stderr: "", code: 0 });
     const pi = {
+      registerMessageRenderer: (() => undefined) as never,
       registerTool: vi.fn(),
       registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) =>
         commands.set(name, options),
@@ -88,7 +90,8 @@ describe("Pi extension Phase 4 registration", () => {
     async (mode) => {
       const tools: ToolDefinition[] = [];
       const pi = {
-        registerTool: (tool: ToolDefinition) => tools.push(tool),
+        registerMessageRenderer: (() => undefined) as never,
+      registerTool: (tool: ToolDefinition) => tools.push(tool),
         registerCommand: vi.fn(),
         on: vi.fn(),
       } as unknown as ExtensionAPI;
