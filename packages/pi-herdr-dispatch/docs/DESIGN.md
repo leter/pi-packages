@@ -1,6 +1,6 @@
 # pi-herdr-dispatch Design
 
-Status: architecture review and compatibility spike complete; implementation plan drafted and awaiting user review before implementation.
+Status: implementation plan approved; Phase 1 safety-layer implementation in progress.
 
 ## Purpose
 
@@ -181,6 +181,8 @@ When the Origin Session is closed, no other Pi takes over. Results, notification
 On `/resume`, `/reload`, or Herdr socket reconnect, the Origin Monitor obtains a fresh snapshot, resolves the stored terminal ID, and performs a bounded 200-line `recent_unwrapped` Catch-Up Read. This is tail catch-up, not a revision-based Recovery Scan. If the terminal ID no longer exists, the record becomes `target-lost`.
 
 Herdr 0.7.3 regenerates terminal IDs across a clean server restart even when workspace and pane IDs are restored. Therefore every unsettled record whose pre-restart terminal ID disappears follows `target-lost`; V1 never claims continuity from a matching pane ID, cwd, Agent label, or retained history.
+
+**V2 backlog — human successor evidence:** a Herdr restart or upgrade can make every in-progress dispatch `target-lost` even while its Agent process survives. V1 accepts the resulting per-dispatch manual resolution as the conservative behavior. A future manual-resolution UI may show a same-pane-ID plus same-cwd pane as explicitly non-authoritative evidence for human judgment, but must never automatically retarget, transfer reservations, or treat that evidence as terminal continuity.
 
 If the same terminal ID is attached to a new pane ID with the same workspace and cwd, the route may be updated after revalidation. A changed terminal ID is never accepted as continuity.
 
