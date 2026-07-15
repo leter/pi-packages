@@ -21,6 +21,7 @@ const WRAPPERS = new Set([
   "ionice",
   "nice",
   "nohup",
+  "parallel",
   "setsid",
   "stdbuf",
   "sudo",
@@ -31,6 +32,21 @@ const WRAPPERS = new Set([
 const ENV_OPTIONS_WITH_VALUE = new Set(["-C", "--chdir", "-S", "--split-string", "-u", "--unset"]);
 const IONICE_OPTIONS_WITH_VALUE = new Set(["-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "--pgid", "-u", "--uid"]);
 const NICE_OPTIONS_WITH_VALUE = new Set(["-n", "--adjustment"]);
+const PARALLEL_OPTIONS_WITH_VALUE = new Set([
+  "-j",
+  "--jobs",
+  "-S",
+  "--sshlogin",
+  "--sshloginfile",
+  "--workdir",
+  "--results",
+  "--joblog",
+  "--timeout",
+  "--delay",
+  "--retries",
+  "--tagstring",
+  "--colsep",
+]);
 const STDBUF_OPTIONS_WITH_VALUE = new Set(["-e", "--error", "-i", "--input", "-o", "--output"]);
 const TIME_OPTIONS_WITH_VALUE = new Set(["-f", "--format", "-o", "--output"]);
 const TIMEOUT_OPTIONS_WITH_VALUE = new Set(["-k", "--kill-after", "-s", "--signal"]);
@@ -139,6 +155,8 @@ function resolveInvocation(words: readonly string[]): ShellInvocation | undefine
       index = skipOptions(words, index, NICE_OPTIONS_WITH_VALUE);
     } else if (wrapper === "ionice") {
       index = skipOptions(words, index, IONICE_OPTIONS_WITH_VALUE);
+    } else if (wrapper === "parallel") {
+      index = skipOptions(words, index, PARALLEL_OPTIONS_WITH_VALUE);
     } else if (wrapper === "stdbuf") {
       index = skipOptions(words, index, STDBUF_OPTIONS_WITH_VALUE);
     } else if (wrapper === "time") {

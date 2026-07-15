@@ -106,6 +106,8 @@ describe("Herdr shell safety policy", () => {
     "dash -c 'herdr wait agent-status w8:p3 --status done'",
     "timeout 30 herdr wait agent-status w8:p3 --status done",
     "nice herdr pane run w8:p3 task",
+    "parallel herdr pane run ::: w8:p3",
+    "parallel -j 2 herdr pane run ::: w8:p3",
     "ionice -c 2 -n 7 herdr pane run w8:p3 task",
     "stdbuf -oL herdr pane run w8:p3 task",
     "setsid herdr pane run w8:p3 task",
