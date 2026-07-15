@@ -99,6 +99,27 @@ describe("Herdr shell safety policy", () => {
     expect(classifyHerdrShell(command, context).action).toBe("deny");
   });
 
+  it.each([
+    "bash -c 'herdr pane run w8:p3 task'",
+    'sh -c "herdr agent send reviewer \'do x\'"',
+    "zsh -c 'herdr pane split --current --direction right'",
+    "dash -c 'herdr wait agent-status w8:p3 --status done'",
+    "timeout 30 herdr wait agent-status w8:p3 --status done",
+    "nice herdr pane run w8:p3 task",
+    "ionice -c 2 -n 7 herdr pane run w8:p3 task",
+    "stdbuf -oL herdr pane run w8:p3 task",
+    "setsid herdr pane run w8:p3 task",
+    "time herdr pane run w8:p3 task",
+    "xargs -I{} herdr pane run {} task",
+    "xargs -n 1 -P 2 herdr pane run w8:p3",
+    "xargs -I {} -n 1 -P 2 -d ':' -a /tmp/input -E STOP -L 1 -s 1024 herdr pane run {} task",
+    'eval "herdr pane split --current --direction right"',
+    "echo `herdr pane run w8:p3 task`",
+    "echo $(herdr pane run w8:p3 task)",
+  ])("denies wrapped, recursively evaluated, and substituted Herdr control: %s", (command) => {
+    expect(classifyHerdrShell(command, context).action).toBe("deny");
+  });
+
   it("fails closed when a literal Herdr invocation cannot be parsed", () => {
     const decision = classifyHerdrShell('herdr pane "run', context);
 
@@ -114,7 +135,15 @@ describe("Herdr shell safety policy", () => {
     });
   });
 
-  it("allows shell commands that do not invoke Herdr", () => {
-    expect(classifyHerdrShell("git status --short", context)).toEqual({ action: "allow" });
-  });
+  it.each([
+    "git status --short",
+    "grep herdr DESIGN.md",
+    "bash -c 'grep herdr DESIGN.md'",
+    'eval "grep herdr DESIGN.md"',
+  ])(
+    "allows shell commands that do not invoke Herdr: %s",
+    (command) => {
+      expect(classifyHerdrShell(command, context)).toEqual({ action: "allow" });
+    },
+  );
 });

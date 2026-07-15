@@ -66,10 +66,20 @@ const HELP_GROUPS = new Set([
 const HELP_FLAGS = new Set(["--help", "-h", "help"]);
 const VERSION_FLAGS = new Set(["--version", "-V"]);
 const TASKING_REDIRECT = "herdr_dispatch_propose or /herdr-dispatch";
+const RECURSIVE_SHELLS = new Set(["bash", "dash", "sh", "zsh"]);
+const MAX_CLASSIFICATION_DEPTH = 8;
 
 export function classifyHerdrShell(
   command: string,
   context: HerdrShellContext,
+): SafetyDecision {
+  return classifyHerdrShellAtDepth(command, context, 0);
+}
+
+function classifyHerdrShellAtDepth(
+  command: string,
+  context: HerdrShellContext,
+  depth: number,
 ): SafetyDecision {
   const shell = classifyShellInvocations(command);
   if (!shell.parsed) {
@@ -84,6 +94,23 @@ export function classifyHerdrShell(
 
   let frameHerdrOutput = false;
   for (const invocation of shell.invocations) {
+    const nestedCommand = recursivelyEvaluatedCommand(invocation);
+    if (nestedCommand !== undefined) {
+      if (depth >= MAX_CLASSIFICATION_DEPTH) {
+        if (/\bherdr\b/u.test(nestedCommand)) {
+          return deny(
+            "unclassifiable-herdr-command",
+            "Blocked a Herdr command nested beyond the classifier recursion limit.",
+            TASKING_REDIRECT,
+          );
+        }
+      } else {
+        const nestedDecision = classifyHerdrShellAtDepth(nestedCommand, context, depth + 1);
+        if (nestedDecision.action === "deny") return nestedDecision;
+        frameHerdrOutput ||= nestedDecision.frameHerdrOutput === true;
+      }
+    }
+
     if (invocation.executable !== "herdr") continue;
 
     const decision = classifyInvocation(invocation, context);
@@ -92,6 +119,16 @@ export function classifyHerdrShell(
   }
 
   return frameHerdrOutput ? { action: "allow", frameHerdrOutput: true } : { action: "allow" };
+}
+
+function recursivelyEvaluatedCommand(invocation: ShellInvocation): string | undefined {
+  if (invocation.executable === "eval") return invocation.args.join(" ");
+  if (!RECURSIVE_SHELLS.has(invocation.executable)) return undefined;
+
+  const commandOptionIndex = invocation.args.findIndex(
+    (arg) => arg === "-c" || (/^-[^-]*c[^-]*$/u.test(arg) && arg !== "-"),
+  );
+  return commandOptionIndex >= 0 ? invocation.args[commandOptionIndex + 1] : undefined;
 }
 
 export function guardWorktreeOperation(
@@ -134,8 +171,13 @@ function operationConflictsWithLease(
   }
 
   if (bashEffect?.kind === "read-only") return false;
-  if (bashEffect?.kind === "mutating" || bashEffect?.kind === "unknown") {
-    if (bashEffect.paths.some((path) => pathIsInside(root, path))) return true;
+  if (bashEffect?.kind === "mutating") {
+    return bashEffect.paths.some((path) => pathIsInside(root, path));
+  }
+  if (bashEffect?.kind === "unknown") {
+    return (
+      bashEffect.paths.some((path) => pathIsInside(root, path)) || operation.command.includes(root)
+    );
   }
 
   return pathIsInside(root, resolve(operation.cwd)) || operation.command.includes(root);

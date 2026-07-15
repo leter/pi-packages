@@ -107,6 +107,18 @@ describe("Worktree Write Lease guard", () => {
     ).toEqual({ action: "allow" });
   });
 
+  it.each(["rm -f /tmp/foo", "mv /tmp/a /tmp/b"])(
+    "does not fall back to leased cwd when every parsed mutation path is outside: %s",
+    (command) => {
+      expect(
+        guardWorktreeOperation(
+          { kind: "bash", cwd: "/repo/worktree", command },
+          context(),
+        ),
+      ).toEqual({ action: "allow" });
+    },
+  );
+
   it("fails closed for covered mutations when the lease Registry is unavailable", () => {
     const unavailable = context({
       leaseSnapshot: { status: "unavailable", reason: "database is locked" },

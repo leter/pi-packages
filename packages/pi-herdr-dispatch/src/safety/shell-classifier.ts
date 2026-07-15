@@ -14,8 +14,45 @@ type Token =
 
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s;
 const REDIRECTION = /^\d*(?:>{1,2}|<{1,2}|<>|>&|<&)/;
-const WRAPPERS = new Set(["command", "env", "exec", "nohup", "sudo"]);
+const WRAPPERS = new Set([
+  "command",
+  "env",
+  "exec",
+  "ionice",
+  "nice",
+  "nohup",
+  "setsid",
+  "stdbuf",
+  "sudo",
+  "time",
+  "timeout",
+  "xargs",
+]);
 const ENV_OPTIONS_WITH_VALUE = new Set(["-C", "--chdir", "-S", "--split-string", "-u", "--unset"]);
+const IONICE_OPTIONS_WITH_VALUE = new Set(["-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "--pgid", "-u", "--uid"]);
+const NICE_OPTIONS_WITH_VALUE = new Set(["-n", "--adjustment"]);
+const STDBUF_OPTIONS_WITH_VALUE = new Set(["-e", "--error", "-i", "--input", "-o", "--output"]);
+const TIME_OPTIONS_WITH_VALUE = new Set(["-f", "--format", "-o", "--output"]);
+const TIMEOUT_OPTIONS_WITH_VALUE = new Set(["-k", "--kill-after", "-s", "--signal"]);
+const XARGS_OPTIONS_WITH_VALUE = new Set([
+  "-a",
+  "--arg-file",
+  "-d",
+  "--delimiter",
+  "-E",
+  "--eof",
+  "-I",
+  "--replace",
+  "-L",
+  "--max-lines",
+  "-n",
+  "--max-args",
+  "-P",
+  "--max-procs",
+  "-s",
+  "--max-chars",
+  "--process-slot-var",
+]);
 const SUDO_OPTIONS_WITH_VALUE = new Set([
   "-C",
   "-D",
@@ -90,18 +127,28 @@ function resolveInvocation(words: readonly string[]): ShellInvocation | undefine
           continue;
         }
         if (word.startsWith("-")) {
-          index += ENV_OPTIONS_WITH_VALUE.has(word) ? 2 : 1;
+          index = skipOption(words, index, ENV_OPTIONS_WITH_VALUE);
           continue;
         }
         break;
       }
+    } else if (wrapper === "timeout") {
+      index = skipOptions(words, index, TIMEOUT_OPTIONS_WITH_VALUE);
+      if (words[index] !== undefined) index += 1;
+    } else if (wrapper === "nice") {
+      index = skipOptions(words, index, NICE_OPTIONS_WITH_VALUE);
+    } else if (wrapper === "ionice") {
+      index = skipOptions(words, index, IONICE_OPTIONS_WITH_VALUE);
+    } else if (wrapper === "stdbuf") {
+      index = skipOptions(words, index, STDBUF_OPTIONS_WITH_VALUE);
+    } else if (wrapper === "time") {
+      index = skipOptions(words, index, TIME_OPTIONS_WITH_VALUE);
+    } else if (wrapper === "xargs") {
+      index = skipOptions(words, index, XARGS_OPTIONS_WITH_VALUE);
     } else if (wrapper === "sudo") {
-      while (index < words.length && words[index]?.startsWith("-")) {
-        const option = words[index]!;
-        index += SUDO_OPTIONS_WITH_VALUE.has(option) ? 2 : 1;
-      }
+      index = skipOptions(words, index, SUDO_OPTIONS_WITH_VALUE);
     } else {
-      while (words[index]?.startsWith("-")) index += 1;
+      index = skipOptions(words, index, new Set());
     }
 
     index = skipRedirections(words, index);
@@ -114,6 +161,38 @@ function resolveInvocation(words: readonly string[]): ShellInvocation | undefine
     args: words.slice(index + 1),
     assignments,
   };
+}
+
+function skipOptions(
+  words: readonly string[],
+  start: number,
+  optionsWithValue: ReadonlySet<string>,
+): number {
+  let index = start;
+  while (index < words.length) {
+    const option = words[index]!;
+    if (option === "--") return index + 1;
+    if (!option.startsWith("-") || option === "-") return index;
+    index = skipOption(words, index, optionsWithValue);
+  }
+  return index;
+}
+
+function skipOption(
+  words: readonly string[],
+  index: number,
+  optionsWithValue: ReadonlySet<string>,
+): number {
+  const option = words[index]!;
+  if (optionsWithValue.has(option)) return Math.min(index + 2, words.length);
+
+  for (const valueOption of optionsWithValue) {
+    if (valueOption.startsWith("--") && option.startsWith(`${valueOption}=`)) return index + 1;
+    if (valueOption.startsWith("-") && !valueOption.startsWith("--") && option.startsWith(valueOption) && option !== valueOption) {
+      return index + 1;
+    }
+  }
+  return index + 1;
 }
 
 function skipRedirections(words: readonly string[], start: number): number {
@@ -163,6 +242,8 @@ function lexShell(command: string): readonly Token[] | undefined {
     if (quote === "double") {
       if (char === '"') {
         quote = undefined;
+      } else if (char === "`") {
+        return undefined;
       } else if (char === "\\") {
         escaped = true;
       } else {
@@ -177,6 +258,7 @@ function lexShell(command: string): readonly Token[] | undefined {
       wordStarted = true;
       continue;
     }
+    if (char === "`") return undefined;
     if (char === "'") {
       quote = "single";
       wordStarted = true;
