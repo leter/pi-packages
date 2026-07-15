@@ -104,6 +104,34 @@ export function registerDispatchCommands(
       }),
   });
 
+  pi.registerCommand("herdr-dispatch-setup", {
+    description: "Explicitly install one Herdr Agent status integration",
+    handler: async (_args, ctx) =>
+      handle(ctx, async () => {
+        if (ctx.mode !== "tui") throw new Error("Integration setup is available only in TUI mode");
+        const status = await pi.exec("herdr", ["integration", "status"], { cwd: ctx.cwd });
+        ctx.ui.notify(status.stdout || "No integration status output.", "info");
+        const integration = await ctx.ui.select("Install one Herdr integration", [
+          "pi",
+          "claude",
+          "codex",
+          "opencode",
+          "Cancel",
+        ]);
+        if (!integration || integration === "Cancel") return;
+        const confirmed = await ctx.ui.confirm(
+          `Install Herdr ${integration} integration?`,
+          "This explicitly modifies that Agent's local integration configuration. Nothing is installed automatically and only this one selected integration will be changed.",
+        );
+        if (!confirmed) return;
+        const result = await pi.exec("herdr", ["integration", "install", integration], {
+          cwd: ctx.cwd,
+        });
+        if (result.code !== 0) throw new Error(result.stderr || `Herdr integration install exited ${result.code}`);
+        ctx.ui.notify(result.stdout || `Installed Herdr ${integration} integration.`, "info");
+      }),
+  });
+
   pi.registerCommand("herdr-agent-output", {
     description: "Read one bounded current-workspace Agent output tail",
     handler: async (args, ctx) =>

@@ -46,6 +46,7 @@ export interface OriginMonitorOptions {
   ) => void | Promise<void>;
   resumedAfterOriginGap?: boolean;
   captureWorktreeSnapshot?: (worktreePath: string) => Promise<WorktreeSnapshot>;
+  onChanged?: () => void;
 }
 
 export class OriginMonitor {
@@ -62,6 +63,7 @@ export class OriginMonitor {
   ) => void | Promise<void>;
   readonly #resumedAfterOriginGap: boolean;
   readonly #captureWorktreeSnapshot: (worktreePath: string) => Promise<WorktreeSnapshot>;
+  readonly #onChanged: () => void;
   readonly #timers = new Set<ScheduledTask>();
   readonly #cwdMismatches = new Map<string, number>();
   readonly #acknowledged = new Set<string>();
@@ -80,6 +82,7 @@ export class OriginMonitor {
     this.#onAttention = options.onAttention ?? (() => undefined);
     this.#resumedAfterOriginGap = options.resumedAfterOriginGap ?? false;
     this.#captureWorktreeSnapshot = options.captureWorktreeSnapshot ?? captureWorktreeSnapshot;
+    this.#onChanged = options.onChanged ?? (() => undefined);
   }
 
   async start(): Promise<void> {
@@ -256,6 +259,7 @@ export class OriginMonitor {
       settledAt: this.#clock.now(),
     });
     if (settlement.status === "settled") {
+      this.#onChanged();
       try {
         await this.#onSettled(current.id);
       } catch (error) {
@@ -410,7 +414,10 @@ export class OriginMonitor {
   ): Promise<void> {
     try {
       const result = this.#registry.addAttention(dispatchId, condition, details, this.#clock.now());
-      if (result === "added") await this.#onAttention(dispatchId, condition, details);
+      if (result === "added") {
+        this.#onChanged();
+        await this.#onAttention(dispatchId, condition, details);
+      }
     } catch (error) {
       if (!(error instanceof RegistryStateError)) throw error;
       if (this.#registry.getDispatch(dispatchId)?.lifecycle !== "settled") throw error;
@@ -419,7 +426,8 @@ export class OriginMonitor {
 
   #clearAttentionBenign(dispatchId: string, condition: AttentionCondition): void {
     try {
-      this.#registry.clearAttention(dispatchId, condition, this.#clock.now());
+      const result = this.#registry.clearAttention(dispatchId, condition, this.#clock.now());
+      if (result === "cleared") this.#onChanged();
     } catch (error) {
       if (!(error instanceof RegistryStateError)) throw error;
       if (this.#registry.getDispatch(dispatchId)?.lifecycle !== "settled") throw error;
@@ -428,7 +436,8 @@ export class OriginMonitor {
 
   #markActiveBenign(dispatchId: string): void {
     try {
-      this.#registry.markActive(dispatchId, this.#clock.now());
+      const result = this.#registry.markActive(dispatchId, this.#clock.now());
+      if (result === "changed") this.#onChanged();
     } catch (error) {
       if (!(error instanceof RegistryStateError)) throw error;
       if (this.#registry.getDispatch(dispatchId)?.lifecycle !== "settled") throw error;

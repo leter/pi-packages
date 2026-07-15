@@ -13,6 +13,12 @@ import {
   OriginContextDelivery,
   type OriginContextPort,
 } from "../settlement/context-delivery.js";
+import {
+  attentionNotification,
+  clearDispatchWidget,
+  outcomeNotification,
+  updateDispatchWidget,
+} from "./live-presentation.js";
 import { RegistryRuntime } from "./registry-runtime.js";
 
 export interface DispatchRuntimeOptions {
@@ -32,6 +38,8 @@ export class DispatchRuntime {
   #contextDelivery?: OriginContextDelivery;
   #followup?: DispatchFollowupService;
   #application?: DispatchApplication;
+  #ui?: ExtensionContext["ui"];
+  #originSessionId?: string;
   #mutationUnavailableReason = "Dispatch runtime session has not started";
 
   constructor(options: DispatchRuntimeOptions = {}) {
@@ -83,6 +91,10 @@ export class DispatchRuntime {
       const originPane = snapshot.panes.find((pane) => pane.paneId === paneId);
       if (!originPane) throw new Error("current Pi pane is absent from the captured Herdr workspace");
       this.registryRuntime.setActorTerminalId(originPane.terminalId);
+      if (ctx.mode === "tui") {
+        this.#ui = ctx.ui;
+        this.#originSessionId = ctx.sessionManager.getSessionId();
+      }
       if (this.registryRuntime.registry) {
         const registry = this.registryRuntime.registry;
         if (ctx.mode === "tui") {
@@ -94,11 +106,21 @@ export class DispatchRuntime {
             originSessionId: ctx.sessionManager.getSessionId(),
             resumedAfterOriginGap: reason === "resume" || reason === "reload",
             onSettled: async (dispatchId) => {
+              await this.#notifyOutcome(dispatchId);
               await this.deliverPendingContext(ctx, dispatchId);
             },
+            onAttention: async (dispatchId, condition) => {
+              await this.#notifyAttention(dispatchId, condition);
+            },
+            onChanged: () => this.#updateWidget(),
           });
         }
-        this.#followup = new DispatchFollowupService({ registry, herdr: this.#adapter, config });
+        this.#followup = new DispatchFollowupService({
+          registry,
+          herdr: this.#adapter,
+          config,
+          onSettled: (dispatchId) => void this.#notifyOutcome(dispatchId),
+        });
         this.#application = new DispatchApplication({
           config,
           registry,
@@ -109,10 +131,15 @@ export class DispatchRuntime {
             ? {}
             : {
                 prepareMonitoring: (targets) => this.#monitor!.watchTargets(targets),
-                onIntentRecorded: () => this.#monitor!.refresh(),
+                onIntentRecorded: async () => {
+                  await this.#monitor!.refresh();
+                  this.#updateWidget();
+                },
               }),
+          onSettled: (dispatchId) => void this.#notifyOutcome(dispatchId),
         });
         await this.#monitor?.start();
+        this.#updateWidget();
         await this.deliverPendingContext(ctx);
       }
       return this.#application !== undefined;
@@ -140,6 +167,9 @@ export class DispatchRuntime {
   }
 
   stop(): void {
+    if (this.#ui) clearDispatchWidget(this.#ui);
+    this.#ui = undefined;
+    this.#originSessionId = undefined;
     this.#monitor?.stop();
     this.#monitor = undefined;
     this.#contextDelivery = undefined;
@@ -151,6 +181,38 @@ export class DispatchRuntime {
     if (!this.#mutationUnavailableReason) {
       this.#mutationUnavailableReason = "Dispatch runtime session is stopped";
     }
+  }
+
+  async #notifyOutcome(dispatchId: string): Promise<void> {
+    const dispatch = this.registryRuntime.registry?.getDispatch(dispatchId);
+    if (!dispatch?.finalOutcome || !this.#adapter) return;
+    try {
+      await this.#adapter.showNotification(
+        outcomeNotification(dispatchId, dispatch.finalOutcome),
+      );
+    } catch {
+      // Durable state and the Pi widget remain authoritative when desktop notification fails.
+    }
+    this.#updateWidget();
+  }
+
+  async #notifyAttention(
+    dispatchId: string,
+    condition: Parameters<typeof attentionNotification>[1],
+  ): Promise<void> {
+    if (this.#adapter) {
+      try {
+        await this.#adapter.showNotification(attentionNotification(dispatchId, condition));
+      } catch {
+        // Attention is already durable; notification transport is best effort.
+      }
+    }
+    this.#updateWidget();
+  }
+
+  #updateWidget(): void {
+    if (!this.#ui || !this.#originSessionId || !this.registryRuntime.registry) return;
+    updateDispatchWidget(this.#ui, this.registryRuntime.registry, this.#originSessionId);
   }
 
   #contextPort(ctx: ExtensionContext): OriginContextPort {

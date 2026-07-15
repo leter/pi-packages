@@ -24,7 +24,12 @@ import {
   type DispatchRegistry,
   RegistryStateError,
 } from "../registry/registry.js";
-import type { DispatchLifecycle, DispatchMode, StoredDispatch } from "../registry/types.js";
+import type {
+  DispatchLifecycle,
+  DispatchMode,
+  FinalOutcome,
+  StoredDispatch,
+} from "../registry/types.js";
 import {
   createDispatchProposal,
   type DispatchProposal,
@@ -82,6 +87,7 @@ export interface DispatchApplicationOptions {
   prepareMonitoring?: (targets: readonly HerdrMonitorTarget[]) => Promise<void>;
   onIntentRecorded?: () => void | Promise<void>;
   captureWorktreeSnapshot?: (worktreePath: string) => Promise<WorktreeSnapshot>;
+  onSettled?: (dispatchId: string, outcome: FinalOutcome) => void;
 }
 
 export class ProposalTargetError extends Error {
@@ -110,6 +116,7 @@ export class DispatchApplication {
   readonly #prepareMonitoring: (targets: readonly HerdrMonitorTarget[]) => Promise<void>;
   readonly #onIntentRecorded: () => void | Promise<void>;
   readonly #captureWorktreeSnapshot: (worktreePath: string) => Promise<WorktreeSnapshot>;
+  readonly #onSettled: (dispatchId: string, outcome: FinalOutcome) => void;
   readonly #proposals = new Map<string, DispatchProposal>();
 
   constructor(options: DispatchApplicationOptions) {
@@ -126,6 +133,7 @@ export class DispatchApplication {
       ((targets) => this.#herdr.monitorTargets(targets, () => undefined));
     this.#onIntentRecorded = options.onIntentRecorded ?? (() => undefined);
     this.#captureWorktreeSnapshot = options.captureWorktreeSnapshot ?? captureWorktreeSnapshot;
+    this.#onSettled = options.onSettled ?? (() => undefined);
   }
 
   async listEligibleAgents(): Promise<readonly ProposalTarget[]> {
@@ -276,7 +284,7 @@ export class DispatchApplication {
     try {
       await this.#onIntentRecorded();
     } catch (error) {
-      this.#registry.settle({
+      const settlement = this.#registry.settle({
         dispatchId: proposal.id,
         outcome: "failed",
         sanitizedResult: {
@@ -287,6 +295,7 @@ export class DispatchApplication {
         kind: "delivery-failed",
         settledAt: this.#now(),
       });
+      if (settlement.status === "settled") this.#onSettled(proposal.id, settlement.outcome);
       return { status: "failed", dispatchId: proposal.id, reason: "monitoring-unavailable" };
     }
 
@@ -416,7 +425,7 @@ export class DispatchApplication {
   ): ConfirmationResult {
     const now = this.#now();
     if (delivery.status === "not-sent") {
-      this.#registry.settle({
+      const settlement = this.#registry.settle({
         dispatchId: proposal.id,
         outcome: "failed",
         sanitizedResult: {
@@ -427,6 +436,7 @@ export class DispatchApplication {
         kind: "delivery-failed",
         settledAt: now,
       });
+      if (settlement.status === "settled") this.#onSettled(proposal.id, settlement.outcome);
       return { status: "failed", dispatchId: proposal.id, reason: delivery.reason };
     }
     if (delivery.status === "verified") {

@@ -30,6 +30,7 @@ export class DispatchFollowupService {
   readonly #config: DispatchConfig;
   readonly #now: () => number;
   readonly #nextNonce: () => string;
+  readonly #onSettled: (dispatchId: string, outcome: FinalOutcome) => void;
   readonly #proposals = new Map<string, FollowupProposal>();
 
   constructor(options: {
@@ -38,6 +39,7 @@ export class DispatchFollowupService {
     config: DispatchConfig;
     now?: () => number;
     nextNonce?: () => string;
+    onSettled?: (dispatchId: string, outcome: FinalOutcome) => void;
   }) {
     this.#registry = options.registry;
     this.#herdr = options.herdr;
@@ -45,6 +47,7 @@ export class DispatchFollowupService {
     this.#now = options.now ?? Date.now;
     this.#nextNonce =
       options.nextNonce ?? (() => `hd_followup_${this.#now().toString(36)}_${randomBytes(8).toString("base64url")}`);
+    this.#onSettled = options.onSettled ?? (() => undefined);
   }
 
   async prepareReply(
@@ -153,7 +156,7 @@ export class DispatchFollowupService {
       );
     }
     const summary = boundedText(input.summary, "resolution summary", 1_000);
-    return this.#registry.settle({
+    const result = this.#registry.settle({
       dispatchId: dispatch.id,
       outcome: input.outcome,
       sanitizedResult: {
@@ -167,6 +170,8 @@ export class DispatchFollowupService {
       resolverSessionId: input.actorSessionId,
       settledAt: this.#now(),
     });
+    if (result.status === "settled") this.#onSettled(dispatch.id, result.outcome);
+    return result;
   }
 
   async #evidence(dispatchId: string): Promise<FollowupEvidence> {

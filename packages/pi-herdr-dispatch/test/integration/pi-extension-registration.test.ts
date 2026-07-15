@@ -17,6 +17,7 @@ function context(mode: ExtensionContext["mode"]): ExtensionContext {
       confirm: vi.fn(),
       input: vi.fn(),
       editor: vi.fn(),
+      notify: vi.fn(),
     },
     sessionManager: {
       getSessionId: () => "session_1",
@@ -50,8 +51,36 @@ describe("Pi extension Phase 4 registration", () => {
       "herdr-dispatch-reply",
       "herdr-dispatch-cancel",
       "herdr-dispatch-resolve",
+      "herdr-dispatch-setup",
       "herdr-agent-output",
     ]);
+  });
+
+  it("installs only one explicitly selected integration after confirmation", async () => {
+    const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "status", stderr: "", code: 0 })
+      .mockResolvedValueOnce({ stdout: "installed", stderr: "", code: 0 });
+    const pi = {
+      registerTool: vi.fn(),
+      registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) =>
+        commands.set(name, options),
+      on: vi.fn(),
+      exec,
+    } as unknown as ExtensionAPI;
+    piHerdrDispatch(pi);
+    const ctx = context("tui");
+    vi.mocked(ctx.ui.select).mockResolvedValue("pi");
+    vi.mocked(ctx.ui.confirm).mockResolvedValue(true);
+
+    await commands.get("herdr-dispatch-setup")!.handler("", ctx);
+
+    expect(exec).toHaveBeenNthCalledWith(1, "herdr", ["integration", "status"], { cwd: "/repo" });
+    expect(exec).toHaveBeenNthCalledWith(2, "herdr", ["integration", "install", "pi"], {
+      cwd: "/repo",
+    });
+    expect(exec).toHaveBeenCalledTimes(2);
   });
 
   it.each(["rpc", "json", "print"] as const)(
