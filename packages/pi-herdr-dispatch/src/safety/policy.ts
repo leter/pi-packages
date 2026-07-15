@@ -1,4 +1,7 @@
+import { isAbsolute, relative, resolve } from "node:path";
+
 import { classifyShellInvocations, type ShellInvocation } from "./shell-classifier.js";
+import { classifyBashEffect } from "./worktree-effects.js";
 
 export interface HerdrShellContext {
   currentPaneId?: string;
@@ -12,10 +15,31 @@ export type SafetyDecision =
         | "raw-herdr-output-read"
         | "cross-workspace-herdr-snapshot"
         | "raw-herdr-control"
-        | "unclassifiable-herdr-command";
+        | "unclassifiable-herdr-command"
+        | "worktree-write-lease"
+        | "lease-registry-unavailable";
       reason: string;
-      redirect: string;
+      redirect?: string;
     };
+
+export interface WorktreeLease {
+  dispatchId: string;
+  targetTerminalId: string;
+  worktreePath: string;
+}
+
+export type LeaseSnapshot =
+  | { status: "ready"; leases: readonly WorktreeLease[] }
+  | { status: "unavailable"; reason: string };
+
+export interface LeaseGuardContext {
+  actorTerminalId?: string;
+  leaseSnapshot: LeaseSnapshot;
+}
+
+export type CoveredPiOperation =
+  | { kind: "edit" | "write"; cwd: string; path: string }
+  | { kind: "bash"; cwd: string; command: string };
 
 const ALLOWED_SUBCOMMANDS = new Map<string, ReadonlySet<string>>([
   ["pane", new Set(["list", "get", "current", "layout", "process-info", "neighbor", "edges"])],
@@ -68,6 +92,58 @@ export function classifyHerdrShell(
   }
 
   return frameHerdrOutput ? { action: "allow", frameHerdrOutput: true } : { action: "allow" };
+}
+
+export function guardWorktreeOperation(
+  operation: CoveredPiOperation,
+  context: LeaseGuardContext,
+): SafetyDecision {
+  const bashEffect =
+    operation.kind === "bash" ? classifyBashEffect(operation.command, operation.cwd) : undefined;
+
+  if (context.leaseSnapshot.status === "unavailable") {
+    if (bashEffect?.kind === "read-only") return { action: "allow" };
+    return deny(
+      "lease-registry-unavailable",
+      `Covered mutation blocked because the Dispatch Registry is unavailable: ${context.leaseSnapshot.reason}`,
+    );
+  }
+
+  for (const lease of context.leaseSnapshot.leases) {
+    if (context.actorTerminalId === lease.targetTerminalId) continue;
+    if (!operationConflictsWithLease(operation, bashEffect, lease)) continue;
+
+    return deny(
+      "worktree-write-lease",
+      `Worktree ${lease.worktreePath} is reserved by dispatch ${lease.dispatchId}.`,
+    );
+  }
+
+  return { action: "allow" };
+}
+
+function operationConflictsWithLease(
+  operation: CoveredPiOperation,
+  bashEffect: ReturnType<typeof classifyBashEffect> | undefined,
+  lease: WorktreeLease,
+): boolean {
+  const root = resolve(lease.worktreePath);
+
+  if (operation.kind !== "bash") {
+    return pathIsInside(root, resolve(operation.cwd, operation.path));
+  }
+
+  if (bashEffect?.kind === "read-only") return false;
+  if (bashEffect?.kind === "mutating") {
+    return bashEffect.paths.some((path) => pathIsInside(root, path));
+  }
+
+  return pathIsInside(root, resolve(operation.cwd)) || operation.command.includes(root);
+}
+
+function pathIsInside(root: string, candidate: string): boolean {
+  const pathFromRoot = relative(root, resolve(candidate));
+  return pathFromRoot === "" || (!pathFromRoot.startsWith("..") && !isAbsolute(pathFromRoot));
 }
 
 function classifyInvocation(
@@ -134,7 +210,7 @@ function isProvenCurrentPane(
 function deny(
   code: Extract<SafetyDecision, { action: "deny" }>["code"],
   reason: string,
-  redirect: string,
+  redirect?: string,
 ): SafetyDecision {
-  return { action: "deny", code, reason, redirect };
+  return redirect ? { action: "deny", code, reason, redirect } : { action: "deny", code, reason };
 }
