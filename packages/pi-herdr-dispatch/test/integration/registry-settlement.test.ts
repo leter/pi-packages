@@ -1,11 +1,13 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   openDispatchRegistry,
   RegistryStateError,
+  RegistryUnavailableError,
   type DispatchRegistry,
 } from "../../src/registry/registry.js";
 import type { ConfirmDeliveryIntent } from "../../src/registry/types.js";
@@ -124,6 +126,37 @@ describe("first-wins settlement and active-branch claims", () => {
     expect(second.listAuditEvents("hd_settle").map((event) => event.eventType)).toContain(
       "settlement-duplicate",
     );
+  });
+
+  it("rolls back every settlement side effect when SQLite fails mid-transaction", async () => {
+    const [registry] = await registryPair();
+    registry.confirmDeliveryIntent(intent());
+    const fault = new DatabaseSync(registry.path);
+    fault.exec(`
+      CREATE TRIGGER fail_settlement_update
+      BEFORE UPDATE OF lifecycle ON dispatches
+      WHEN NEW.lifecycle = 'settled'
+      BEGIN
+        SELECT RAISE(ABORT, 'injected settlement failure');
+      END;
+    `);
+    fault.close();
+
+    expect(() =>
+      registry.settle({
+        dispatchId: "hd_settle",
+        outcome: "done",
+        sanitizedResult: { id: "hd_settle", outcome: "done", summary: "Complete" },
+        kind: "result",
+        settledAt: 2_100,
+      }),
+    ).toThrowError(RegistryUnavailableError);
+
+    expect(registry.getDispatch("hd_settle")?.lifecycle).toBe("delivering");
+    expect(registry.getResult("hd_settle")).toBeUndefined();
+    expect(registry.listTargetOccupancy()).toHaveLength(1);
+    expect(registry.listWriteLeases()).toHaveLength(1);
+    expect(registry.health().mutationsEnabled).toBe(false);
   });
 
   it("rolls back settlement when result data is not serializable", async () => {

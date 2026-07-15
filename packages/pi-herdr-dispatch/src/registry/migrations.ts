@@ -35,8 +35,16 @@ export async function migrateRegistry(
 
   database.exec("BEGIN IMMEDIATE");
   try {
-    if (fromVersion === 0) database.exec(REGISTRY_SCHEMA_V1);
-    database.exec(`PRAGMA user_version = ${REGISTRY_SCHEMA_VERSION}`);
+    const lockedVersion = readSchemaVersion(database);
+    if (lockedVersion > REGISTRY_SCHEMA_VERSION) {
+      throw new Error(
+        `Registry schema ${lockedVersion} is newer than supported schema ${REGISTRY_SCHEMA_VERSION}`,
+      );
+    }
+    if (lockedVersion < REGISTRY_SCHEMA_VERSION) {
+      if (lockedVersion === 0) database.exec(REGISTRY_SCHEMA_V1);
+      database.exec(`PRAGMA user_version = ${REGISTRY_SCHEMA_VERSION}`);
+    }
     database.exec("COMMIT");
   } catch (error) {
     rollback(database);

@@ -165,13 +165,19 @@ describe("durable delivery intent and reservations", () => {
     ).toThrowError(RegistryConflictError);
   });
 
-  it("rejects invalid write intent before changing the Registry", async () => {
+  it("rejects invalid intent before changing or disabling the Registry", async () => {
     const [registry] = await registryPair();
 
     expect(() =>
       registry.confirmDeliveryIntent(intent({ worktreePath: undefined })),
     ).toThrowError(RegistryStateError);
+    expect(() =>
+      registry.confirmDeliveryIntent(
+        intent({ constraints: [42] as unknown as readonly string[] }),
+      ),
+    ).toThrowError(RegistryStateError);
     expect(registry.getDispatch("hd_001")).toBeUndefined();
     expect(registry.listTargetOccupancy()).toEqual([]);
+    expect(registry.health().mutationsEnabled).toBe(true);
   });
 });

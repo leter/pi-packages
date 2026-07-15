@@ -101,6 +101,7 @@ export class DispatchRegistry {
 
   confirmDeliveryIntent(intent: ConfirmDeliveryIntent): void {
     validateIntent(intent);
+    const constraintsJson = serializeJson(intent.constraints, "dispatch constraints");
     const worktreePath = intent.worktreePath ? resolve(intent.worktreePath) : undefined;
 
     this.#mutate("confirm delivery intent", () => {
@@ -166,7 +167,7 @@ export class DispatchRegistry {
           worktreePath: worktreePath ?? null,
           mode: intent.mode,
           task: intent.task,
-          constraintsJson: JSON.stringify(intent.constraints),
+          constraintsJson,
           payload: intent.payload,
           payloadHash: intent.payloadHash,
           deadlineAt: intent.deadlineAt,
@@ -681,7 +682,7 @@ export async function openDispatchRegistry(
     chmodSync(path, 0o600);
     database.exec("PRAGMA foreign_keys = ON");
     database.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
-    database.exec("PRAGMA journal_mode = WAL");
+    await retrySqliteBusy(() => database!.exec("PRAGMA journal_mode = WAL"), busyTimeoutMs);
     assertIntegrity(database);
     await migrateRegistry(database, {
       databasePath: path,
@@ -846,6 +847,9 @@ function validateIntent(intent: ConfirmDeliveryIntent): void {
       throw new RegistryStateError(`${name} is required`);
     }
   }
+  if (!Array.isArray(intent.constraints) || !intent.constraints.every((item) => typeof item === "string")) {
+    throw new RegistryStateError("dispatch constraints must be an array of strings");
+  }
   if (intent.mode === "write" && !intent.worktreePath) {
     throw new RegistryStateError("write dispatch requires a canonical worktree path");
   }
@@ -919,6 +923,26 @@ function pragmaString(database: DatabaseSync, pragma: string): string {
   const value = row?.[pragma];
   if (typeof value !== "string") throw new Error(`PRAGMA ${pragma} did not return a string`);
   return value;
+}
+
+async function retrySqliteBusy(action: () => void, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      action();
+      return;
+    } catch (error) {
+      if (!isSqliteBusy(error) || Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(10, Math.max(1, timeoutMs))));
+    }
+  }
+}
+
+function isSqliteBusy(error: unknown): boolean {
+  return (
+    (typeof error === "object" && error !== null && "errcode" in error && error.errcode === 5) ||
+    (error instanceof Error && error.message.includes("database is locked"))
+  );
 }
 
 function normalizeBusyTimeout(value: number): number {
