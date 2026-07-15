@@ -1,6 +1,6 @@
 # pi-herdr-dispatch implementation plan
 
-Status: draft for user review; do not begin implementation until approved.
+Status: approved; Phase 1 complete and awaiting phase review before Phase 2.
 
 ## Inputs and non-negotiable constraints
 

@@ -1,6 +1,6 @@
 # pi-herdr-dispatch Design
 
-Status: implementation plan approved; Phase 1 safety-layer implementation in progress.
+Status: implementation plan approved; Phase 1 safety layer complete and awaiting review before Phase 2.
 
 ## Purpose
 

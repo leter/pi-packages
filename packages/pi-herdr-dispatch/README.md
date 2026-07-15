@@ -2,7 +2,7 @@
 
 A proposed Pi package for safely dispatching confirmed work to coding agents that already exist on one local Herdr server.
 
-> **Status:** Design review and compatibility spike complete; implementation plan drafted and awaiting user approval. This package is not implemented or installable yet.
+> **Status:** Phase 1 safety layer complete and awaiting review before Phase 2. This package is not yet usable or installable.
 
 ## Documents
 
@@ -14,4 +14,4 @@ A proposed Pi package for safely dispatching confirmed work to coding agents tha
 - [Implementation plan](./docs/IMPLEMENTATION-PLAN.md)
 - [Architecture decisions](./docs/adr)
 
-The design review and compatibility spike are complete. Implementation begins only after the implementation plan is approved.
+The implementation plan is approved. Each phase stops for review before the next phase begins.
