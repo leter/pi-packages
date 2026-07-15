@@ -1,5 +1,7 @@
 import type {
+  BashOperations,
   ToolCallEvent,
+  ToolResultEvent,
   UserBashEvent,
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
@@ -148,6 +150,76 @@ describe("Pi safety gate adapters", () => {
       block: true,
       reason: expect.stringContaining("Registry is unavailable"),
     });
+  });
+
+  it("wraps an allowed current-pane bash result as untrusted data exactly once", async () => {
+    const gate = createSafetyGate({
+      currentPaneId: () => "w1:p1",
+      getLeaseContext: async () => ({ leaseSnapshot: { status: "ready", leases: [] } }),
+    });
+    const call = bashEvent("herdr pane read w1:p1 --source recent-unwrapped --lines 50");
+    await gate.onToolCall(call, { cwd: "/repo/worktree" });
+    const resultEvent = {
+      type: "tool_result",
+      toolCallId: call.toolCallId,
+      toolName: "bash",
+      input: call.input,
+      content: [{ type: "text", text: "pane output" }],
+      details: undefined,
+      isError: false,
+    } satisfies ToolResultEvent;
+
+    const patch = await gate.onToolResult(resultEvent);
+
+    expect(patch?.content?.[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("<untrusted-herdr-cli-output>"),
+    });
+    expect(patch?.content?.at(-1)).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("</untrusted-herdr-cli-output>"),
+    });
+    expect(await gate.onToolResult(resultEvent)).toBeUndefined();
+  });
+
+  it("wraps current-pane user_bash output before it can enter model context", async () => {
+    const chunks: string[] = [];
+    const operations: BashOperations = {
+      async exec(_command, _cwd, options) {
+        options.onData(Buffer.from("pane output"));
+        return { exitCode: 0 };
+      },
+    };
+    const gate = createSafetyGate({
+      currentPaneId: () => "w1:p1",
+      getLeaseContext: async () => ({ leaseSnapshot: { status: "ready", leases: [] } }),
+      createLocalBashOperations: () => operations,
+    });
+
+    const intercepted = await gate.onUserBash(
+      userBashEvent("herdr pane read w1:p1 --source recent-unwrapped --lines 50"),
+    );
+    await intercepted?.operations?.exec("ignored", "/repo/worktree", {
+      onData: (data) => chunks.push(data.toString("utf8")),
+    });
+
+    expect(chunks.join("")).toContain(
+      "<untrusted-herdr-cli-output>\npane output\n</untrusted-herdr-cli-output>",
+    );
+  });
+
+  it("does not wrap !! output that is already excluded from model context", async () => {
+    const gate = createSafetyGate({
+      currentPaneId: () => "w1:p1",
+      getLeaseContext: async () => ({ leaseSnapshot: { status: "ready", leases: [] } }),
+    });
+
+    expect(
+      await gate.onUserBash({
+        ...userBashEvent("herdr pane read w1:p1"),
+        excludeFromContext: true,
+      }),
+    ).toBeUndefined();
   });
 
   it("does not claim coverage for unknown third-party tools", async () => {

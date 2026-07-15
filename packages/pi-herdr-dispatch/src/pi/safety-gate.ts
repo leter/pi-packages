@@ -1,11 +1,14 @@
-import type {
-  ExtensionAPI,
-  ToolCallEvent,
-  ToolCallEventResult,
-  UserBashEvent,
-  UserBashEventResult,
+import {
+  createLocalBashOperations,
+  isToolCallEventType,
+  type BashOperations,
+  type ExtensionAPI,
+  type ToolCallEvent,
+  type ToolCallEventResult,
+  type ToolResultEvent,
+  type UserBashEvent,
+  type UserBashEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 
 import {
   classifyHerdrShell,
@@ -20,10 +23,17 @@ export interface SafetyGateDependencies {
     cwd: string;
     currentPaneId?: string;
   }): Promise<LeaseGuardContext> | LeaseGuardContext;
+  createLocalBashOperations?(): BashOperations;
 }
 
 export interface SafetyEventContext {
   cwd: string;
+}
+
+export interface SafetyToolResultPatch {
+  content?: ToolResultEvent["content"];
+  details?: unknown;
+  isError?: boolean;
 }
 
 export interface SafetyGate {
@@ -31,11 +41,16 @@ export interface SafetyGate {
     event: ToolCallEvent,
     context: SafetyEventContext,
   ): Promise<ToolCallEventResult | undefined>;
+  onToolResult(event: ToolResultEvent): Promise<SafetyToolResultPatch | undefined>;
   onUserBash(event: UserBashEvent): Promise<UserBashEventResult | undefined>;
 }
 
+export const UNTRUSTED_HERDR_OUTPUT_OPEN = "<untrusted-herdr-cli-output>";
+export const UNTRUSTED_HERDR_OUTPUT_CLOSE = "</untrusted-herdr-cli-output>";
+
 export function createSafetyGate(dependencies: SafetyGateDependencies): SafetyGate {
   const currentPaneId = () => dependencies.currentPaneId();
+  const framedToolCalls = new Set<string>();
 
   const leaseContext = async (cwd: string): Promise<LeaseGuardContext> => {
     try {
@@ -63,6 +78,7 @@ export function createSafetyGate(dependencies: SafetyGateDependencies): SafetyGa
           await leaseContext(context.cwd),
         );
         if (leaseDecision.action === "deny") return blockTool(leaseDecision);
+        if (herdrDecision.frameHerdrOutput) framedToolCalls.add(event.toolCallId);
         return undefined;
       }
 
@@ -85,6 +101,20 @@ export function createSafetyGate(dependencies: SafetyGateDependencies): SafetyGa
       return undefined;
     },
 
+    async onToolResult(event) {
+      if (event.toolName !== "bash" || !framedToolCalls.delete(event.toolCallId)) {
+        return undefined;
+      }
+
+      return {
+        content: [
+          { type: "text", text: `${UNTRUSTED_HERDR_OUTPUT_OPEN}\n` },
+          ...event.content,
+          { type: "text", text: `\n${UNTRUSTED_HERDR_OUTPUT_CLOSE}` },
+        ],
+      };
+    },
+
     async onUserBash(event) {
       const herdrDecision = classifyHerdrShell(event.command, {
         currentPaneId: currentPaneId(),
@@ -95,7 +125,14 @@ export function createSafetyGate(dependencies: SafetyGateDependencies): SafetyGa
         { kind: "bash", cwd: event.cwd, command: event.command },
         await leaseContext(event.cwd),
       );
-      return leaseDecision.action === "deny" ? replaceUserBash(leaseDecision) : undefined;
+      if (leaseDecision.action === "deny") return replaceUserBash(leaseDecision);
+      if (!herdrDecision.frameHerdrOutput || event.excludeFromContext) return undefined;
+
+      return {
+        operations: frameBashOperations(
+          dependencies.createLocalBashOperations?.() ?? createLocalBashOperations(),
+        ),
+      };
     },
   };
 }
@@ -103,7 +140,21 @@ export function createSafetyGate(dependencies: SafetyGateDependencies): SafetyGa
 export function registerSafetyGate(pi: ExtensionAPI, dependencies: SafetyGateDependencies): void {
   const gate = createSafetyGate(dependencies);
   pi.on("tool_call", gate.onToolCall);
+  pi.on("tool_result", gate.onToolResult);
   pi.on("user_bash", gate.onUserBash);
+}
+
+function frameBashOperations(operations: BashOperations): BashOperations {
+  return {
+    async exec(command, cwd, options) {
+      options.onData(Buffer.from(`${UNTRUSTED_HERDR_OUTPUT_OPEN}\n`));
+      try {
+        return await operations.exec(command, cwd, options);
+      } finally {
+        options.onData(Buffer.from(`\n${UNTRUSTED_HERDR_OUTPUT_CLOSE}`));
+      }
+    },
+  };
 }
 
 function blockTool(decision: Extract<SafetyDecision, { action: "deny" }>): ToolCallEventResult {
