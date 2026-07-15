@@ -14,6 +14,7 @@ Status: revised after architecture review; awaiting follow-up review before impl
 - One dispatch per proposal and confirmation.
 - Every target-side safety instruction is advisory in V1.
 - No model wait tool and no autonomous continuation when a result arrives.
+- Raw Herdr tasking, pane-control, Agent-start, and blocking-wait commands issued through this Pi's `bash` or `user_bash` paths are gated; Agent inspection remains available.
 - No recursive delegation by a Dispatch Target.
 - Dispatch, reply, cancellation, and manual resolution are TUI-only. Print, JSON, and RPC modes are read-only.
 - Only the TUI Origin Session monitors and settles the dispatches it confirmed. There is no coordinator election or takeover.
@@ -36,11 +37,11 @@ These cuts preserve the core confirmed-dispatch workflow while removing the leas
 
 ## Components
 
-1. **Pi extension** — commands, model proposal tools, confirmation UI, status widget, Origin Session monitoring, result delivery, and a best-effort Pi-side lease guard.
+1. **Pi extension** — commands, model proposal tools, confirmation UI, status widget, Origin Session monitoring, result delivery, a best-effort Pi-side lease guard, and a raw Herdr CLI gate shared by `tool_call` and `user_bash`.
 2. **Herdr adapter** — one local Unix-socket connection per monitoring Origin Session. It bootstraps from `session.snapshot`, subscribes to supported events, reads bounded pane tails, posts notifications/metadata, and delivers input with `pane.send_input`.
 3. **Dispatch Registry** — global SQLite storage in WAL mode, with transactions and unique constraints for target occupancy and worktree write leases.
 4. **Origin Monitor** — a TUI Pi session monitors only records whose persisted Origin Session ID equals its own session ID. Monitoring stops when that session is not running and resumes when the exact session resumes.
-5. **Lease Guard** — every Pi process loading the package reads global leases and guards covered Pi mutation paths, regardless of whether that process is an Origin Monitor.
+5. **Origin-side Safety Gate** — every Pi process loading the package reads global leases, guards covered Pi mutation paths, and prevents recognized raw Herdr commands from bypassing confirmed dispatch, regardless of whether that process is an Origin Monitor.
 
 ## Identity and workspace scope
 
@@ -210,9 +211,55 @@ Write mode acquires a globally unique Worktree Write Lease. Every Pi process loa
 - built-in `bash` tool calls through a best-effort mutation classifier;
 - `!` and `!!` commands through the separate `user_bash` event and the same classifier.
 
-The guard does not cover unknown third-party mutating tools, manual shells, non-Pi agents, or commands the classifier cannot recognize. Documentation and UI must call it best-effort rather than an OS-level lock. Read-only built-in commands remain available.
+The lease guard does not cover unknown third-party mutating tools, external manual shells, non-Pi agents, or commands the classifier cannot recognize. Documentation and UI must call it best-effort rather than an OS-level lock. Read-only built-in commands remain available.
+
+### Raw Herdr CLI gate
+
+The globally installed official Herdr skill teaches Pi to use Herdr through ordinary `bash`. Without a gate, skill-guided commands can send tasks, create Agents/panes, or block waiting for completion without any Dispatch Proposal, Target Occupancy, Worktree Write Lease, or Result Envelope. The extension therefore applies one classifier to both:
+
+- `tool_call` events for the built-in `bash` tool;
+- `user_bash` events for `!` and `!!` commands.
+
+The extension's own typed Herdr socket adapter does not pass through this shell gate.
+
+Commands proven read-only are allowed, including:
+
+- `herdr status`, `herdr api snapshot`, `herdr api schema`;
+- `herdr pane list|get|read|current|layout|process-info|neighbor|edges`;
+- `herdr agent list|get|read|explain`;
+- `herdr workspace list|get`, `herdr tab list|get`, `herdr worktree list`;
+- `herdr integration status`.
+
+Allowed pane/Agent read output is still untrusted. When it will enter model context, the corresponding tool result is wrapped in `<untrusted-herdr-cli-output>` framing just like Agent Output Inspection.
+
+Commands that task, create, control, close, or block on another pane are denied and direct the user/model to `/herdr-dispatch` or `herdr_dispatch_propose`. The deny set includes at minimum:
+
+- `herdr pane run|send-text|send-keys|close` when the target resolves to another pane;
+- `herdr pane split` (it creates another pane) and `herdr agent start`;
+- `herdr agent send` when it resolves to another Agent;
+- `herdr wait agent-status|output` for foreign targets;
+- any non-allowlisted Herdr command whose effect on a foreign pane/resource cannot be proven read-only.
+
+An omitted, focused, name-based, or otherwise ambiguous target is treated as foreign. A compound shell command is allowed only when every Herdr invocation in it is classified read-only. A literal Herdr invocation that cannot be parsed is denied rather than guessed safe.
+
+This gate preserves the skill's inspection value while preventing its documented tasking workflow from becoming the normal bypass. It is not a shell sandbox: indirection through generated scripts, aliases, alternate binaries, custom tools, direct socket code, or an external terminal may evade classification.
 
 A conflicting write proposal is rejected. There is no preemption or downgrade.
+
+## Threat model and residual bypasses
+
+The Origin Pi itself is a bypass-capable actor: the globally installed Herdr skill can guide its model to invoke raw Herdr CLI through `bash`, so “this Pi has the extension” does not by itself imply that tasking went through the Registry. The raw Herdr CLI gate and prompt guidelines specifically address that in-process, skill-guided path.
+
+The remaining safety boundary is explicitly best-effort. The package cannot fully control:
+
+- a manual shell outside Pi;
+- a target Agent that ignores advisory constraints;
+- an obfuscated shell invocation the classifier cannot recognize;
+- another extension's custom mutating tool;
+- code that opens the Herdr socket directly;
+- processes that mutate the worktree without consulting the Registry.
+
+Accordingly, Target Occupancy and Worktree Write Leases are coordination records for cooperating/covered paths, not universal locks. Any UI claim about exclusivity or non-mutation must retain that qualification.
 
 ## Lifecycle, attention, and final outcomes
 
@@ -303,7 +350,7 @@ An explicit Agent Output Inspection is a separate, user-authorized path that doe
 </untrusted-agent-output>
 ```
 
-The wrapper instructs the model to treat the body as data, not instructions. Blocked-runtime captures shown only in TUI/notifications do not enter model context unless the user explicitly invokes inspection.
+The wrapper instructs the model to treat the body as data, not instructions. Allowed raw Herdr read commands invoked through `bash` use equivalent `<untrusted-herdr-cli-output>` framing before their output enters context. Blocked-runtime captures shown only in TUI/notifications do not enter model context unless the user explicitly invokes inspection.
 
 ## Origin Session result delivery
 
@@ -381,13 +428,15 @@ There is no automatic force-cancel command in V1.
 - `herdr_dispatch_status`
 - `herdr_agent_output_inspect`
 
+`herdr_dispatch_propose` registers an explicit prompt guideline: **Use `herdr_dispatch_propose` for every request to task another Herdr Agent. Do not use `bash`, `user_bash`, or raw `herdr pane` / `herdr agent` / `herdr wait` commands to send work or wait for it.** The other dispatch tools reinforce the same rule when active.
+
 There is no model wait, reply, cancel, force-cancel, resolve, Agent-start, pane-create, workspace-create, or worktree-create tool.
 
 Agent output inspection is authorized by an explicit user request. A user request itself is sufficient; no redundant confirmation appears. Default output is the 50 most recent `recent_unwrapped` plain-text lines, with ANSI removed; the configured maximum is 200. One request authorizes one bounded read, not continuing surveillance.
 
 ### Run-mode rules
 
-Proposal, reply, cancellation, resolution, Origin Monitoring, and context delivery require `ctx.mode === "tui"`; checking `ctx.hasUI` is insufficient because RPC reports UI capability. Non-TUI modes may list current state and perform an explicitly requested bounded inspection only. Lease Guard checks remain active in every mode because they prevent a non-Origin Pi process from mutating a leased worktree.
+Proposal, reply, cancellation, resolution, Origin Monitoring, and context delivery require `ctx.mode === "tui"`; checking `ctx.hasUI` is insufficient because RPC reports UI capability. Non-TUI modes may list current state and perform an explicitly requested bounded inspection only. The lease guard and raw Herdr CLI gate remain active in every mode because they prevent non-Origin Pi processes and skill-guided shell calls from bypassing reservations and confirmation.
 
 ## Configuration
 
@@ -450,7 +499,9 @@ Any failure tightens behavior to attention/fail-closed; it must not introduce he
 - Git worktree identity and observed-change audits;
 - outbound message and delivery echo matching;
 - built-in tool plus `user_bash` lease-guard classification;
-- untrusted output framing;
+- Herdr CLI allow/deny classification for direct, quoted, piped, compound, ambiguous-target, and unparseable invocations;
+- prompt guideline presence and precedence over skill-guided tasking;
+- untrusted output framing for inspection and allowed raw Herdr reads;
 - Origin Session ID and active-branch delivery rules;
 - retention and notification policy.
 
@@ -463,6 +514,8 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 - resume of `delivering` with result present, echo present, or neither present;
 - pane close/move between final revalidation and send, including conformance with the official closed-ID non-reuse guarantee;
 - globally unique Target Occupancy and Worktree Write Leases across Pi processes;
+- raw `bash` and `user_bash` attempts to run `pane run`, `agent send/start`, `pane split`, and blocking waits;
+- read-only Herdr CLI commands remaining usable with untrusted output framing;
 - two Origins racing to acquire the same target/worktree;
 - result settlement racing an emergency manual resolution;
 - active-branch result append crash/retry and branch change during append;
@@ -486,7 +539,8 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 8. Restart Herdr during active work and record identity/history behavior without assuming continuity.
 9. Verify no result triggers a model turn and forks/clones do not claim Origin results.
 10. Verify settlement injects only sanitized results while explicit inspection returns untrusted-framed output.
-11. Verify Registry failure preserves reservations and disables state changes.
+11. Ask Pi naturally to “use Herdr to task the adjacent Agent” and verify the official skill cannot bypass proposal/confirmation through `bash`, `!`, or `!!`; verify read-only inspection still works.
+12. Verify Registry failure preserves reservations and disables state changes.
 
 ## Review findings addressed
 
@@ -496,7 +550,8 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 - **H2:** removed `guarded` from V1; all target constraints are advisory.
 - **H3:** immediate same-connection route revalidation, close/move observation, post-send echo verification, and a narrowed residual race; Herdr's official closed-ID non-reuse guarantee removes the pane-ID-retargeting worst case.
 - **H4:** `done` is idle-like for eligibility, result-missing, and manual cancellation guidance, matching Herdr's official “completed, result unseen” semantics.
-- **H5:** raw output exclusion is settlement-specific; explicit inspection uses untrusted framing.
+- **H5:** raw output exclusion is settlement-specific; explicit inspection and allowed raw Herdr reads use untrusted framing.
+- **H6:** the same origin-side classifier gates `bash` and `user_bash`, dispatch-sensitive raw Herdr commands are denied, read-only Herdr inspection remains available, and dispatch tools explicitly instruct the model to use `herdr_dispatch_propose`.
 
 ## Decisions recorded separately
 
@@ -504,3 +559,4 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 - [ADR 0002: Deliver dispatches through atomic Herdr pane input](./adr/0002-atomic-herdr-input-delivery.md)
 - [ADR 0003: Model lifecycle, attention, and outcome separately](./adr/0003-orthogonal-dispatch-state.md)
 - [ADR 0004: Use per-origin monitoring in V1](./adr/0004-per-origin-monitoring.md)
+- [ADR 0005: Gate raw Herdr tasking inside Pi](./adr/0005-gate-raw-herdr-tasking.md)

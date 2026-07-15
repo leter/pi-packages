@@ -119,7 +119,7 @@ A worktree change seen during a non-mutating dispatch without attributing author
 _Avoid_: Mutation Violation, proof of authorship
 
 **Worktree Write Lease**:
-The exclusive reservation of one Git worktree for one write-mode Active or Delivering Dispatch. The package reduces covered Pi-side conflicts but does not claim an operating-system lock.
+The exclusive reservation of one Git worktree for one write-mode Active or Delivering Dispatch. The package reduces conflicts on covered Pi-side file and Herdr-command paths but does not claim an operating-system lock.
 _Avoid_: shared editing, universal mutation prevention
 
 **Write-Lease Conflict**:
@@ -129,6 +129,14 @@ _Avoid_: automatic preemption, automatic downgrade
 **Advisory Safety**:
 The explicit disclosure that target constraints depend on Agent compliance and observable audits rather than enforced removal of target tools.
 _Avoid_: guarded target, sandbox guarantee
+
+**Dispatch Bypass**:
+Any path that tasks or waits on another Agent outside a confirmed dispatch, leaving the Dispatch Registry unaware. This includes skill-guided raw Herdr commands from the Origin Pi as well as external shells and uncovered tools.
+_Avoid_: manual shell only, harmless command
+
+**Herdr Command Gate**:
+The best-effort Origin-side rule that allows recognized read-only Herdr inspection while denying recognized tasking, Agent creation, foreign-pane control, and blocking waits that would form a Dispatch Bypass.
+_Avoid_: shell sandbox, target-side enforcement
 
 ## Results and resolution
 
