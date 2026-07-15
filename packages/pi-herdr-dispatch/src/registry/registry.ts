@@ -519,6 +519,42 @@ export class DispatchRegistry {
     });
   }
 
+  listUnsettled(originSessionId?: string): readonly StoredDispatch[] {
+    return this.#read("list unsettled dispatches", () => {
+      const rows = (originSessionId
+        ? this.#database
+            .prepare(
+              `SELECT * FROM dispatches
+               WHERE lifecycle != 'settled' AND origin_session_id = ? ORDER BY created_at, id`,
+            )
+            .all(originSessionId)
+        : this.#database
+            .prepare(
+              "SELECT * FROM dispatches WHERE lifecycle != 'settled' ORDER BY created_at, id",
+            )
+            .all()) as unknown as DispatchRow[];
+      return rows.map(mapDispatch);
+    });
+  }
+
+  purgeSettledBefore(cutoff: number, purgedAt: number): number {
+    validateTimestamp(cutoff, "retention cutoff");
+    validateTimestamp(purgedAt, "purgedAt");
+    return this.#mutate("purge settled dispatches", () => {
+      const result = this.#database
+        .prepare(
+          `DELETE FROM dispatches
+           WHERE lifecycle = 'settled' AND settled_at IS NOT NULL AND settled_at < ?`,
+        )
+        .run(cutoff);
+      const purged = changes(result.changes);
+      if (purged > 0) {
+        this.#appendAudit(null, "retention-purge", { cutoff, purged }, purgedAt);
+      }
+      return purged;
+    });
+  }
+
   close(): void {
     if (this.#closed) return;
     this.#database.close();
