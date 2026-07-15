@@ -22,11 +22,17 @@ export interface OriginContextPort {
 export class OriginContextDelivery {
   readonly #registry: DispatchRegistry;
   readonly #now: () => number;
+  readonly #preservePendingQueue: boolean;
   readonly #enqueued = new Set<string>();
 
-  constructor(registry: DispatchRegistry, now: () => number = Date.now) {
+  constructor(
+    registry: DispatchRegistry,
+    now: () => number = Date.now,
+    preservePendingQueue = false,
+  ) {
     this.#registry = registry;
     this.#now = now;
+    this.#preservePendingQueue = preservePendingQueue;
   }
 
   deliver(
@@ -42,6 +48,7 @@ export class OriginContextDelivery {
     }
     const completed = this.#registry.getContextDelivery(dispatchId);
     if (completed?.deliveredAt !== undefined) return "already-delivered";
+    if (this.#preservePendingQueue && completed) this.#enqueued.add(dispatchId);
     const result = this.#registry.getResult(dispatchId);
     if (!result) throw new Error(`Dispatch ${dispatchId} has no stored result`);
 

@@ -184,6 +184,9 @@ describe("Origin active-branch context delivery", () => {
     context.branches.get("a")!.push(entry("unrelated-turn-entry", "root-a", "custom"));
     expect(delivery.deliver("hd_context", context)).toBe("pending-branch-change");
     expect(context.sends).toBe(1);
+    const afterReload = new OriginContextDelivery(registry, () => 2_100, true);
+    expect(afterReload.deliver("hd_context", context)).toBe("pending-branch-change");
+    expect(context.sends).toBe(1);
 
     context.deferAppend = false;
     context.flushNextTurn();

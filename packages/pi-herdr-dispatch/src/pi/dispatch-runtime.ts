@@ -86,7 +86,7 @@ export class DispatchRuntime {
       if (this.registryRuntime.registry) {
         const registry = this.registryRuntime.registry;
         if (ctx.mode === "tui") {
-          this.#contextDelivery = new OriginContextDelivery(registry);
+          this.#contextDelivery = new OriginContextDelivery(registry, Date.now, reason === "reload");
           this.#monitor = new OriginMonitor({
             registry,
             herdr: this.#adapter,
