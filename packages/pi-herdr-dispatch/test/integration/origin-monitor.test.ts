@@ -110,12 +110,16 @@ function intent(overrides: Partial<ConfirmDeliveryIntent> = {}): ConfirmDelivery
   };
 }
 
-async function harness(lifecycle: "delivering" | "active" = "active") {
+async function harness(
+  lifecycle: "delivering" | "active" = "active",
+  resumedAfterOriginGap = false,
+  intentOverrides: Partial<ConfirmDeliveryIntent> = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "pi-herdr-monitor-"));
   roots.push(root);
   const registry = await openDispatchRegistry(join(root, "registry.sqlite"));
   registries.push(registry);
-  registry.confirmDeliveryIntent(intent());
+  registry.confirmDeliveryIntent(intent(intentOverrides));
   if (lifecycle === "active") registry.markActive("hd_monitor", 1_000);
   const herdr = new FakeMonitorHerdr();
   const clock = new FakeMonitorClock(1_000);
@@ -134,13 +138,26 @@ async function harness(lifecycle: "delivering" | "active" = "active") {
     clock,
     onSettled,
     onAttention,
+    captureWorktreeSnapshot: async () => ({ fingerprint: "after", entries: [" M src/a.ts"] }),
+    resumedAfterOriginGap,
   });
   return { registry, herdr, clock, monitor, onSettled, onAttention };
 }
 
 describe("OriginMonitor", () => {
-  it("recovers a durable delivering record from bounded echo without resending", async () => {
+  it("recovers only exact-Origin durable records from bounded echo without resending", async () => {
     const { registry, herdr, monitor } = await harness("delivering");
+    registry.confirmDeliveryIntent(
+      intent({
+        id: "hd_foreign_origin",
+        originSessionId: "session-foreign",
+        targetTerminalId: "term-foreign",
+        targetPaneId: "p-foreign",
+        mode: "non-mutating",
+        worktreePath: undefined,
+        payload: "ID: hd_foreign_origin",
+      }),
+    );
     herdr.text = "prompt │ ID: hd_monitor │";
 
     await monitor.start();
@@ -173,6 +190,77 @@ describe("OriginMonitor", () => {
     expect(registry.listTargetOccupancy()).toEqual([]);
     expect(registry.listWriteLeases()).toEqual([]);
     expect(onSettled).toHaveBeenCalledOnce();
+    expect(
+      registry
+        .listAuditEvents("hd_monitor")
+        .find((event) => event.eventType === "worktree-after-snapshot")?.data,
+    ).toEqual(
+      expect.objectContaining({
+        conclusion: "observed-changes",
+        attribution: "not-attributed-to-target",
+      }),
+    );
+    monitor.stop();
+  });
+
+  it("marks non-mutating worktree audit inconclusive when a known writer overlaps", async () => {
+    const { registry, herdr, monitor } = await harness("active", false, { mode: "non-mutating" });
+    registry.confirmDeliveryIntent(
+      intent({
+        id: "hd_writer",
+        originSessionId: "session-writer",
+        targetTerminalId: "term-writer",
+        targetPaneId: "p-writer",
+        mode: "write",
+        payload: "writer",
+      }),
+    );
+    herdr.text = 'DISPATCH_RESULT {"id":"hd_monitor","outcome":"done","summary":"Complete"}';
+
+    await monitor.start();
+
+    expect(
+      registry
+        .listAuditEvents("hd_monitor")
+        .find((event) => event.eventType === "worktree-after-snapshot")?.data,
+    ).toEqual(expect.objectContaining({ conclusion: "inconclusive-overlapping-writer" }));
+    monitor.stop();
+  });
+
+  it("stores bounded malformed matching evidence without settling", async () => {
+    const { registry, herdr, monitor } = await harness();
+    herdr.text = 'DISPATCH_RESULT {"id":"hd_monitor","outcome":"done",broken}';
+
+    await monitor.start();
+
+    expect(registry.getDispatch("hd_monitor")?.lifecycle).toBe("active");
+    expect(registry.listAttention("hd_monitor")).toEqual([
+      expect.objectContaining({
+        condition: "malformed-result",
+        details: expect.objectContaining({ raw: expect.stringContaining("hd_monitor") }),
+      }),
+    ]);
+    monitor.stop();
+  });
+
+  it("re-resolves a moved terminal and persists only its fresh pane route", async () => {
+    const { registry, herdr, monitor } = await harness();
+    await monitor.start();
+    herdr.resolved = {
+      pane: { ...pane, paneId: "p-moved" },
+      agent: { ...pane, paneId: "p-moved", screenDetectionSkipped: true },
+    };
+
+    await herdr.emit({
+      type: "pane-moved",
+      previousPaneId: "p-target",
+      previousWorkspaceId: "w-current",
+      pane: { ...pane, paneId: "p-moved" },
+    });
+
+    expect(registry.getDispatch("hd_monitor")).toEqual(
+      expect.objectContaining({ targetTerminalId: "term-target", targetPaneId: "p-moved" }),
+    );
     monitor.stop();
   });
 
@@ -248,6 +336,23 @@ describe("OriginMonitor", () => {
       "monitoring-paused",
     );
     expect(herdr.readRequests).toEqual([200]);
+    monitor.stop();
+  });
+
+  it("records a derived Origin-closed gap on exact resume without inventing stored pause", async () => {
+    const { registry, monitor } = await harness("active", true);
+
+    await monitor.start();
+
+    expect(registry.listAttention("hd_monitor").map((item) => item.condition)).not.toContain(
+      "monitoring-paused",
+    );
+    expect(registry.listAuditEvents("hd_monitor")).toContainEqual(
+      expect.objectContaining({
+        eventType: "origin-monitor-resumed",
+        data: { derivedOriginClosedGap: true },
+      }),
+    );
     monitor.stop();
   });
 

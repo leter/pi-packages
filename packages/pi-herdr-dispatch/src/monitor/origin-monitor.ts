@@ -2,6 +2,10 @@ import { relative, resolve } from "node:path";
 
 import type { DispatchConfig } from "../domain/config.js";
 import { scanResultTail } from "../domain/result-envelope.js";
+import {
+  captureWorktreeSnapshot,
+  type WorktreeSnapshot,
+} from "../domain/worktree-audit.js";
 import { hasDeliveryEcho } from "../herdr/delivery.js";
 import type { ResolvedHerdrTarget } from "../herdr/adapter.js";
 import type { HerdrPaneRead } from "../herdr/protocol.js";
@@ -41,6 +45,7 @@ export interface OriginMonitorOptions {
     details: unknown,
   ) => void | Promise<void>;
   resumedAfterOriginGap?: boolean;
+  captureWorktreeSnapshot?: (worktreePath: string) => Promise<WorktreeSnapshot>;
 }
 
 export class OriginMonitor {
@@ -56,6 +61,7 @@ export class OriginMonitor {
     details: unknown,
   ) => void | Promise<void>;
   readonly #resumedAfterOriginGap: boolean;
+  readonly #captureWorktreeSnapshot: (worktreePath: string) => Promise<WorktreeSnapshot>;
   readonly #timers = new Set<ScheduledTask>();
   readonly #cwdMismatches = new Map<string, number>();
   readonly #acknowledged = new Set<string>();
@@ -72,6 +78,7 @@ export class OriginMonitor {
     this.#onSettled = options.onSettled ?? (() => undefined);
     this.#onAttention = options.onAttention ?? (() => undefined);
     this.#resumedAfterOriginGap = options.resumedAfterOriginGap ?? false;
+    this.#captureWorktreeSnapshot = options.captureWorktreeSnapshot ?? captureWorktreeSnapshot;
   }
 
   async start(): Promise<void> {
@@ -227,6 +234,7 @@ export class OriginMonitor {
       });
     }
     if (!scan.valid) return false;
+    await this.#auditWorktree(current);
     const settlement = this.#registry.settle({
       dispatchId: current.id,
       outcome: scan.valid.result.outcome,
@@ -238,6 +246,51 @@ export class OriginMonitor {
     });
     if (settlement.status === "settled") await this.#onSettled(current.id);
     return true;
+  }
+
+  async #auditWorktree(dispatch: StoredDispatch): Promise<void> {
+    if (!dispatch.worktreePath) return;
+    const beforeEvent = this.#registry
+      .listAuditEvents(dispatch.id)
+      .find((event) => event.eventType === "worktree-before-snapshot");
+    const before = parseWorktreeSnapshot(beforeEvent?.data);
+    try {
+      const after = await this.#captureWorktreeSnapshot(dispatch.worktreePath);
+      const overlappingWriter = this.#registry
+        .listWriteLeases()
+        .some(
+          (lease) =>
+            lease.worktreePath === dispatch.worktreePath && lease.dispatchId !== dispatch.id,
+        );
+      const conclusion = overlappingWriter
+        ? "inconclusive-overlapping-writer"
+        : before?.fingerprint === after.fingerprint
+          ? "unchanged"
+          : "observed-changes";
+      this.#registry.recordAudit(
+        dispatch.id,
+        "worktree-after-snapshot",
+        {
+          conclusion,
+          beforeFingerprint: before?.fingerprint,
+          afterFingerprint: after.fingerprint,
+          changedEntries: after.entries,
+          attribution: "not-attributed-to-target",
+        },
+        this.#clock.now(),
+      );
+    } catch (error) {
+      this.#registry.recordAudit(
+        dispatch.id,
+        "worktree-after-snapshot",
+        {
+          conclusion: "inconclusive-snapshot-error",
+          error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+          attribution: "not-attributed-to-target",
+        },
+        this.#clock.now(),
+      );
+    }
   }
 
   async #resolve(dispatch: StoredDispatch): Promise<ResolvedHerdrTarget | undefined> {
@@ -376,6 +429,14 @@ function dedupeTargets(targets: readonly HerdrMonitorTarget[]): HerdrMonitorTarg
 function isWithin(root: string, candidate: string): boolean {
   const difference = relative(resolve(root), resolve(candidate));
   return difference === "" || (!difference.startsWith("..") && !difference.startsWith("/"));
+}
+
+function parseWorktreeSnapshot(value: unknown): WorktreeSnapshot | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.fingerprint !== "string" || !Array.isArray(candidate.entries)) return undefined;
+  if (!candidate.entries.every((entry) => typeof entry === "string")) return undefined;
+  return { fingerprint: candidate.fingerprint, entries: candidate.entries as string[] };
 }
 
 function required(value: string, label: string): string {

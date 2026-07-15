@@ -1,5 +1,9 @@
 import type { DispatchConfig } from "../domain/config.js";
 import { resolveCanonicalWorktree } from "../domain/worktree.js";
+import {
+  captureWorktreeSnapshot,
+  type WorktreeSnapshot,
+} from "../domain/worktree-audit.js";
 import type {
   CurrentWorkspaceSnapshot,
   ResolvedHerdrTarget,
@@ -77,6 +81,7 @@ export interface DispatchApplicationOptions {
   resolveWorktree?: (cwd: string) => Promise<string>;
   prepareMonitoring?: (targets: readonly HerdrMonitorTarget[]) => Promise<void>;
   onIntentRecorded?: () => void | Promise<void>;
+  captureWorktreeSnapshot?: (worktreePath: string) => Promise<WorktreeSnapshot>;
 }
 
 export class ProposalTargetError extends Error {
@@ -104,6 +109,7 @@ export class DispatchApplication {
   readonly #resolveWorktree: (cwd: string) => Promise<string>;
   readonly #prepareMonitoring: (targets: readonly HerdrMonitorTarget[]) => Promise<void>;
   readonly #onIntentRecorded: () => void | Promise<void>;
+  readonly #captureWorktreeSnapshot: (worktreePath: string) => Promise<WorktreeSnapshot>;
   readonly #proposals = new Map<string, DispatchProposal>();
 
   constructor(options: DispatchApplicationOptions) {
@@ -119,6 +125,7 @@ export class DispatchApplication {
       options.prepareMonitoring ??
       ((targets) => this.#herdr.monitorTargets(targets, () => undefined));
     this.#onIntentRecorded = options.onIntentRecorded ?? (() => undefined);
+    this.#captureWorktreeSnapshot = options.captureWorktreeSnapshot ?? captureWorktreeSnapshot;
   }
 
   async listEligibleAgents(): Promise<readonly ProposalTarget[]> {
@@ -169,6 +176,12 @@ export class DispatchApplication {
     const target = { ...matches[0]! };
     if (request.mode === "write") {
       target.worktreePath = await this.#resolveWorktree(target.cwd);
+    } else {
+      try {
+        target.worktreePath = await this.#resolveWorktree(target.cwd);
+      } catch {
+        // Non-Git non-mutating targets remain instruction-only.
+      }
     }
     const deadlineMinutes = request.deadlineMinutes ?? this.#config.defaultDeadlineMinutes;
     if (
@@ -225,6 +238,9 @@ export class DispatchApplication {
       { paneId: resolved.pane.paneId, correlationId: proposal.id },
     ]);
 
+    const beforeSnapshot = proposal.target.worktreePath
+      ? await this.#captureWorktreeSnapshot(proposal.target.worktreePath)
+      : undefined;
     const confirmedAt = this.#now();
     this.#registry.confirmDeliveryIntent({
       id: proposal.id,
@@ -249,6 +265,14 @@ export class DispatchApplication {
       maxActivePerTargetWorkspace: this.#config.maxActivePerTargetWorkspace,
       maxActiveGlobal: this.#config.maxActiveGlobal,
     });
+    if (beforeSnapshot) {
+      this.#registry.recordAudit(
+        proposal.id,
+        "worktree-before-snapshot",
+        beforeSnapshot,
+        confirmedAt,
+      );
+    }
     await this.#onIntentRecorded();
 
     let delivery: HerdrDeliveryResult;
