@@ -1,6 +1,6 @@
 # pi-herdr-dispatch implementation plan
 
-Status: approved; Phase 4 complete and awaiting phase review before Phase 5.
+Status: approved; Phase 5 complete and awaiting phase review before Phase 6.
 
 ## Inputs and non-negotiable constraints
 

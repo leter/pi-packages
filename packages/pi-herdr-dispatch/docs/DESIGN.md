@@ -1,6 +1,6 @@
 # pi-herdr-dispatch Design
 
-Status: implementation plan approved; Phase 4 proposal and confirmation flow complete and awaiting review before Phase 5.
+Status: implementation plan approved; Phase 5 Origin monitoring and settlement complete and awaiting review before Phase 6.
 
 ## Purpose
 
@@ -368,7 +368,7 @@ The wrapper instructs the model to treat the body as data, not instructions. All
 
 Settlement records the result, final outcome, audit data, and reservation release in one SQLite transaction and emits a Herdr notification.
 
-The Origin Session then appends one custom result message without triggering a model turn. Exactly-once delivery is checked against the **active branch**:
+The Origin Session queues one custom result message with `pi.sendMessage(..., { deliverAs: "nextTurn", triggerTurn: false })`. Pi retains it until the next user-initiated turn; it does not append an active-branch entry or start a model turn while idle. Once that user turn persists the custom message, the `agent_end` hook completes the durable claim. Exactly-once delivery is checked against the **active branch**:
 
 1. identify the Origin Session by session ID;
 2. scan the active branch for a custom result message with the dispatch ID;
@@ -404,7 +404,7 @@ There is no Coordinator Lease and no revision cursor. Current state is stored di
 
 Migration creates a timestamped database backup and runs transactionally. Corruption, migration failure, or unavailable transactional access fails closed: no new dispatch, reply, cancellation, settlement, or reservation mutation. The package never creates an empty replacement or falls back to memory.
 
-Phase 5 must re-evaluate the current process-local Registry mutation fuse under real monitoring load. In Phase 2, any unexpected mutation error—including `SQLITE_BUSY` after `busy_timeout`—permanently disables mutations for that process. The review must decide whether transient exhausted-busy errors should fail the operation without tripping the structural-error fuse; until then, the implemented behavior remains fail-closed.
+Phase 5 re-evaluated the process-local Registry mutation fuse under multi-process monitoring load. Exhausted `busy_timeout` with `SQLITE_BUSY`/`SQLITE_LOCKED` now fails the current operation without permanently disabling later mutations because no transaction began and lock contention is transient. Corruption, migration errors, and structurally unexpected mutation failures still trip the process-local fuse; no fallback database or memory state is created ([ADR 0001](./adr/0001-sqlite-dispatch-registry.md)).
 
 Per-workspace concurrency is counted by **target workspace**. V1 target and origin workspaces are the same, but the resource definition remains explicit.
 

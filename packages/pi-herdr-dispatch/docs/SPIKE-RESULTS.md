@@ -24,6 +24,7 @@ All temporary panes and workspaces were closed after the checks. The named test 
 | Dedicated metadata-token coexistence | **Unavailable in protocol 16** | Omit pane metadata in V1 |
 | Socket request lifecycle | **Unary connections accept one request; `events.subscribe` owns a long-lived stream** | Use fresh connections for consecutive unary requests and one reconnecting subscription stream |
 | Real Pi TUI delivery echo | **Visible on the first post-send bounded read; rendered ID line had leading TUI whitespace** | Boundedly re-read through the startup window and match the uniquely bounded `ID: hd_...` marker inside a rendered line |
+| Pi idle `nextTurn` result injection | **Queued while idle with zero `agent_start` events and no immediate branch entry** | Use `deliverAs: "nextTurn"`, `triggerTurn: false`, and complete the branch claim after the next user-started turn persists it |
 
 ## 1. Terminal ID continuity across service restart
 
@@ -198,6 +199,27 @@ A follow-up Phase 4 vertical acceptance used a fresh temporary Registry and a se
 - Delivery evidence matches a uniquely bounded `ID: hd_...` marker anywhere within one rendered line, tolerating whitespace, borders, and prompt prefixes.
 - The random correlation ID remains the anti-collision evidence. A missing marker still proves nothing and never triggers automatic resend.
 - Result Envelope validation remains separate and stricter than delivery-echo matching.
+
+## 9. Pi idle `nextTurn` result injection
+
+### Verification method
+
+1. Launched a disposable real interactive Pi 0.80.6 pane with a temporary probe extension and no initial prompt.
+2. Waited until Pi was idle, then called `pi.sendMessage` with a custom dispatch result and `{ deliverAs: "nextTurn", triggerTurn: false }`.
+3. Counted real `agent_start` events, sampled `ctx.isIdle()`, inspected the active branch immediately and 1.5 seconds later, and checked Herdr's Agent status.
+4. Closed the pane and removed the probe extension and temporary directory.
+
+### Observed result
+
+The send call completed while Pi was idle. Pi remained idle both immediately and 1.5 seconds later; Herdr still reported `idle`; zero `agent_start` events occurred. The custom result was not yet an active-branch entry, confirming that `nextTurn` queues it for the next user-initiated turn rather than appending it or starting a model turn by itself.
+
+### Impact on the design
+
+- Result injection always sets both `deliverAs: "nextTurn"` and `triggerTurn: false`.
+- The Registry context claim remains pending while the message is queued.
+- In-process repeated delivery attempts do not enqueue duplicates even while the current turn advances the branch leaf; extension reload preserves the known queued claim because Pi retains the same pending `nextTurn` queue.
+- After the next user-initiated turn persists the custom result, `agent_end` scans the active branch and completes the durable claim. A crash before that point leaves the claim pending for safe session-start retry.
+- Branch navigation before the next user turn naturally redirects the queued message to the then-active branch; forks and clones still fail the Origin Session ID check.
 
 ## Result
 

@@ -157,7 +157,7 @@ A single user-authorized, bounded read of an Existing Agent's output, framed as 
 _Avoid_: unrestricted transcript scraping, trusted pane text, continuing surveillance
 
 **Dispatch Settlement**:
-The indivisible recording of a Final Outcome, release of Target Occupancy and any Worktree Write Lease, and availability of the Sanitized Dispatch Result to the Origin Session without starting a model turn.
+The indivisible recording of a Final Outcome, release of Target Occupancy and any Worktree Write Lease, and queuing of the Sanitized Dispatch Result for the Origin Session's next user-initiated turn without starting a model turn.
 _Avoid_: autonomous continuation, partial release
 
 **Dispatch Reply**:

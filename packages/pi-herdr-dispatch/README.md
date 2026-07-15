@@ -2,7 +2,7 @@
 
 A Pi package under staged development for safely dispatching confirmed work to coding agents that already exist on one local Herdr server.
 
-> **Status:** Phase 4 proposal and confirmation flow complete and awaiting review before Phase 5. This package is not yet usable or installable.
+> **Status:** Phase 5 Origin monitoring and settlement complete and awaiting review before Phase 6. This package is not yet usable or installable.
 
 ## Documents
 
