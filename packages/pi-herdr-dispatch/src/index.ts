@@ -1,5 +1,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-export default function piHerdrDispatch(_pi: ExtensionAPI): void {
-  // Phase modules are registered here only after their behavior is test-driven.
+import { registerSafetyGate } from "./pi/safety-gate.js";
+
+export default function piHerdrDispatch(pi: ExtensionAPI): void {
+  registerSafetyGate(pi, {
+    currentPaneId: () => process.env.HERDR_PANE_ID,
+    getLeaseContext: () => ({
+      leaseSnapshot: {
+        status: "unavailable",
+        reason: "Dispatch Registry is not available until Phase 2 is implemented",
+      },
+    }),
+  });
 }
