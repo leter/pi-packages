@@ -131,8 +131,12 @@ describe("Origin active-branch context delivery", () => {
     const delivery = new OriginContextDelivery(registry, () => 2_000);
     const context = new FakeOriginContext();
 
+    expect(registry.listPendingContextDelivery("session-origin").map((item) => item.id)).toEqual([
+      "hd_context",
+    ]);
     expect(delivery.deliver("hd_context", context)).toBe("delivered");
     expect(delivery.deliver("hd_context", context)).toBe("already-delivered");
+    expect(registry.listPendingContextDelivery("session-origin")).toEqual([]);
 
     expect(context.sends).toBe(1);
     expect(context.turns).toBe(0);

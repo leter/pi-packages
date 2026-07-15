@@ -566,6 +566,22 @@ export class DispatchRegistry {
     });
   }
 
+  listPendingContextDelivery(originSessionId: string): readonly StoredDispatch[] {
+    if (!originSessionId) throw new TypeError("originSessionId must not be empty");
+    return this.#read("list pending context delivery", () =>
+      (this.#database
+        .prepare(
+          `SELECT d.* FROM dispatches d
+           LEFT JOIN context_delivery_claims c ON c.dispatch_id = d.id
+           WHERE d.lifecycle = 'settled'
+             AND d.origin_session_id = ?
+             AND (c.dispatch_id IS NULL OR c.delivered_at IS NULL)
+           ORDER BY d.settled_at, d.id`,
+        )
+        .all(originSessionId) as unknown as DispatchRow[]).map(mapDispatch),
+    );
+  }
+
   listUnsettled(originSessionId?: string): readonly StoredDispatch[] {
     return this.#read("list unsettled dispatches", () => {
       const rows = (originSessionId
