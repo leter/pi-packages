@@ -1,6 +1,6 @@
 # pi-herdr-dispatch implementation plan
 
-Status: approved; Phase 2 complete and awaiting phase review before Phase 3.
+Status: approved; Phase 3 complete and awaiting phase review before Phase 4.
 
 ## Inputs and non-negotiable constraints
 
@@ -226,7 +226,7 @@ Implement one session-scoped Unix-socket adapter:
 - newline-delimited JSON request/response correlation and protocol-16 schema validation;
 - connection/reconnection lifecycle with abortable reads and idempotent close;
 - `session.snapshot` bootstrap restricted to current Workspace Scope;
-- terminal-ID lookup and immediate same-connection route revalidation;
+- terminal-ID lookup and immediate route revalidation through tightly adjacent one-request unary connections;
 - status provenance mapping (`screen_detection_skipped === true` only), idle/`done` equivalence, and `PaneInfo.cwd` use;
 - one atomic `pane.send_input` request with `keys: ["enter"]`;
 - close/move/status/output-matched subscriptions;

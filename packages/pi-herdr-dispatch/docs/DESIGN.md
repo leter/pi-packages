@@ -1,6 +1,6 @@
 # pi-herdr-dispatch Design
 
-Status: implementation plan approved; Phase 2 Dispatch Registry complete and awaiting review before Phase 3.
+Status: implementation plan approved; Phase 3 Herdr Adapter complete and awaiting review before Phase 4.
 
 ## Purpose
 
@@ -38,7 +38,7 @@ These cuts preserve the core confirmed-dispatch workflow while removing the leas
 ## Components
 
 1. **Pi extension** — commands, model proposal tools, confirmation UI, status widget, Origin Session monitoring, result delivery, a best-effort Pi-side lease guard, and a raw Herdr CLI gate shared by `tool_call` and `user_bash`.
-2. **Herdr adapter** — one local Unix-socket connection per monitoring Origin Session. It bootstraps from `session.snapshot`, subscribes to supported events, reads bounded pane tails, posts notifications, and delivers input with `pane.send_input`.
+2. **Herdr adapter** — one exclusive, reconnecting Unix-socket subscription stream per monitoring Origin Session, plus a fresh connection for every unary request because Herdr 0.7.3 closes unary sockets after one response. It bootstraps from `session.snapshot`, subscribes to supported events, reads bounded pane tails, posts notifications, and delivers input with `pane.send_input`.
 3. **Dispatch Registry** — global SQLite storage in WAL mode, with transactions and unique constraints for target occupancy and worktree write leases.
 4. **Origin Monitor** — a TUI Pi session monitors only records whose persisted Origin Session ID equals its own session ID. Monitoring stops when that session is not running and resumes when the exact session resumes.
 5. **Origin-side Safety Gate** — every Pi process loading the package reads global leases, guards covered Pi mutation paths, and prevents recognized raw Herdr commands from bypassing confirmed dispatch, regardless of whether that process is an Origin Monitor.
@@ -80,7 +80,7 @@ A proposal is an immutable preview containing:
 - correlation ID;
 - exact Result Envelope contract.
 
-The confirmation UI offers **Approve**, **Edit**, and **Cancel**. Editing creates a new immutable proposal and requires another preview. Immediately before delivery, the extension re-resolves terminal ID to pane ID and revalidates on the same Herdr socket connection:
+The confirmation UI offers **Approve**, **Edit**, and **Cancel**. Editing creates a new immutable proposal and requires another preview. Immediately before delivery, the extension re-resolves terminal ID to pane ID and revalidates through tightly adjacent unary requests. Herdr 0.7.3 accepts only one unary request per connection, so each request uses a fresh socket while the event subscription remains on its own long-lived connection ([compatibility spike](./SPIKE-RESULTS.md#7-unary-and-subscription-socket-lifecycles)):
 
 - `pane.get` still returns the confirmed terminal ID and Agent;
 - target status is idle-like;
@@ -151,6 +151,8 @@ The adapter listens for `pane.closed` and `pane.moved` during the confirmation/d
 ### Normal completion of delivery
 
 The Registry changes `delivering → active` only after `pane.send_input` returns success. Echo verification then searches a bounded tail for both `[HERDR DISPATCH]` and the unique `ID: hd_...`. If the expected echo does not appear within the startup window, `delivery-unverified` attention is added; the message is never resent automatically.
+
+Phase 4/5 must treat `markActive` losing its compare-and-set because the dispatch already settled as a benign race: a valid result may settle before echo verification, or emergency resolution may settle first. The delivery path reports the recorded Final Outcome and must not reinterpret this `RegistryStateError` as delivery failure.
 
 ### Origin crash while delivering
 
@@ -402,6 +404,8 @@ There is no Coordinator Lease and no revision cursor. Current state is stored di
 
 Migration creates a timestamped database backup and runs transactionally. Corruption, migration failure, or unavailable transactional access fails closed: no new dispatch, reply, cancellation, settlement, or reservation mutation. The package never creates an empty replacement or falls back to memory.
 
+Phase 5 must re-evaluate the current process-local Registry mutation fuse under real monitoring load. In Phase 2, any unexpected mutation error—including `SQLITE_BUSY` after `busy_timeout`—permanently disables mutations for that process. The review must decide whether transient exhausted-busy errors should fail the operation without tripping the structural-error fuse; until then, the implemented behavior remains fail-closed.
+
 Per-workspace concurrency is counted by **target workspace**. V1 target and origin workspaces are the same, but the resource definition remains explicit.
 
 ## Herdr UI and metadata
@@ -562,7 +566,7 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 - **C2:** removed revision cursors and revision-based acceptance; bounded tail catch-up plus correlation/source/schema matching.
 - **H1:** removed coordinator takeover entirely.
 - **H2:** removed `guarded` from V1; all target constraints are advisory.
-- **H3:** immediate same-connection route revalidation, close/move observation, post-send echo verification, and a narrowed residual race; Herdr's official closed-ID non-reuse guarantee removes the pane-ID-retargeting worst case.
+- **H3:** immediate route revalidation through tightly adjacent one-request unary connections, close/move observation on the exclusive subscription stream, post-send echo verification, and a narrowed residual race; Herdr's official closed-ID non-reuse guarantee removes the pane-ID-retargeting worst case.
 - **H4:** `done` is idle-like for eligibility, result-missing, and manual cancellation guidance, matching Herdr's official “completed, result unseen” semantics.
 - **H5:** raw output exclusion is settlement-specific; explicit inspection and allowed current-pane reads use untrusted framing.
 - **H6:** the same origin-side classifier gates `bash` and `user_bash`, dispatch-sensitive raw Herdr commands are denied, scoped metadata inspection and current-pane reads remain available, and dispatch tools explicitly instruct the model to use `herdr_dispatch_propose`.

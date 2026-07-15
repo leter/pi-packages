@@ -22,6 +22,7 @@ All temporary panes and workspaces were closed after the checks. The named test 
 | `pane.send_input.keys` Enter spelling | **`"enter"` accepted** | Keep one atomic request with `keys: ["enter"]` |
 | `screen_detection_skipped` authority signal | **Explicit `true` positively identifies recognized full-lifecycle authority** | Only `true` is reported provenance; missing/false is screen-detected |
 | Dedicated metadata-token coexistence | **Unavailable in protocol 16** | Omit pane metadata in V1 |
+| Socket request lifecycle | **Unary connections accept one request; `events.subscribe` owns a long-lived stream** | Use fresh connections for consecutive unary requests and one reconnecting subscription stream |
 
 ## 1. Terminal ID continuity across service restart
 
@@ -62,7 +63,7 @@ The cross-workspace move returned a different pane ID plus `previous_pane_id`, w
 ### Impact on the design
 
 - Terminal ID remains the dispatch identity; pane ID remains a re-resolved delivery route.
-- Final same-connection `pane.get` revalidation and close/move event observation remain required.
+- Final terminal-to-pane re-resolution through tightly adjacent unary requests and close/move event observation remain required.
 - A stale closed pane ID cannot retarget a later resource, but a move can stale the route.
 - No route is constructed or guessed from display order or ID shape.
 
@@ -153,6 +154,26 @@ This is a negative compatibility result. V1 must omit pane metadata entirely:
 - use the Pi below-editor widget and Herdr notifications only;
 - fail closed to omission rather than inventing a source-precedence heuristic.
 
+## 7. Unary and subscription socket lifecycles
+
+### Verification method
+
+1. Opened a raw Unix-socket connection to the installed Herdr 0.7.3 server and sent a valid protocol-16 `ping` envelope.
+2. After receiving the complete first response, attempted to send a second valid `ping` envelope on that same socket.
+3. Repeated both requests using a fresh connection for each request.
+4. Compared this with an `events.subscribe` request, which returns `subscription_started` and then retains its connection for pushed events.
+
+### Observed result
+
+The server closed the unary socket after its first response. Writing the second request failed with `EPIPE`/`BrokenPipeError`; opening a fresh socket for each unary request succeeded. Conversely, `events.subscribe` owns its connection after the acknowledgement and uses it as a long-lived event stream rather than accepting later unary requests.
+
+### Impact on the design
+
+- The adapter uses one exclusive, reconnecting subscription connection per Origin Monitor.
+- Every snapshot, pane lookup, bounded read, notification, and `pane.send_input` unary request opens a fresh socket and fails closed on transport or envelope errors.
+- Final terminal-to-pane resolution, pane validation, and `pane.send_input` remain tightly adjacent consecutive unary requests. Close/move observation is checked immediately before the send socket writes.
+- Herdr exposes no batch or compare-and-send primitive, so the already disclosed residual route-validation/input-handling race remains. This finding does not justify split delivery or automatic resend.
+
 ## Result
 
-The compatibility gate is complete. The two negative findings—terminal-ID discontinuity and missing metadata-token coexistence—have been incorporated into `DESIGN.md` as `target-lost`/manual-resolution behavior and complete omission of pane metadata. No result required heuristic retargeting, revision cursors, or split delivery.
+The compatibility gate is complete. The negative findings—terminal-ID discontinuity, missing metadata-token coexistence, and one-request unary socket lifecycle—have been incorporated into `DESIGN.md` as `target-lost`/manual-resolution behavior, complete omission of pane metadata, and separate unary/subscription transports. No result required heuristic retargeting, revision cursors, or split delivery.

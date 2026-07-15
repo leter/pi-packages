@@ -2,7 +2,7 @@
 
 A proposed Pi package for safely dispatching confirmed work to coding agents that already exist on one local Herdr server.
 
-> **Status:** Phase 2 Dispatch Registry complete and awaiting review before Phase 3. This package is not yet usable or installable.
+> **Status:** Phase 3 Herdr Adapter complete and awaiting review before Phase 4. This package is not yet usable or installable.
 
 ## Documents
 
