@@ -14,25 +14,41 @@ export function updateDispatchWidget(
   registry: DispatchRegistry,
   originSessionId: string,
 ): string {
-  const dispatches = registry.listUnsettled(originSessionId);
-  const counts = {
-    delivering: dispatches.filter((dispatch) => dispatch.lifecycle === "delivering").length,
-    active: dispatches.filter((dispatch) => dispatch.lifecycle === "active").length,
-    attention: dispatches.reduce(
-      (total, dispatch) => total + registry.listAttention(dispatch.id).length,
-      0,
-    ),
-  };
+  const counts = readWidgetCounts(registry, originSessionId);
   const segments = [
     counts.delivering > 0 ? `${counts.delivering} delivering` : undefined,
     `${counts.active} running`,
     `${counts.attention} attention`,
   ].filter((segment): segment is string => segment !== undefined);
   const text = `dispatches: ${segments.join(" · ")}`;
-  ui.setWidget(DISPATCH_WIDGET_KEY, (_tui, theme) => renderDispatchWidget(counts, theme), {
-    placement: "belowEditor",
-  });
+  ui.setWidget(
+    DISPATCH_WIDGET_KEY,
+    (_tui, theme) => ({
+      render(width: number): string[] {
+        return renderDispatchWidget(readWidgetCounts(registry, originSessionId), theme).render(width);
+      },
+      invalidate(): void {},
+    }),
+    { placement: "belowEditor" },
+  );
   return text;
+}
+
+function readWidgetCounts(registry: DispatchRegistry, originSessionId: string) {
+  const entries = registry.listUnsettled(originSessionId).map((dispatch) => ({
+    dispatch,
+    needsAttention: registry.listAttention(dispatch.id).length > 0,
+  }));
+  return {
+    delivering: entries.filter(
+      ({ dispatch, needsAttention }) =>
+        dispatch.lifecycle === "delivering" && !needsAttention,
+    ).length,
+    active: entries.filter(
+      ({ dispatch, needsAttention }) => dispatch.lifecycle === "active" && !needsAttention,
+    ).length,
+    attention: entries.filter(({ needsAttention }) => needsAttention).length,
+  };
 }
 
 export function clearDispatchWidget(ui: Pick<ExtensionUIContext, "setWidget">): void {

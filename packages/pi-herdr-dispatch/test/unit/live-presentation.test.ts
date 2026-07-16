@@ -24,18 +24,26 @@ function ui() {
 }
 
 describe("dispatch widget", () => {
-  it("uses belowEditor and never replaces the existing custom footer", () => {
+  it("uses belowEditor, reads live Registry state on every render, and never replaces the footer", () => {
     const presentation = ui();
+    let unsettled = [
+      { id: "hd_1", lifecycle: "active" },
+      { id: "hd_2", lifecycle: "delivering" },
+    ];
     const registry = {
-      listUnsettled: () => [
-        { id: "hd_1", lifecycle: "active" },
-        { id: "hd_2", lifecycle: "delivering" },
-      ],
-      listAttention: (id: string) => (id === "hd_1" ? [{ condition: "overdue" }] : []),
+      listUnsettled: () => unsettled,
+      listAttention: (id: string) =>
+        id === "hd_1"
+          ? [
+              { condition: "malformed-result" },
+              { condition: "result-missing" },
+              { condition: "overdue" },
+            ]
+          : [],
     } as unknown as DispatchRegistry;
 
     expect(updateDispatchWidget(presentation, registry, "session-origin")).toBe(
-      "dispatches: 1 delivering · 1 running · 1 attention",
+      "dispatches: 1 delivering · 0 running · 1 attention",
     );
     expect(presentation.setWidget).toHaveBeenCalledWith(
       "pi-herdr-dispatch",
@@ -47,12 +55,20 @@ describe("dispatch widget", () => {
       theme: unknown,
     ) => { render(width: number): string[] };
     const fakeTheme = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
-    const rendered = factory(undefined, fakeTheme).render(120).join(" ");
+    const widget = factory(undefined, fakeTheme);
+    const rendered = widget.render(120).join(" ");
     expect(rendered).toContain("1 delivering");
-    expect(rendered).toContain("1 running");
+    expect(rendered).toContain("0 running");
     expect(rendered).toContain("alt+h manager");
     expect(rendered).toContain("1 attention");
+    expect(rendered).not.toContain("3 attention");
     expect(presentation.setFooter).not.toHaveBeenCalled();
+
+    unsettled = [];
+    const refreshed = widget.render(120).join(" ");
+    expect(refreshed).toContain("0 running");
+    expect(refreshed).toContain("no attention");
+    expect(refreshed).not.toContain("1 running");
 
     clearDispatchWidget(presentation);
     expect(presentation.setWidget).toHaveBeenLastCalledWith(
@@ -61,6 +77,43 @@ describe("dispatch widget", () => {
       { placement: "belowEditor" },
     );
     expect(presentation.setFooter).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "delivery-unverified",
+    "unacknowledged",
+    "overdue",
+    "blocked-runtime",
+    "monitoring-paused",
+    "malformed-result",
+    "result-missing",
+    "target-lost",
+    "target-moved",
+  ] as const)("groups an active dispatch with %s under attention, not running", (condition) => {
+    const presentation = ui();
+    const registry = {
+      listUnsettled: () => [{ id: "hd_1", lifecycle: "active" }],
+      listAttention: () => [{ condition }],
+    } as unknown as DispatchRegistry;
+
+    expect(updateDispatchWidget(presentation, registry, "session-origin")).toBe(
+      "dispatches: 0 running · 1 attention",
+    );
+  });
+
+  it("keeps clean delivering and active lifecycle counts distinct", () => {
+    const presentation = ui();
+    const registry = {
+      listUnsettled: () => [
+        { id: "hd_delivering", lifecycle: "delivering" },
+        { id: "hd_active", lifecycle: "active" },
+      ],
+      listAttention: () => [],
+    } as unknown as DispatchRegistry;
+
+    expect(updateDispatchWidget(presentation, registry, "session-origin")).toBe(
+      "dispatches: 1 delivering · 1 running · 0 attention",
+    );
   });
 });
 
