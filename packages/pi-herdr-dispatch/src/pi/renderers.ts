@@ -105,15 +105,15 @@ export function renderStatusResult(
     const rows = details.list.map((dispatch) =>
       dispatchRow(dispatch, details.listAttention?.[dispatch.id] ?? [], now),
     );
-    const idWidth = Math.max(...rows.map((row) => row.id.length));
-    const stateWidth = Math.max(...rows.map((row) => row.state.length));
     const targetWidth = Math.max(...rows.map((row) => row.target.length));
+    const taskWidth = Math.max(...rows.map((row) => row.task.length));
+    const stateWidth = Math.max(...rows.map((row) => row.state.length));
     const modeWidth = Math.max(...rows.map((row) => row.mode.length));
     const lines = rows.map((row) =>
       [
-        ` ${mark(theme, row.mark)} ${theme.bold(row.id.padEnd(idWidth))}`,
+        ` ${mark(theme, row.mark)} ${theme.bold(row.target.padEnd(targetWidth))}`,
+        paint("text", row.task.padEnd(taskWidth)),
         paint(row.mark.color, row.state.padEnd(stateWidth)),
-        paint("text", row.target.padEnd(targetWidth)),
         paint("muted", row.mode.padEnd(modeWidth)),
         paint(row.deadline.includes("overdue") ? "warning" : "dim", row.deadline),
         row.attention.length > 0
@@ -133,14 +133,15 @@ export function renderStatusResult(
   const dispatch = details.dispatch;
   if (!dispatch) return undefined;
   const state = lifecycleMark(dispatch);
+  const task = sanitizeLine(
+    dispatch.task.split(/\r?\n/u).find((line) => line.trim()) ?? "Untitled dispatch",
+    72,
+  );
   const header = [
-    `${mark(theme, state)} ${theme.bold(dispatch.id)}`,
+    `${mark(theme, state)} ${theme.bold(sanitizeLine(dispatch.targetAgentLabel, 24))}`,
+    paint("text", task),
     paint(state.color, state.label),
     paint("muted", dispatch.mode),
-    `${paint("dim", "→")} ${paint("text", sanitizeLine(dispatch.targetAgentLabel, 24))} ${paint(
-      "dim",
-      `(${shortenId(dispatch.targetTerminalId)})`,
-    )}`,
   ].join("  ");
   const deadline = relativeDeadline(dispatch.deadlineAt, now);
   const lines = [
@@ -160,6 +161,10 @@ export function renderStatusResult(
   }
   if (expanded && dispatch.worktreePath) {
     lines.push(`   ${paint("dim", `worktree ${shortenPath(dispatch.worktreePath, 44)}`)}`);
+  }
+  if (expanded) {
+    lines.push(`   ${paint("dim", `dispatch ${sanitizeLine(dispatch.id, 120)}`)}`);
+    lines.push(`   ${paint("dim", `terminal ${shortenId(dispatch.targetTerminalId)}`)}`);
   }
   return new Text(lines.join("\n"), 0, 0);
 }
@@ -206,18 +211,17 @@ export function renderConfirmationResult(
 ): Text | undefined {
   if (!details?.status) return undefined;
   const paint = fg(theme);
-  const id = details.dispatchId ? theme.bold(details.dispatchId) : "";
   switch (details.status) {
     case "active":
       return new Text(
-        `${paint("success", "✓")} ${id} ${paint("success", "active")} ${paint("dim", "· delivery echo verified")}`,
+        `${paint("success", "✓")} ${paint("success", "dispatch active")} ${paint("dim", "· delivery echo verified")}`,
         0,
         0,
       );
     case "delivery-unverified":
       return new Text(
         [
-          `${paint("warning", "◌")} ${id} ${paint("warning", "delivery unverified")}`,
+          `${paint("warning", "◌")} ${paint("warning", "dispatch delivery unverified")}`,
           paint("dim", "   reservations retained · never resent automatically"),
         ].join("\n"),
         0,
@@ -225,7 +229,7 @@ export function renderConfirmationResult(
       );
     case "failed":
       return new Text(
-        `${paint("error", "✗")} ${id} ${paint("error", "not sent")} ${paint(
+        `${paint("error", "✗")} ${paint("error", "dispatch not sent")} ${paint(
           "dim",
           `· ${sanitizeLine(details.reason ?? "delivery rejected", 80)}`,
         )}`,
@@ -235,7 +239,7 @@ export function renderConfirmationResult(
     case "already-settled": {
       const state = outcomeMark(details.outcome ?? "?");
       return new Text(
-        `${mark(theme, state)} ${id} ${paint("muted", `already settled ${state.label}`)}`,
+        `${mark(theme, state)} ${paint("muted", `dispatch already settled ${state.label}`)}`,
         0,
         0,
       );
@@ -260,15 +264,12 @@ export function renderDispatchResultMessage(
 
   const state = outcomeMark(card.outcome);
   const summary = card.summary ? sanitizeLine(card.summary, 160) : "";
-  const headline = [
-    `${mark(theme, state)} ${paint(state.color, `dispatch ${state.label}`)}`,
-    paint("dim", card.dispatchId),
-    summary ? paint("text", summary) : "",
-  ]
-    .filter(Boolean)
-    .join("  ");
+  const agent = sanitizeLine(card.agentLabel ?? "Dispatch", 24);
+  const headline = `${mark(theme, state)} ${paint(state.color, `${agent} ${state.label}`)}`;
 
   const lines = [headline];
+  if (card.taskSummary) lines.push(`   ${paint("text", sanitizeLine(card.taskSummary, 100))}`);
+  if (summary) lines.push(`   ${paint("text", summary)}`);
   if (card.blocker) {
     lines.push(`   ${paint("warning", `blocker: ${sanitizeLine(card.blocker, 160)}`)}`);
   }
@@ -288,6 +289,7 @@ export function renderDispatchResultMessage(
       }
     }
     lines.push(paint("dim", "   untrusted data · agent-reported, not verified"));
+    lines.push(paint("dim", `   dispatch ${sanitizeLine(card.dispatchId, 120)}`));
   } else if (card.tests?.length || card.changedFiles?.length) {
     const counts = [
       card.changedFiles?.length ? `${card.changedFiles.length} files` : "",
@@ -311,13 +313,13 @@ export function renderDispatchWidget(counts: WidgetCounts, theme: Theme): Text {
   const paint = fg(theme);
   const segments = [
     counts.delivering > 0 ? paint("warning", `◌ ${counts.delivering} delivering`) : "",
-    paint(counts.active > 0 ? "accent" : "dim", `● ${counts.active} active`),
+    paint(counts.active > 0 ? "accent" : "dim", `● ${counts.active} running`),
     counts.attention > 0
       ? paint("warning", `${ATTENTION_GLYPH} ${counts.attention} attention`)
       : paint("dim", "no attention"),
   ].filter(Boolean);
   return new Text(
-    `${paint("dim", "dispatches")}  ${segments.join(paint("dim", "  ·  "))}`,
+    `${paint("dim", "dispatches")}  ${segments.join(paint("dim", "  ·  "))}${paint("dim", "  ·  alt+h manager")}`,
     0,
     0,
   );

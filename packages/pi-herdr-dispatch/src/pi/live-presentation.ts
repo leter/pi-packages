@@ -4,6 +4,8 @@ import type { HerdrNotification } from "../herdr/adapter.js";
 import type { DispatchRegistry } from "../registry/registry.js";
 import type { AttentionCondition, FinalOutcome } from "../registry/types.js";
 import { renderDispatchWidget } from "./renderers.js";
+import { agentDisplayName, attentionLabel, taskSummary } from "./dispatch-view-model.js";
+import type { StoredDispatch } from "../registry/types.js";
 
 export const DISPATCH_WIDGET_KEY = "pi-herdr-dispatch";
 
@@ -23,7 +25,7 @@ export function updateDispatchWidget(
   };
   const segments = [
     counts.delivering > 0 ? `${counts.delivering} delivering` : undefined,
-    `${counts.active} active`,
+    `${counts.active} running`,
     `${counts.attention} attention`,
   ].filter((segment): segment is string => segment !== undefined);
   const text = `dispatches: ${segments.join(" · ")}`;
@@ -38,27 +40,23 @@ export function clearDispatchWidget(ui: Pick<ExtensionUIContext, "setWidget">): 
 }
 
 export function outcomeNotification(
-  dispatchId: string,
+  dispatch: StoredDispatch,
   outcome: FinalOutcome,
 ): HerdrNotification {
   return {
-    title: `Dispatch ${outcome}`,
-    body: `${safeId(dispatchId)} settled with outcome ${outcome}.`,
+    title: `${agentDisplayName(dispatch)} ${outcome}`,
+    body: taskSummary(dispatch.task, 100),
     sound: outcome === "done" ? "done" : outcome === "cancelled" ? "none" : "request",
   };
 }
 
 export function attentionNotification(
-  dispatchId: string,
+  dispatch: StoredDispatch,
   condition: AttentionCondition,
 ): HerdrNotification {
   return {
-    title: "Dispatch attention",
-    body: `${safeId(dispatchId)}: ${condition}`,
+    title: `${agentDisplayName(dispatch)} needs attention`,
+    body: `${taskSummary(dispatch.task, 80)} · ${attentionLabel(condition)}`,
     sound: "request",
   };
-}
-
-function safeId(value: string): string {
-  return value.replace(/[^A-Za-z0-9_-]/gu, "?").slice(0, 120);
 }

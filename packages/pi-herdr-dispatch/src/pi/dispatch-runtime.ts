@@ -41,6 +41,7 @@ export class DispatchRuntime {
   #ui?: ExtensionContext["ui"];
   #originSessionId?: string;
   #mutationUnavailableReason = "Dispatch runtime session has not started";
+  readonly #stateListeners = new Set<() => void>();
 
   constructor(options: DispatchRuntimeOptions = {}) {
     this.registryRuntime = options.registry ?? new RegistryRuntime();
@@ -59,6 +60,16 @@ export class DispatchRuntime {
 
   get mutationUnavailableReason(): string | undefined {
     return this.#mutationUnavailableReason || undefined;
+  }
+
+  get originSessionId(): string | undefined {
+    return this.#originSessionId;
+  }
+
+  /** Subscribe to dispatch state changes (settlement, attention, delivery intent). */
+  onStateChanged(listener: () => void): () => void {
+    this.#stateListeners.add(listener);
+    return () => this.#stateListeners.delete(listener);
   }
 
   async start(
@@ -119,6 +130,7 @@ export class DispatchRuntime {
           registry,
           herdr: this.#adapter,
           config,
+          workspaceId,
           onSettled: (dispatchId) => void this.#notifyOutcome(dispatchId),
         });
         this.#application = new DispatchApplication({
@@ -188,7 +200,7 @@ export class DispatchRuntime {
     if (!dispatch?.finalOutcome || !this.#adapter) return;
     try {
       await this.#adapter.showNotification(
-        outcomeNotification(dispatchId, dispatch.finalOutcome),
+        outcomeNotification(dispatch, dispatch.finalOutcome),
       );
     } catch {
       // Durable state and the Pi widget remain authoritative when desktop notification fails.
@@ -200,9 +212,11 @@ export class DispatchRuntime {
     dispatchId: string,
     condition: Parameters<typeof attentionNotification>[1],
   ): Promise<void> {
+    const dispatch = this.registryRuntime.registry?.getDispatch(dispatchId);
+    if (!dispatch) return;
     if (this.#adapter) {
       try {
-        await this.#adapter.showNotification(attentionNotification(dispatchId, condition));
+        await this.#adapter.showNotification(attentionNotification(dispatch, condition));
       } catch {
         // Attention is already durable; notification transport is best effort.
       }
@@ -211,6 +225,7 @@ export class DispatchRuntime {
   }
 
   #updateWidget(): void {
+    for (const listener of this.#stateListeners) listener();
     if (!this.#ui || !this.#originSessionId || !this.registryRuntime.registry) return;
     updateDispatchWidget(this.#ui, this.registryRuntime.registry, this.#originSessionId);
   }

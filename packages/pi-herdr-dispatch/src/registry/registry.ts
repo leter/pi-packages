@@ -600,6 +600,49 @@ export class DispatchRegistry {
     });
   }
 
+  listUnsettledInWorkspace(targetWorkspaceId: string): readonly StoredDispatch[] {
+    if (!targetWorkspaceId) throw new TypeError("targetWorkspaceId must not be empty");
+    return this.#read("list unsettled dispatches in workspace", () =>
+      (this.#database
+        .prepare(
+          `SELECT * FROM dispatches
+           WHERE lifecycle != 'settled' AND target_workspace_id = ?
+           ORDER BY created_at, id`,
+        )
+        .all(targetWorkspaceId) as unknown as DispatchRow[]).map(mapDispatch),
+    );
+  }
+
+  listByIdPrefix(targetWorkspaceId: string, prefix: string): readonly StoredDispatch[] {
+    if (!targetWorkspaceId) throw new TypeError("targetWorkspaceId must not be empty");
+    if (!/^hd_[A-Za-z0-9_-]+$/u.test(prefix)) throw new TypeError("invalid dispatch ID prefix");
+    return this.#read("list dispatches by ID prefix", () =>
+      (this.#database
+        .prepare(
+          `SELECT * FROM dispatches
+           WHERE target_workspace_id = ? AND substr(id, 1, length(?)) = ?
+           ORDER BY created_at, id`,
+        )
+        .all(targetWorkspaceId, prefix, prefix) as unknown as DispatchRow[]).map(mapDispatch),
+    );
+  }
+
+  listRecentSettled(originSessionId: string, limit: number): readonly StoredDispatch[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new RangeError("recent settled limit must be from 1 to 100");
+    }
+    return this.#read("list recent settled dispatches", () => {
+      const rows = this.#database
+        .prepare(
+          `SELECT * FROM dispatches
+           WHERE lifecycle = 'settled' AND origin_session_id = ?
+           ORDER BY settled_at DESC, id DESC LIMIT ?`,
+        )
+        .all(originSessionId, limit) as unknown as DispatchRow[];
+      return rows.map(mapDispatch);
+    });
+  }
+
   purgeSettledBefore(cutoff: number, purgedAt: number): number {
     validateTimestamp(cutoff, "retention cutoff");
     validateTimestamp(purgedAt, "purgedAt");

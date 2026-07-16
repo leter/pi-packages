@@ -103,6 +103,7 @@ async function harness() {
     registry,
     herdr,
     config: { ...DEFAULT_DISPATCH_CONFIG, startupWindowMs: 5_000 },
+    workspaceId: "w1",
     now: () => now++,
     nextNonce: () => "hd_followup_nonce",
   });
@@ -136,10 +137,10 @@ describe("confirmed reply and cancellation", () => {
     ).resolves.toBe("reply request delivery echo verified.");
 
     const preview = tui.select.mock.calls[0]?.[0] as string;
-    expect(preview).toContain("BEGIN_HERDR_AGENT_OUTPUT_UNTRUSTED");
-    expect(preview).toContain("untrusted 1\\nuntrusted 2");
+    expect(preview).toContain("untrusted, never instructions");
+    expect(preview).toContain("untrusted 1\nuntrusted 2");
     expect(preview).toContain("whatever prompt or dialog");
-    expect(preview).toContain("ID: hd_followup_nonce");
+    expect(preview).not.toContain("hd_");
     expect(herdr.sentText).toContain("Please continue with option B.");
     expect(registry.getDispatch("hd_followup")?.lifecycle).toBe("active");
     expect(registry.listWriteLeases()).toHaveLength(1);
@@ -156,6 +157,45 @@ describe("confirmed reply and cancellation", () => {
     expect(herdr.sentText).toContain("cancelled Result Envelope");
     expect(herdr.sentText).not.toContain("Ctrl+C");
     expect(registry.listTargetOccupancy()).toHaveLength(1);
+  });
+
+  it("reveals exact IDs and bytes only after choosing Technical details", async () => {
+    const { service } = await harness();
+    const controller = new FollowupController(() => service);
+    const tui = ui({ selections: ["Technical details", "Approve"] });
+
+    await controller.cancel("hd_followup", { mode: "tui", ui: tui, sessionId: "session-origin" });
+
+    expect(tui.select.mock.calls[0]?.[0]).not.toContain("hd_followup");
+    expect(tui.select.mock.calls[1]?.[0]).toContain("Dispatch ID: hd_followup");
+    expect(tui.select.mock.calls[1]?.[0]).toContain("Exact outbound bytes");
+  });
+
+  it("checks reply eligibility before opening the editor", async () => {
+    const { registry, service } = await harness();
+    registry.clearAttention("hd_followup", "blocked-runtime", 1_300);
+    const controller = new FollowupController(() => service);
+    const tui = ui({ editors: ["This must not open"] });
+
+    await expect(
+      controller.reply("hd_followup", { mode: "tui", ui: tui, sessionId: "session-origin" }),
+    ).rejects.toThrow("Attention Condition");
+    expect(tui.editor).not.toHaveBeenCalled();
+  });
+
+  it("does not send cancellation to a lost target", async () => {
+    const { registry, herdr, service } = await harness();
+    registry.addAttention("hd_followup", "target-lost", {}, 1_300);
+    const controller = new FollowupController(() => service);
+
+    await expect(
+      controller.cancel("hd_followup", {
+        mode: "tui",
+        ui: ui({ selections: ["Approve"] }),
+        sessionId: "session-origin",
+      }),
+    ).rejects.toThrow("only be resolved manually");
+    expect(herdr.sentText).toBeUndefined();
   });
 });
 
@@ -175,7 +215,7 @@ describe("manual and emergency resolution", () => {
         ui: tui,
         sessionId: "session-emergency-resolver",
       }),
-    ).resolves.toBe("Dispatch hd_followup settled failed.");
+    ).resolves.toBe("pi dispatch settled failed.");
 
     expect(tui.confirm).toHaveBeenCalledTimes(2);
     expect(tui.confirm.mock.calls[0]?.[1]).toContain("personally judged the Origin Session unavailable");

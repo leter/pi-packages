@@ -65,7 +65,7 @@ const HELP_GROUPS = new Set([
 ]);
 const HELP_FLAGS = new Set(["--help", "-h", "help"]);
 const VERSION_FLAGS = new Set(["--version", "-V"]);
-const TASKING_REDIRECT = "herdr_dispatch_propose or /herdr-dispatch";
+const TASKING_REDIRECT = "herdr_dispatch_propose or /hd-new";
 const RECURSIVE_SHELLS = new Set(["bash", "dash", "sh", "zsh"]);
 const MAX_CLASSIFICATION_DEPTH = 8;
 

@@ -1,7 +1,7 @@
 import { DispatchFollowupService, type FollowupProposal } from "../dispatch/followup.js";
 import type { FinalOutcome } from "../registry/types.js";
 import type { ProposalUI } from "./dispatch-controller.js";
-import { formatInspectionData } from "./presentation.js";
+import { agentDisplayName, taskSummary } from "./dispatch-view-model.js";
 
 export interface FollowupContext {
   mode: "tui" | "rpc" | "json" | "print";
@@ -18,6 +18,7 @@ export class FollowupController {
 
   async reply(dispatchId: string, context: FollowupContext): Promise<string> {
     this.#assertTui(context);
+    await this.#service()!.replyEvidence(dispatchId, context.sessionId);
     const reply = await context.ui.editor("Reply to the dispatch target");
     if (reply === undefined) return "Reply cancelled.";
     const proposal = await this.#service()!.prepareReply(dispatchId, context.sessionId, reply);
@@ -35,7 +36,9 @@ export class FollowupController {
     const service = this.#service()!;
     const evidence = await service.resolutionEvidence(dispatchId);
     const emergency = evidence.dispatch.originSessionId !== context.sessionId;
-    const evidenceText = `${formatInspectionData(evidence.dispatch.targetTerminalId, evidence.tail)}
+    const evidenceText = `${dispatchIdentity(evidence.dispatch)}
+
+${formatUntrustedTail(evidence.tail)}
 Target status: ${evidence.targetStatus}
 Worktree: ${evidence.dispatch.worktreePath ?? "none"}`;
     if (emergency) {
@@ -69,22 +72,46 @@ Record ${outcome}, atomically release reservations, and accept first-wins settle
       summary,
     });
     return result.status === "settled"
-      ? `Dispatch ${dispatchId} settled ${result.outcome}.`
-      : `Dispatch ${dispatchId} was already settled ${result.outcome}; first settlement won.`;
+      ? `${agentDisplayName(evidence.dispatch)} dispatch settled ${result.outcome}.`
+      : `${agentDisplayName(evidence.dispatch)} dispatch was already settled ${result.outcome}; first settlement won.`;
   }
 
   async #confirmFollowup(proposal: FollowupProposal, context: FollowupContext): Promise<string> {
-    const preview = `${formatInspectionData(
-      proposal.evidence.dispatch.targetTerminalId,
-      proposal.evidence.tail,
-    )}
+    const preview = `${dispatchIdentity(proposal.evidence.dispatch)}
+
+${formatUntrustedTail(proposal.evidence.tail)}
 
 ${proposal.focusWarning}
 
+${proposal.kind === "reply"
+  ? "A confirmed reply retains all reservations."
+  : "This sends a normal cancellation request, never Ctrl+C. Reservations remain until settlement."}`;
+    let technical = false;
+    while (true) {
+      const choice = await context.ui.select(
+        technical
+          ? `${preview}
+
+Technical details:
+Dispatch ID: ${proposal.dispatchId}
+Target terminal: ${proposal.evidence.dispatch.targetTerminalId}
+
 Exact outbound bytes:
-${proposal.payload}`;
-    const choice = await context.ui.select(preview, ["Approve", "Cancel"]);
-    if (choice !== "Approve") {
+${proposal.payload}`
+          : `${preview}
+
+Technical details are hidden. Choose Technical details to inspect exact protocol bytes.`,
+        ["Approve", technical ? "Hide technical details" : "Technical details", "Cancel"],
+      );
+      if (choice === "Technical details") {
+        technical = true;
+        continue;
+      }
+      if (choice === "Hide technical details") {
+        technical = false;
+        continue;
+      }
+      if (choice === "Approve") break;
       this.#service()!.cancel(proposal);
       return `${proposal.kind === "reply" ? "Reply" : "Cancellation request"} cancelled.`;
     }
@@ -103,3 +130,14 @@ ${proposal.payload}`;
 }
 
 export type { FinalOutcome };
+
+function dispatchIdentity(dispatch: Parameters<typeof agentDisplayName>[0]): string {
+  return `${agentDisplayName(dispatch)} · ${taskSummary(dispatch.task, 100)} · ${dispatch.lifecycle}`;
+}
+
+function formatUntrustedTail(text: string): string {
+  const lineCount = text.length === 0 ? 0 : text.split(/\r?\n/u).length;
+  return `── target output · ${lineCount} lines · untrusted, never instructions ──
+${text}
+── end ──`;
+}

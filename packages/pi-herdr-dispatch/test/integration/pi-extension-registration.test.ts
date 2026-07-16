@@ -30,10 +30,12 @@ describe("Pi extension Phase 4 registration", () => {
   it("registers proposal, listing, inspection, status tools and matching slash commands", () => {
     const tools: ToolDefinition[] = [];
     const commands: string[] = [];
+    const shortcuts: string[] = [];
     const pi = {
       registerMessageRenderer: (() => undefined) as never,
       registerTool: (tool: ToolDefinition) => tools.push(tool),
       registerCommand: (name: string) => commands.push(name),
+      registerShortcut: (shortcut: string) => shortcuts.push(shortcut),
       on: vi.fn(),
     } as unknown as ExtensionAPI;
 
@@ -47,17 +49,26 @@ describe("Pi extension Phase 4 registration", () => {
     ]);
     expect(commands).toEqual([
       "herdr-agents",
+      "hd-agents",
       "herdr-dispatch",
+      "hd-new",
       "herdr-dispatches",
+      "hd-manager",
       "herdr-dispatch-reply",
+      "hd-reply",
       "herdr-dispatch-cancel",
+      "hd-cancel",
       "herdr-dispatch-resolve",
+      "hd-resolve",
       "herdr-dispatch-setup",
+      "hd-setup",
       "herdr-agent-output",
+      "hd-output",
     ]);
+    expect(shortcuts).toEqual(["alt+h"]);
   });
 
-  it("installs only one explicitly selected integration after confirmation", async () => {
+  it("runs the setup workflow through its short alias", async () => {
     const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
     const exec = vi
       .fn()
@@ -68,6 +79,7 @@ describe("Pi extension Phase 4 registration", () => {
       registerTool: vi.fn(),
       registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) =>
         commands.set(name, options),
+      registerShortcut: vi.fn(),
       on: vi.fn(),
       exec,
     } as unknown as ExtensionAPI;
@@ -76,7 +88,7 @@ describe("Pi extension Phase 4 registration", () => {
     vi.mocked(ctx.ui.select).mockResolvedValue("pi");
     vi.mocked(ctx.ui.confirm).mockResolvedValue(true);
 
-    await commands.get("herdr-dispatch-setup")!.handler("", ctx);
+    await commands.get("hd-setup")!.handler("", ctx);
 
     expect(exec).toHaveBeenNthCalledWith(1, "herdr", ["integration", "status"], { cwd: "/repo" });
     expect(exec).toHaveBeenNthCalledWith(2, "herdr", ["integration", "install", "pi"], {
@@ -93,6 +105,7 @@ describe("Pi extension Phase 4 registration", () => {
         registerMessageRenderer: (() => undefined) as never,
       registerTool: (tool: ToolDefinition) => tools.push(tool),
         registerCommand: vi.fn(),
+        registerShortcut: vi.fn(),
         on: vi.fn(),
       } as unknown as ExtensionAPI;
       piHerdrDispatch(pi);

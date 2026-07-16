@@ -81,7 +81,7 @@ describe("Herdr shell safety policy", () => {
 
     expect(decision.action).toBe("deny");
     if (decision.action === "deny") {
-      expect(decision.redirect).toBe("herdr_dispatch_propose or /herdr-dispatch");
+      expect(decision.redirect).toBe("herdr_dispatch_propose or /hd-new");
     }
   });
 

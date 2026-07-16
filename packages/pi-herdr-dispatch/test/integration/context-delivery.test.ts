@@ -48,12 +48,7 @@ class FakeOriginContext implements OriginContextPort {
   }
 
   sendMessage(
-    message: {
-      customType: string;
-      content: string;
-      display: boolean;
-      details: { dispatchId: string; outcome: string };
-    },
+    message: Parameters<OriginContextPort["sendMessage"]>[0],
     options: { deliverAs: "nextTurn"; triggerTurn: false },
   ): void {
     this.sends += 1;
@@ -168,6 +163,14 @@ describe("Origin active-branch context delivery", () => {
     );
     if (resultEntry?.type === "custom_message") {
       expect(String(resultEntry.content)).toContain("\\u003c/HERDR_DISPATCH_RESULT_UNTRUSTED\\u003e");
+      expect(resultEntry.details).toEqual(
+        expect.objectContaining({
+          dispatchId: "hd_context",
+          outcome: "done",
+          agentLabel: "pi",
+          taskSummary: "Inspect",
+        }),
+      );
     }
   });
 

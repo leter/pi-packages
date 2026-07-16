@@ -1,7 +1,22 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+  RegisteredCommand,
+} from "@earendil-works/pi-coding-agent";
 
 import type { CreateProposalRequest, DispatchApplication } from "../dispatch/application.js";
+import type { StoredDispatch } from "../registry/types.js";
+import {
+  actionCandidates,
+  actionIneligibility,
+  dispatchChoiceLabel,
+  dispatchCompletions,
+  resolveDispatchSelector,
+} from "./dispatch-command-selection.js";
 import { DispatchController } from "./dispatch-controller.js";
+import { SETTLED_DISPLAY_LIMIT, type DispatchAction } from "./dispatch-view-model.js";
+import { openDispatchView, type DispatchViewPorts } from "./dispatch-view.js";
 import { FollowupController } from "./followup-controller.js";
 import { formatConfirmationResult } from "./presentation.js";
 import {
@@ -18,7 +33,7 @@ export function registerDispatchCommands(
   controller: DispatchController,
   followup: FollowupController,
 ): void {
-  pi.registerCommand("herdr-agents", {
+  registerCommandWithAlias(pi, "herdr-agents", "hd-agents", {
     description: "List Eligible Agents in the current Herdr workspace",
     handler: async (_args, ctx) =>
       handle(ctx, async () => {
@@ -26,7 +41,7 @@ export function registerDispatchCommands(
       }),
   });
 
-  pi.registerCommand("herdr-dispatch", {
+  registerCommandWithAlias(pi, "herdr-dispatch", "hd-new", {
     description: "Create, preview, and confirm a Herdr dispatch",
     handler: async (_args, ctx) =>
       handle(ctx, async () => {
@@ -67,10 +82,84 @@ export function registerDispatchCommands(
       }),
   });
 
-  pi.registerCommand("herdr-dispatches", {
-    description: "List unsettled dispatches for this Origin Session",
+  let dispatchViewOpen = false;
+  const executeFollowup = async (
+    action: DispatchAction,
+    dispatch: StoredDispatch,
+    ctx: ExtensionContext,
+  ): Promise<void> => {
+    const app = application(runtime);
+    const reason = actionIneligibility(
+      action,
+      dispatch,
+      ctx.sessionManager.getSessionId(),
+      app.listAttention(dispatch.id),
+    );
+    if (reason) {
+      ctx.ui.notify(reason, dispatch.lifecycle === "settled" ? "info" : "warning");
+      return;
+    }
+    const message = await followup[action](dispatch.id, followupContext(ctx));
+    ctx.ui.notify(message, action === "reply" ? "info" : "warning");
+  };
+
+  const openPanel = async (ctx: ExtensionContext, action?: DispatchAction): Promise<void> => {
+    if (ctx.mode !== "tui") throw new Error("The Dispatch Manager is available only in TUI mode");
+    if (dispatchViewOpen) return;
+    const app = application(runtime);
+    const originSessionId = ctx.sessionManager.getSessionId();
+    const candidates = () => {
+      const all = app.listUnsettledInWorkspace();
+      return action
+        ? actionCandidates(action, all, originSessionId, (dispatchId) => app.listAttention(dispatchId))
+        : all;
+    };
+    if (action && candidates().length === 0) {
+      ctx.ui.notify(emptyActionMessage(action), "info");
+      return;
+    }
+    const ports: DispatchViewPorts = {
+      snapshot: () => {
+        const dispatches = candidates();
+        return {
+          originSessionId,
+          unsettled: dispatches.map((dispatch) => ({
+            dispatch,
+            attention: app.listAttention(dispatch.id),
+          })),
+          settled: action ? [] : app.listRecentSettled(originSessionId, SETTLED_DISPLAY_LIMIT),
+        };
+      },
+      getDispatch: (dispatchId) => app.getDispatch(dispatchId),
+      listAttention: (dispatchId) => app.listAttention(dispatchId),
+      inspect: async (terminalId, lines) => ({
+        text: (await app.inspectAgent(terminalId, lines)).text,
+      }),
+      onStateChanged: (listener) => runtime.onStateChanged(listener),
+    };
+    dispatchViewOpen = true;
+    let result;
+    try {
+      result = await openDispatchView(ctx.ui, ports, action ? { action } : {});
+    } finally {
+      dispatchViewOpen = false;
+    }
+    if (!result) return;
+    const dispatch = app.getDispatch(result.dispatchId);
+    if (!dispatch) throw new Error("The selected dispatch is no longer available in this workspace");
+    await executeFollowup(result.action, dispatch, ctx);
+  };
+
+  pi.registerShortcut("alt+h", {
+    description: "Open the Herdr Dispatch Manager",
+    handler: async (ctx) => handle(ctx, () => openPanel(ctx)),
+  });
+
+  registerCommandWithAlias(pi, "herdr-dispatches", "hd-manager", {
+    description: "Open the Herdr Dispatch Manager",
     handler: async (_args, ctx) =>
       handle(ctx, async () => {
+        if (ctx.mode === "tui") return openPanel(ctx);
         const app = application(runtime);
         ctx.ui.notify(
           formatDispatchTable(
@@ -83,34 +172,40 @@ export function registerDispatchCommands(
       }),
   });
 
-  pi.registerCommand("herdr-dispatch-reply", {
+  registerCommandWithAlias(pi, "herdr-dispatch-reply", "hd-reply", {
     description: "Preview and confirm a reply to an Active Dispatch with attention",
+    getArgumentCompletions: completionFor("reply", runtime),
     handler: async (args, ctx) =>
       handle(ctx, async () => {
-        const id = requiredDispatchId(args, "/herdr-dispatch-reply <id>");
-        ctx.ui.notify(await followup.reply(id, followupContext(ctx)), "info");
+        if (!args.trim()) return openPanel(ctx, "reply");
+        const dispatch = await resolveCommandDispatch(application(runtime), args, ctx);
+        if (dispatch) await executeFollowup("reply", dispatch, ctx);
       }),
   });
 
-  pi.registerCommand("herdr-dispatch-cancel", {
+  registerCommandWithAlias(pi, "herdr-dispatch-cancel", "hd-cancel", {
     description: "Preview and confirm a normal cancellation request",
+    getArgumentCompletions: completionFor("cancel", runtime),
     handler: async (args, ctx) =>
       handle(ctx, async () => {
-        const id = requiredDispatchId(args, "/herdr-dispatch-cancel <id>");
-        ctx.ui.notify(await followup.cancel(id, followupContext(ctx)), "warning");
+        if (!args.trim()) return openPanel(ctx, "cancel");
+        const dispatch = await resolveCommandDispatch(application(runtime), args, ctx);
+        if (dispatch) await executeFollowup("cancel", dispatch, ctx);
       }),
   });
 
-  pi.registerCommand("herdr-dispatch-resolve", {
+  registerCommandWithAlias(pi, "herdr-dispatch-resolve", "hd-resolve", {
     description: "Manually or emergently resolve a dispatch with confirmation",
+    getArgumentCompletions: completionFor("resolve", runtime),
     handler: async (args, ctx) =>
       handle(ctx, async () => {
-        const id = requiredDispatchId(args, "/herdr-dispatch-resolve <id>");
-        ctx.ui.notify(await followup.resolve(id, followupContext(ctx)), "warning");
+        if (!args.trim()) return openPanel(ctx, "resolve");
+        const dispatch = await resolveCommandDispatch(application(runtime), args, ctx);
+        if (dispatch) await executeFollowup("resolve", dispatch, ctx);
       }),
   });
 
-  pi.registerCommand("herdr-dispatch-setup", {
+  registerCommandWithAlias(pi, "herdr-dispatch-setup", "hd-setup", {
     description: "Explicitly install one Herdr Agent status integration",
     handler: async (_args, ctx) =>
       handle(ctx, async () => {
@@ -138,12 +233,12 @@ export function registerDispatchCommands(
       }),
   });
 
-  pi.registerCommand("herdr-agent-output", {
+  registerCommandWithAlias(pi, "herdr-agent-output", "hd-output", {
     description: "Read one bounded current-workspace Agent output tail",
     handler: async (args, ctx) =>
       handle(ctx, async () => {
         const [target, linesText] = args.trim().split(/\s+/u);
-        if (!target) throw new Error("Usage: /herdr-agent-output <target> [lines]");
+        if (!target) throw new Error("Usage: /hd-output <target> [lines]");
         const inspected = await application(runtime).inspectAgent(
           target,
           linesText === undefined ? 50 : Number(linesText),
@@ -153,6 +248,18 @@ export function registerDispatchCommands(
   });
 }
 
+type CommandOptions = Omit<RegisteredCommand, "name" | "sourceInfo">;
+
+function registerCommandWithAlias(
+  pi: ExtensionAPI,
+  canonicalName: string,
+  alias: string,
+  options: CommandOptions,
+): void {
+  pi.registerCommand(canonicalName, options);
+  pi.registerCommand(alias, options);
+}
+
 function application(runtime: DispatchRuntime): DispatchApplication {
   if (!runtime.application) {
     throw new Error(runtime.mutationUnavailableReason ?? "Dispatch runtime unavailable");
@@ -160,14 +267,60 @@ function application(runtime: DispatchRuntime): DispatchApplication {
   return runtime.application;
 }
 
-function followupContext(ctx: ExtensionCommandContext) {
+function followupContext(ctx: ExtensionContext) {
   return { mode: ctx.mode, ui: ctx.ui, sessionId: ctx.sessionManager.getSessionId() };
 }
 
-function requiredDispatchId(args: string, usage: string): string {
-  const id = args.trim();
-  if (!/^hd_[A-Za-z0-9_-]+$/u.test(id)) throw new Error(`Usage: ${usage}`);
-  return id;
+function completionFor(action: DispatchAction, runtime: DispatchRuntime) {
+  return (prefix: string) => {
+    const app = runtime.application;
+    const originSessionId = runtime.originSessionId;
+    if (!app || !originSessionId) return null;
+    try {
+      return dispatchCompletions(
+        prefix.trim(),
+        action,
+        app.listUnsettledInWorkspace(),
+        originSessionId,
+        (dispatchId) => app.listAttention(dispatchId),
+      );
+    } catch {
+      return null;
+    }
+  };
+}
+
+async function resolveCommandDispatch(
+  app: DispatchApplication,
+  args: string,
+  ctx: ExtensionContext,
+): Promise<StoredDispatch | undefined> {
+  const selector = args.trim();
+  const result = resolveDispatchSelector(app, selector);
+  if (result.status === "not-found") {
+    throw new Error(`No current-workspace dispatch matches ${selector}. Open /hd-manager.`);
+  }
+  if (result.status === "matched") return result.dispatch;
+  const baseOptions = result.matches.map(dispatchChoiceLabel);
+  const options = baseOptions.map((label, index) =>
+    baseOptions.indexOf(label) === baseOptions.lastIndexOf(label)
+      ? label
+      : `${label} · ${result.matches[index]!.id}`,
+  );
+  const selected = await ctx.ui.select("Choose the matching dispatch", options);
+  if (!selected) return undefined;
+  return result.matches[options.indexOf(selected)];
+}
+
+function emptyActionMessage(action: DispatchAction): string {
+  switch (action) {
+    case "reply":
+      return "No dispatch currently needs a reply.";
+    case "cancel":
+      return "No unsettled dispatch from this session can be cancelled.";
+    case "resolve":
+      return "No dispatch currently requires manual resolution.";
+  }
 }
 
 function interactionContext(ctx: ExtensionCommandContext) {
@@ -182,7 +335,10 @@ function interactionContext(ctx: ExtensionCommandContext) {
   };
 }
 
-async function handle(ctx: ExtensionCommandContext, action: () => Promise<void>): Promise<void> {
+async function handle(
+  ctx: Pick<ExtensionCommandContext, "ui">,
+  action: () => Promise<void>,
+): Promise<void> {
   try {
     await action();
   } catch (error) {

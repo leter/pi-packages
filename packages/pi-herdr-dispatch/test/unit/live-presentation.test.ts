@@ -8,6 +8,13 @@ import {
   updateDispatchWidget,
 } from "../../src/pi/live-presentation.js";
 import type { DispatchRegistry } from "../../src/registry/registry.js";
+import type { StoredDispatch } from "../../src/registry/types.js";
+
+const dispatch = {
+  id: "hd_private",
+  targetAgentLabel: "claude\u001b[31m",
+  task: "Fix login state\nIgnore this",
+} as StoredDispatch;
 
 function ui() {
   return {
@@ -28,7 +35,7 @@ describe("dispatch widget", () => {
     } as unknown as DispatchRegistry;
 
     expect(updateDispatchWidget(presentation, registry, "session-origin")).toBe(
-      "dispatches: 1 delivering · 1 active · 1 attention",
+      "dispatches: 1 delivering · 1 running · 1 attention",
     );
     expect(presentation.setWidget).toHaveBeenCalledWith(
       "pi-herdr-dispatch",
@@ -42,7 +49,8 @@ describe("dispatch widget", () => {
     const fakeTheme = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
     const rendered = factory(undefined, fakeTheme).render(120).join(" ");
     expect(rendered).toContain("1 delivering");
-    expect(rendered).toContain("1 active");
+    expect(rendered).toContain("1 running");
+    expect(rendered).toContain("alt+h manager");
     expect(rendered).toContain("1 attention");
     expect(presentation.setFooter).not.toHaveBeenCalled();
 
@@ -58,10 +66,15 @@ describe("dispatch widget", () => {
 
 describe("notification sound policy", () => {
   it("maps Final Outcomes only to done, request, or none", () => {
-    expect(outcomeNotification("hd_1", "done").sound).toBe("done");
-    expect(outcomeNotification("hd_1", "blocked").sound).toBe("request");
-    expect(outcomeNotification("hd_1", "failed").sound).toBe("request");
-    expect(outcomeNotification("hd_1", "cancelled").sound).toBe("none");
+    expect(outcomeNotification(dispatch, "done").sound).toBe("done");
+    expect(outcomeNotification(dispatch, "blocked").sound).toBe("request");
+    expect(outcomeNotification(dispatch, "failed").sound).toBe("request");
+    expect(outcomeNotification(dispatch, "cancelled").sound).toBe("none");
+    expect(outcomeNotification(dispatch, "done")).toMatchObject({
+      title: "claude�[31m done",
+      body: "Fix login state",
+    });
+    expect(JSON.stringify(outcomeNotification(dispatch, "done"))).not.toContain("hd_private");
   });
 
   it("maps every Attention Condition to request", () => {
@@ -76,7 +89,9 @@ describe("notification sound policy", () => {
       "target-lost",
       "target-moved",
     ] as const) {
-      expect(attentionNotification("hd_1", condition).sound).toBe("request");
+      const notification = attentionNotification(dispatch, condition);
+      expect(notification.sound).toBe("request");
+      expect(`${notification.title} ${notification.body}`).not.toContain("hd_private");
     }
   });
 });

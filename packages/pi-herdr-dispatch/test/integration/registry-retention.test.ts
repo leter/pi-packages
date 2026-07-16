@@ -21,7 +21,12 @@ async function openRegistry(): Promise<DispatchRegistry> {
   return registry;
 }
 
-function intent(id: string, target: string, confirmedAt: number): ConfirmDeliveryIntent {
+function intent(
+  id: string,
+  target: string,
+  confirmedAt: number,
+  overrides: Partial<ConfirmDeliveryIntent> = {},
+): ConfirmDeliveryIntent {
   return {
     id,
     originSessionId: "session_origin",
@@ -38,6 +43,7 @@ function intent(id: string, target: string, confirmedAt: number): ConfirmDeliver
     payloadHash: `sha256:${id}`,
     deadlineAt: confirmedAt + 10_000,
     confirmedAt,
+    ...overrides,
   };
 }
 
@@ -97,5 +103,92 @@ describe("Registry retention", () => {
       RegistryStateError,
     );
     expect(registry.getDispatch("hd_active")).toBeDefined();
+  });
+});
+
+describe("recent settled listing", () => {
+  it("lists newest settled first, bounded, scoped to the origin session", async () => {
+    const registry = await openRegistry();
+    registry.confirmDeliveryIntent(intent("hd_old", "term_old", 1_000));
+    registry.confirmDeliveryIntent(intent("hd_recent", "term_recent", 2_000));
+    registry.confirmDeliveryIntent(intent("hd_active", "term_active", 3_000));
+    registry.settle({
+      dispatchId: "hd_old",
+      outcome: "done",
+      sanitizedResult: { summary: "old" },
+      kind: "result",
+      settledAt: 4_000,
+    });
+    registry.settle({
+      dispatchId: "hd_recent",
+      outcome: "failed",
+      sanitizedResult: { summary: "recent" },
+      kind: "result",
+      settledAt: 6_000,
+    });
+
+    expect(
+      registry.listRecentSettled("session_origin", 5).map((dispatch) => dispatch.id),
+    ).toEqual(["hd_recent", "hd_old"]);
+    expect(
+      registry.listRecentSettled("session_origin", 1).map((dispatch) => dispatch.id),
+    ).toEqual(["hd_recent"]);
+    expect(registry.listRecentSettled("session_other", 5)).toEqual([]);
+    expect(() => registry.listRecentSettled("session_origin", 0)).toThrowError(RangeError);
+    expect(() => registry.listRecentSettled("session_origin", 101)).toThrowError(RangeError);
+  });
+});
+
+describe("workspace dispatch lookup", () => {
+  it("lists unsettled records across origins only in the target workspace", async () => {
+    const registry = await openRegistry();
+    registry.confirmDeliveryIntent(intent("hd_own", "term_own", 1_000));
+    registry.confirmDeliveryIntent(
+      intent("hd_foreign", "term_foreign", 2_000, { originSessionId: "session_other" }),
+    );
+    registry.confirmDeliveryIntent(
+      intent("hd_elsewhere", "term_elsewhere", 3_000, {
+        originSessionId: "session_other",
+        originWorkspaceId: "w2",
+        targetWorkspaceId: "w2",
+      }),
+    );
+
+    expect(registry.listUnsettledInWorkspace("w1").map((dispatch) => dispatch.id)).toEqual([
+      "hd_own",
+      "hd_foreign",
+    ]);
+    expect(registry.listUnsettledInWorkspace("w2").map((dispatch) => dispatch.id)).toEqual([
+      "hd_elsewhere",
+    ]);
+  });
+
+  it("matches a literal prefix across retained lifecycle states and within one workspace", async () => {
+    const registry = await openRegistry();
+    registry.confirmDeliveryIntent(intent("hd_shared_active", "term_active", 1_000));
+    registry.confirmDeliveryIntent(intent("hd_shared_done", "term_done", 2_000));
+    registry.confirmDeliveryIntent(
+      intent("hd_shared_elsewhere", "term_elsewhere", 3_000, {
+        originWorkspaceId: "w2",
+        targetWorkspaceId: "w2",
+      }),
+    );
+    registry.settle({
+      dispatchId: "hd_shared_done",
+      outcome: "done",
+      sanitizedResult: { summary: "done" },
+      kind: "result",
+      settledAt: 4_000,
+    });
+
+    expect(registry.listByIdPrefix("w1", "hd_shared_").map((dispatch) => dispatch.id)).toEqual([
+      "hd_shared_active",
+      "hd_shared_done",
+    ]);
+    expect(registry.listByIdPrefix("w1", "hd_shared_active").map((dispatch) => dispatch.id)).toEqual([
+      "hd_shared_active",
+    ]);
+    expect(registry.listByIdPrefix("w1", "hd_missing")).toEqual([]);
+    expect(() => registry.listByIdPrefix("w1", "hd_%")).toThrow(TypeError);
   });
 });

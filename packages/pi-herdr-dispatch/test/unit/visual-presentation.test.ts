@@ -76,13 +76,15 @@ describe("visual vocabulary", () => {
 
   it("renders human agent and dispatch tables with teaching empty states", () => {
     expect(formatAgentTable([])).toContain("Agents become eligible");
-    expect(formatDispatchTable([], () => [], 0)).toContain("/herdr-dispatch");
+    expect(formatDispatchTable([], () => [], 0)).toContain("/hd-new");
     const table = formatDispatchTable(
       [dispatch],
       () => [{ condition: "overdue", details: undefined, addedAt: 0 }],
       1_000_000,
     );
-    expect(table).toContain("● hd_view");
+    expect(table).toContain("● claude");
+    expect(table).toContain("Do work");
+    expect(table).not.toContain("hd_view");
     expect(table).toContain("▲ overdue");
     expect(table).toContain("in 22m");
   });
@@ -144,21 +146,39 @@ describe("themed renderers", () => {
     expect(rendered).toContain("<accent>●</accent>");
     expect(rendered).toContain("<warning>▲ blocked-runtime</warning>");
     expect(rendered).toContain("deadline in 22m");
+    expect(rendered).not.toContain("hd_view");
+    expect(rendered).not.toContain("term_6569");
+    const expanded = renderStatusResult(
+      { dispatch, attention: [], now: 1_000_000 },
+      fakeTheme,
+      true,
+    )!.render(120).join("\n");
+    expect(expanded).toContain("dispatch hd_view");
+    expect(expanded).toContain("terminal term_6569");
   });
 
   it("renders settled result cards by outcome", () => {
     expect(outcomeMark("done").color).toBe("success");
     const message = {
       content: `HEADER\n${JSON.stringify({ id: "hd_1", outcome: "failed", summary: "Broke", changedFiles: ["a.ts"] })}\nEND`,
-      details: { dispatchId: "hd_1", outcome: "failed" },
+      details: {
+        dispatchId: "hd_1",
+        outcome: "failed",
+        agentLabel: "claude",
+        taskSummary: "Fix login state",
+      },
     };
     const collapsed = renderDispatchResultMessage(message, false, fakeTheme).render(120).join("\n");
     expect(collapsed).toContain("<error>✗</error>");
     expect(collapsed).toContain("Broke");
+    expect(collapsed).toContain("claude failed");
+    expect(collapsed).toContain("Fix login state");
+    expect(collapsed).not.toContain("hd_1");
     expect(collapsed).toContain("expand for details");
     const expanded = renderDispatchResultMessage(message, true, fakeTheme).render(120).join("\n");
     expect(expanded).toContain("a.ts");
     expect(expanded).toContain("untrusted data");
+    expect(expanded).toContain("dispatch hd_1");
   });
 
   it("renders confirmation outcomes and the widget", () => {
@@ -172,12 +192,12 @@ describe("themed renderers", () => {
       fakeTheme,
     ).render(120).join("\n");
     expect(widget).toContain("<warning>◌ 1 delivering</warning>");
-    expect(widget).toContain("<accent>● 2 active</accent>");
+    expect(widget).toContain("<accent>● 2 running</accent>");
     expect(widget).toContain("<warning>▲ 1 attention</warning>");
     const quiet = renderDispatchWidget({ delivering: 0, active: 0, attention: 0 }, fakeTheme)
       .render(120)
       .join("\n");
-    expect(quiet).toContain("<dim>● 0 active</dim>");
+    expect(quiet).toContain("<dim>● 0 running</dim>");
     expect(quiet).toContain("<dim>no attention</dim>");
   });
 });

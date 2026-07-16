@@ -345,8 +345,20 @@ export class DispatchApplication {
     return this.#registry.listUnsettled(originSessionId);
   }
 
+  listUnsettledInWorkspace(): readonly StoredDispatch[] {
+    return this.#registry.listUnsettledInWorkspace(this.#workspaceId);
+  }
+
+  listByIdPrefix(prefix: string): readonly StoredDispatch[] {
+    return this.#registry.listByIdPrefix(this.#workspaceId, prefix);
+  }
+
   listAttention(dispatchId: string) {
     return this.#registry.listAttention(dispatchId);
+  }
+
+  listRecentSettled(originSessionId: string, limit: number): readonly StoredDispatch[] {
+    return this.#registry.listRecentSettled(originSessionId, limit);
   }
 
   async inspectAgent(target: string, requestedLines: number): Promise<{ target: ProposalTarget; text: string }> {

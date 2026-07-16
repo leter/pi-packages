@@ -184,9 +184,9 @@ export function formatAgentTable(targets: readonly ProposalTarget[]): string {
 
 export interface DispatchRow {
   mark: StateMark;
-  id: string;
   state: string;
   target: string;
+  task: string;
   mode: string;
   deadline: string;
   attention: readonly string[];
@@ -199,9 +199,9 @@ export function dispatchRow(
 ): DispatchRow {
   return {
     mark: lifecycleMark(dispatch),
-    id: dispatch.id,
     state: dispatch.lifecycle === "settled" ? (dispatch.finalOutcome ?? "settled") : dispatch.lifecycle,
     target: sanitizeLine(dispatch.targetAgentLabel, 20),
+    task: taskDisplaySummary(dispatch.task, 48),
     mode: dispatch.mode,
     deadline: relativeDeadline(dispatch.deadlineAt, now),
     attention: attention.map((record) => record.condition),
@@ -215,14 +215,14 @@ export function formatDispatchTable(
   now: number,
 ): string {
   if (dispatches.length === 0) {
-    return "No unsettled dispatches.\nStart one with /herdr-dispatch, or just ask for work to be dispatched.";
+    return "No unsettled dispatches.\nStart one with /hd-new, or just ask for work to be dispatched.";
   }
   const rows = dispatches.map((dispatch) => dispatchRow(dispatch, attentionFor(dispatch.id), now));
   const lines = alignColumns(
     rows.map((row) => [
-      `${row.mark.glyph} ${row.id}`,
+      `${row.mark.glyph} ${row.target}`,
+      row.task,
       row.state,
-      row.target,
       row.mode,
       row.deadline,
       row.attention.length > 0 ? `${ATTENTION_GLYPH} ${row.attention.join(", ")}` : "",
@@ -250,12 +250,19 @@ export interface ResultCard {
   changedFiles?: readonly string[];
   artifacts?: readonly string[];
   blocker?: string;
+  agentLabel?: string;
+  taskSummary?: string;
 }
 
 /** Parse the framed sanitized-result JSON out of a delivered context message. */
 export function parseResultCard(content: string, details?: unknown): ResultCard | undefined {
   const fallback = isRecord(details)
-    ? { dispatchId: asString(details.dispatchId), outcome: asString(details.outcome) }
+    ? {
+        dispatchId: asString(details.dispatchId),
+        outcome: asString(details.outcome),
+        agentLabel: asString(details.agentLabel),
+        taskSummary: asString(details.taskSummary),
+      }
     : undefined;
   const start = content.indexOf("\n{");
   const end = content.lastIndexOf("}");
@@ -271,6 +278,8 @@ export function parseResultCard(content: string, details?: unknown): ResultCard 
           ...(isStringArray(parsed.changedFiles) ? { changedFiles: parsed.changedFiles } : {}),
           ...(isStringArray(parsed.artifacts) ? { artifacts: parsed.artifacts } : {}),
           ...(typeof parsed.blocker === "string" ? { blocker: parsed.blocker } : {}),
+          ...(fallback?.agentLabel ? { agentLabel: fallback.agentLabel } : {}),
+          ...(fallback?.taskSummary ? { taskSummary: fallback.taskSummary } : {}),
         };
       }
     } catch {
@@ -278,7 +287,12 @@ export function parseResultCard(content: string, details?: unknown): ResultCard 
     }
   }
   if (fallback?.dispatchId && fallback.outcome) {
-    return { outcome: fallback.outcome, dispatchId: fallback.dispatchId };
+    return {
+      outcome: fallback.outcome,
+      dispatchId: fallback.dispatchId,
+      ...(fallback.agentLabel ? { agentLabel: fallback.agentLabel } : {}),
+      ...(fallback.taskSummary ? { taskSummary: fallback.taskSummary } : {}),
+    };
   }
   return undefined;
 }
@@ -293,4 +307,12 @@ function isStringArray(value: unknown): value is string[] {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function taskDisplaySummary(task: string, maximum: number): string {
+  const first = task
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean);
+  return sanitizeLine(first ?? "Untitled dispatch", maximum);
 }

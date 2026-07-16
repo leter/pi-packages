@@ -28,6 +28,7 @@ export class DispatchFollowupService {
   readonly #registry: DispatchRegistry;
   readonly #herdr: HerdrDispatchPort;
   readonly #config: DispatchConfig;
+  readonly #workspaceId: string;
   readonly #now: () => number;
   readonly #nextNonce: () => string;
   readonly #onSettled: (dispatchId: string, outcome: FinalOutcome) => void;
@@ -37,6 +38,7 @@ export class DispatchFollowupService {
     registry: DispatchRegistry;
     herdr: HerdrDispatchPort;
     config: DispatchConfig;
+    workspaceId: string;
     now?: () => number;
     nextNonce?: () => string;
     onSettled?: (dispatchId: string, outcome: FinalOutcome) => void;
@@ -44,6 +46,7 @@ export class DispatchFollowupService {
     this.#registry = options.registry;
     this.#herdr = options.herdr;
     this.#config = options.config;
+    this.#workspaceId = options.workspaceId;
     this.#now = options.now ?? Date.now;
     this.#nextNonce =
       options.nextNonce ?? (() => `hd_followup_${this.#now().toString(36)}_${randomBytes(8).toString("base64url")}`);
@@ -70,12 +73,20 @@ export class DispatchFollowupService {
     );
   }
 
+  async replyEvidence(dispatchId: string, actorSessionId: string): Promise<FollowupEvidence> {
+    const evidence = await this.#evidence(dispatchId);
+    this.#assertOrigin(evidence.dispatch, actorSessionId);
+    this.#assertReplyEligible(evidence.dispatch, dispatchId);
+    return evidence;
+  }
+
   async prepareCancellation(
     dispatchId: string,
     actorSessionId: string,
   ): Promise<FollowupProposal> {
     const evidence = await this.#evidence(dispatchId);
     this.#assertOrigin(evidence.dispatch, actorSessionId);
+    this.#assertCancellationEligible(dispatchId);
     return this.#proposal(
       dispatchId,
       "cancel",
@@ -91,6 +102,9 @@ export class DispatchFollowupService {
     this.#proposals.delete(proposal.nonce);
     const current = this.#registry.getDispatch(proposal.dispatchId);
     if (!current || current.lifecycle === "settled") throw new Error("Dispatch is already settled");
+    this.#assertWorkspace(current);
+    if (proposal.kind === "reply") this.#assertReplyEligible(current, current.id);
+    else this.#assertCancellationEligible(current.id);
     let result: HerdrDeliveryResult;
     try {
       result = await this.#herdr.deliverAndVerify(
@@ -147,6 +161,7 @@ export class DispatchFollowupService {
   }): { status: "settled" | "already-settled"; outcome: FinalOutcome } {
     const dispatch = this.#registry.getDispatch(input.dispatchId);
     if (!dispatch) throw new Error(`Dispatch ${input.dispatchId} was not found`);
+    this.#assertWorkspace(dispatch);
     const isOrigin = dispatch.originSessionId === input.actorSessionId;
     if (input.emergency === isOrigin) {
       throw new Error(
@@ -179,6 +194,7 @@ export class DispatchFollowupService {
     if (!dispatch || dispatch.lifecycle === "settled") {
       throw new Error(`Unsettled dispatch ${dispatchId} was not found`);
     }
+    this.#assertWorkspace(dispatch);
     const resolved = await this.#herdr.resolveTerminal(dispatch.targetTerminalId);
     if (!resolved) {
       return { dispatch, targetStatus: "target-lost", tail: "" };
@@ -209,6 +225,29 @@ export class DispatchFollowupService {
   #assertOrigin(dispatch: StoredDispatch, actorSessionId: string): void {
     if (dispatch.originSessionId !== actorSessionId) {
       throw new Error("Only the exact Origin Session may reply or request cancellation");
+    }
+  }
+
+  #assertWorkspace(dispatch: StoredDispatch): void {
+    if (dispatch.targetWorkspaceId !== this.#workspaceId) {
+      throw new Error("Dispatch is outside the current Workspace Scope");
+    }
+  }
+
+  #assertReplyEligible(dispatch: StoredDispatch, dispatchId: string): void {
+    if (dispatch.lifecycle !== "active") throw new Error("Replies require an Active Dispatch");
+    if (this.#registry.listAttention(dispatchId).length === 0) {
+      throw new Error("Replies require an Active Dispatch with an Attention Condition");
+    }
+  }
+
+  #assertCancellationEligible(dispatchId: string): void {
+    if (
+      this.#registry
+        .listAttention(dispatchId)
+        .some((record) => record.condition === "target-lost" || record.condition === "target-moved")
+    ) {
+      throw new Error("A lost or moved target can only be resolved manually");
     }
   }
 }

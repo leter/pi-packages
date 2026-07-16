@@ -4,6 +4,13 @@ import type { DispatchRegistry } from "../registry/registry.js";
 
 export const DISPATCH_RESULT_CUSTOM_TYPE = "pi-herdr-dispatch-result";
 
+export interface DispatchResultMessageDetails {
+  dispatchId: string;
+  outcome: string;
+  agentLabel: string;
+  taskSummary: string;
+}
+
 export interface OriginContextPort {
   getSessionId(): string;
   getLeafId(): string | null;
@@ -13,7 +20,7 @@ export interface OriginContextPort {
       customType: string;
       content: string;
       display: boolean;
-      details: { dispatchId: string; outcome: string };
+      details: DispatchResultMessageDetails;
     },
     options: { deliverAs: "nextTurn"; triggerTurn: false },
   ): void;
@@ -69,7 +76,12 @@ export class OriginContextDelivery {
             customType: DISPATCH_RESULT_CUSTOM_TYPE,
             content: formatSanitizedResult(result.sanitizedResult),
             display: true,
-            details: { dispatchId, outcome: result.outcome },
+            details: {
+              dispatchId,
+              outcome: result.outcome,
+              agentLabel: sanitizeDisplay(dispatch.targetAgentLabel, 24) || "Agent",
+              taskSummary: summarizeTask(dispatch.task, 100),
+            },
           },
           { deliverAs: "nextTurn", triggerTurn: false },
         );
@@ -121,4 +133,20 @@ function safeJson(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function summarizeTask(value: string, maximum: number): string {
+  const first = value
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean);
+  return sanitizeDisplay(first ?? "Untitled dispatch", maximum);
+}
+
+function sanitizeDisplay(value: string, maximum: number): string {
+  return value
+    .replace(/[\u0000-\u001f\u007f-\u009f]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, maximum);
 }
