@@ -42,6 +42,14 @@ export function parseResultLine(line: string, expectedId: string): ParsedResultL
   }
   if (!isRecord(value)) return malformedIfMatching(value, expectedId, raw, "envelope must be an object");
   if (value.id !== expectedId) return { status: "ignore" };
+  if (
+    value.outcome === "done|blocked|failed|cancelled" &&
+    value.summary === "..."
+  ) {
+    // The immutable outbound contract intentionally contains this exact example.
+    // It is delivery evidence, not a target result attempt.
+    return { status: "ignore" };
+  }
   try {
     const outcome = finalOutcome(value.outcome);
     const result: SanitizedDispatchResult = {
@@ -78,14 +86,18 @@ export function scanResultTail(text: string, expectedId: string): ResultTailScan
       const candidate = lines[candidateIndex]!;
       if (candidateIndex > index && candidate.trimStart().startsWith("```")) break;
       const trimmedCandidate = candidate.trim();
+      const barePrefixAt = trimmedCandidate.indexOf("DISPATCH_RESULT");
       reconstructed +=
-        candidateIndex === index && trimmedCandidate.endsWith("DISPATCH_RESULT")
-          ? `${trimmedCandidate} `
+        candidateIndex === index &&
+        barePrefixAt >= 0 &&
+        !trimmedCandidate.slice(barePrefixAt).includes("{")
+          ? `${trimmedCandidate.slice(0, barePrefixAt)}${PREFIX}`
           : trimmedCandidate;
       const parsed = parseResultLine(reconstructed, expectedId);
       if (parsed.status === "valid") return { valid: parsed, malformed };
       if (parsed.status === "ignore" && containsCompleteEnvelope(reconstructed)) {
         index = candidateIndex;
+        lastMalformed = undefined;
         break;
       }
       if (parsed.status === "malformed") {

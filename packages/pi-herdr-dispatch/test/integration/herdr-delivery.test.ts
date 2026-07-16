@@ -76,19 +76,20 @@ const delivery = {
   text: "[HERDR DISPATCH]\nID: hd_echo_1\nDo the work",
 };
 
-describe("Herdr atomic delivery and bounded reads", () => {
-  it("uses one send_input request with text and enter, then verifies an exact bounded echo", async () => {
+describe("Herdr staged delivery and bounded reads", () => {
+  it("stages text, revalidates the target, submits Enter separately, then verifies an exact echo", async () => {
     const fake = await fakeServer((request, connection) => {
       if (request.method === "session.snapshot") {
         connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() });
       } else if (request.method === "pane.get") {
         connection.sendResponse(request.id, { type: "pane_info", pane: targetPane });
       } else if (request.method === "pane.send_input") {
-        expect(request.params).toEqual({
-          pane_id: "p-target",
-          text: delivery.text,
-          keys: ["enter"],
-        });
+        const sends = fake.requests.filter((candidate) => candidate.method === "pane.send_input");
+        expect(request.params).toEqual(
+          sends.length === 1
+            ? { pane_id: "p-target", text: delivery.text }
+            : { pane_id: "p-target", keys: ["Enter"] },
+        );
         connection.sendResponse(request.id, { type: "ok" });
       } else if (request.method === "pane.read") {
         expect(request.params).toEqual({
@@ -109,8 +110,8 @@ describe("Herdr atomic delivery and bounded reads", () => {
     await expect(adapter.deliverAndVerify(delivery)).resolves.toEqual(
       expect.objectContaining({ status: "verified", pane: expect.objectContaining({ paneId: "p-target" }) }),
     );
-    expect(fake.requests.filter((request) => request.method === "pane.send_input")).toHaveLength(1);
-    expect(fake.connectionCount).toBe(7);
+    expect(fake.requests.filter((request) => request.method === "pane.send_input")).toHaveLength(2);
+    expect(fake.connectionCount).toBe(10);
     expect(fake.requests.every((request) => request.id === "pi-herdr-1")).toBe(true);
     adapter.close();
   });
@@ -234,6 +235,48 @@ describe("Herdr atomic delivery and bounded reads", () => {
       expect.objectContaining({ status: "not-sent", reason: "target-changed" }),
     );
     expect(fake.requests.some((request) => request.method === "pane.send_input")).toBe(false);
+    adapter.close();
+  });
+
+  it("never submits Enter when the target route changes after text staging", async () => {
+    let snapshots = 0;
+    const movedPane = { ...targetPane, pane_id: "p-moved" };
+    const movedSnapshot = {
+      ...snapshot(),
+      panes: [movedPane],
+      agents: [{ ...movedPane, name: "pi", screen_detection_skipped: true }],
+    };
+    const fake = await fakeServer((request, connection) => {
+      if (request.method === "session.snapshot") {
+        snapshots += 1;
+        connection.sendResponse(request.id, {
+          type: "session_snapshot",
+          snapshot: snapshots < 3 ? snapshot() : movedSnapshot,
+        });
+      } else if (request.method === "pane.get") {
+        connection.sendResponse(request.id, {
+          type: "pane_info",
+          pane:
+            (request.params as { pane_id?: unknown }).pane_id === "p-moved"
+              ? movedPane
+              : targetPane,
+        });
+      } else if (request.method === "pane.send_input") {
+        connection.sendResponse(request.id, { type: "ok" });
+      }
+    });
+    const adapter = await HerdrAdapter.connect({ socketPath: fake.socketPath, workspaceId: "w-current" });
+
+    await expect(adapter.deliverAndVerify(delivery)).resolves.toEqual(
+      expect.objectContaining({
+        status: "ambiguous",
+        reason: "response-unknown",
+        detail: "text staged but target changed before Enter",
+      }),
+    );
+    expect(fake.requests.filter((request) => request.method === "pane.send_input")).toEqual([
+      expect.objectContaining({ params: { pane_id: "p-target", text: delivery.text } }),
+    ]);
     adapter.close();
   });
 

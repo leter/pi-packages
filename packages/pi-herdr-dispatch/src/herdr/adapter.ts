@@ -195,15 +195,16 @@ export class HerdrAdapter {
     if (!resolved) return { status: "not-sent", reason: "target-lost" };
     const targetCheck = validateResolvedTarget(resolved, request.target);
     if (targetCheck) return targetCheck;
+    const stagedPane = resolved.pane;
 
     try {
       await this.#unary.request(
         "pane.send_input",
-        { pane_id: resolved.pane.paneId, text: request.text, keys: ["enter"] },
+        { pane_id: stagedPane.paneId, text: request.text },
         "ok",
         () => {
-          if (this.#invalidatedPaneIds.has(resolved.pane.paneId)) {
-            throw new HerdrRouteInvalidatedError("target pane closed or moved before send");
+          if (this.#invalidatedPaneIds.has(stagedPane.paneId)) {
+            throw new HerdrRouteInvalidatedError("target pane closed or moved before text staging");
           }
         },
       );
@@ -220,11 +221,61 @@ export class HerdrAdapter {
       return {
         status: "ambiguous",
         reason: "response-unknown",
-        pane: resolved.pane,
+        pane: stagedPane,
         detail: errorMessage(error),
       };
     }
 
+    // Agent TUIs can process a multiline paste asynchronously. Sending Enter in
+    // the same request can leave the text staged in the editor without submitting
+    // it. Let the TUI consume the paste, re-resolve the immutable terminal route,
+    // then submit Enter in a second request. Any failure after staging is
+    // ambiguous because the text may still be present in the target editor.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    let submitTarget: ResolvedHerdrTarget | undefined;
+    try {
+      submitTarget = await this.#resolveTerminal(request.target.terminalId);
+    } catch (error) {
+      return {
+        status: "ambiguous",
+        reason: "response-unknown",
+        pane: stagedPane,
+        detail: `text staged but target revalidation failed before Enter: ${errorMessage(error)}`,
+      };
+    }
+    if (
+      !submitTarget ||
+      submitTarget.pane.paneId !== stagedPane.paneId ||
+      validateResolvedTarget(submitTarget, request.target)
+    ) {
+      return {
+        status: "ambiguous",
+        reason: "response-unknown",
+        pane: stagedPane,
+        detail: "text staged but target changed before Enter",
+      };
+    }
+    try {
+      await this.#unary.request(
+        "pane.send_input",
+        { pane_id: submitTarget.pane.paneId, keys: ["Enter"] },
+        "ok",
+        () => {
+          if (this.#invalidatedPaneIds.has(submitTarget!.pane.paneId)) {
+            throw new HerdrRouteInvalidatedError("target pane closed or moved before Enter");
+          }
+        },
+      );
+    } catch (error) {
+      return {
+        status: "ambiguous",
+        reason: "response-unknown",
+        pane: stagedPane,
+        detail: `text staged but Enter submission is unverified: ${errorMessage(error)}`,
+      };
+    }
+
+    resolved = submitTarget;
     const echoDeadline = Date.now() + echoOptions.echoWindowMs;
     const echoPollMs = echoOptions.echoPollMs ?? 100;
     let lastEchoTarget = resolved;

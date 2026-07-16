@@ -185,6 +185,12 @@ describe("DispatchApplication", () => {
       echoVerified: true,
     });
     expect(registry.getDispatch(proposal.id)?.lifecycle).toBe("active");
+    expect(registry.listAuditEvents(proposal.id)).toContainEqual(
+      expect.objectContaining({
+        eventType: "delivery-intent-confirmed",
+        data: expect.objectContaining({ authorization: { kind: "automatic-default" } }),
+      }),
+    );
     expect(herdr.monitored).toEqual([{ paneId: "p-target", correlationId: proposal.id }]);
     await expect(application.listEligibleAgents()).resolves.toEqual([]);
     await expect(
@@ -234,8 +240,9 @@ describe("DispatchApplication", () => {
     await expect(application.confirmProposal(first, origin)).resolves.toEqual({
       status: "delivery-unverified",
       dispatchId: first.id,
-      lifecycle: "active",
+      lifecycle: "delivering",
     });
+    expect(registry.getDispatch(first.id)?.lifecycle).toBe("delivering");
     expect(registry.listAttention(first.id).map((item) => item.condition)).toEqual([
       "delivery-unverified",
     ]);

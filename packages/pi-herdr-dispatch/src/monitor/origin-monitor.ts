@@ -32,6 +32,8 @@ export interface OriginMonitorHerdrPort {
   ): Promise<void>;
 }
 
+const RESULT_RECHECK_DELAYS_MS = [100, 400, 1_000, 2_000, 4_000, 8_000, 15_000] as const;
+
 export interface OriginMonitorOptions {
   registry: DispatchRegistry;
   herdr: OriginMonitorHerdrPort;
@@ -67,6 +69,7 @@ export class OriginMonitor {
   readonly #timers = new Set<ScheduledTask>();
   readonly #cwdMismatches = new Map<string, number>();
   readonly #acknowledged = new Set<string>();
+  readonly #resultRechecks = new Map<string, number>();
   #targets: HerdrMonitorTarget[] = [];
   #running = false;
   #initializing = false;
@@ -140,6 +143,7 @@ export class OriginMonitor {
     this.#timers.clear();
     this.#cwdMismatches.clear();
     this.#acknowledged.clear();
+    this.#resultRechecks.clear();
     this.#targets = [];
   }
 
@@ -179,7 +183,8 @@ export class OriginMonitor {
       if (dispatch) {
         const resolved = await this.#resolve(dispatch);
         if (resolved?.pane.paneId === event.paneId && event.read.paneId === event.paneId) {
-          await this.#processRead(dispatch, event.read);
+          const settled = await this.#processRead(dispatch, event.read, false);
+          if (!settled) this.#beginResultRecheck(dispatch.id);
         }
       }
       return;
@@ -237,15 +242,21 @@ export class OriginMonitor {
     if (!this.#initializing && !this.#reconfiguring) await this.#catchUpAll();
   }
 
-  async #processRead(dispatch: StoredDispatch, read: HerdrPaneRead): Promise<boolean> {
+  async #processRead(
+    dispatch: StoredDispatch,
+    read: HerdrPaneRead,
+    recordMalformed = true,
+  ): Promise<boolean> {
     const current = this.#registry.getDispatch(dispatch.id);
     if (!current || current.lifecycle === "settled" || this.#isSettlementPaused(current.id)) return false;
     const scan = scanResultTail(read.text, current.id);
-    for (const malformed of scan.malformed) {
-      await this.#attention(current.id, "malformed-result", {
-        raw: malformed.raw,
-        reason: malformed.reason,
-      });
+    if (recordMalformed) {
+      for (const malformed of scan.malformed) {
+        await this.#attention(current.id, "malformed-result", {
+          raw: malformed.raw,
+          reason: malformed.reason,
+        });
+      }
     }
     if (!scan.valid) return false;
     await this.#auditWorktree(current);
@@ -338,6 +349,51 @@ export class OriginMonitor {
       if (this.#registry.getDispatch(dispatch.id)?.lifecycle !== "settled") throw error;
     }
     return resolved;
+  }
+
+  #beginResultRecheck(dispatchId: string): void {
+    if (this.#resultRechecks.has(dispatchId)) return;
+    this.#resultRechecks.set(dispatchId, this.#clock.now());
+    this.#scheduleResultRecheckAttempt(dispatchId, 0);
+  }
+
+  #scheduleResultRecheckAttempt(dispatchId: string, attempt: number): void {
+    const startedAt = this.#resultRechecks.get(dispatchId);
+    if (startedAt === undefined) return;
+    const remainingMs = this.#config.startupWindowMs - (this.#clock.now() - startedAt);
+    if (remainingMs <= 0) {
+      this.#resultRechecks.delete(dispatchId);
+      return;
+    }
+    const requestedDelay = RESULT_RECHECK_DELAYS_MS[attempt] ?? remainingMs;
+    const delay = Math.min(requestedDelay, remainingMs);
+    this.#schedule(delay, async () => {
+      const dispatch = this.#registry.getDispatch(dispatchId);
+      if (!dispatch || dispatch.lifecycle === "settled") {
+        this.#resultRechecks.delete(dispatchId);
+        return;
+      }
+      const finalAttempt = this.#clock.now() - startedAt >= this.#config.startupWindowMs;
+      try {
+        const resolved = await this.#resolve(dispatch);
+        if (resolved) {
+          const read = await this.#herdr.readTail(resolved.pane.paneId, 200);
+          if (await this.#processRead(dispatch, read, finalAttempt)) {
+            this.#resultRechecks.delete(dispatchId);
+            return;
+          }
+        }
+      } catch {
+        // Subscription state handles transport attention. Keep this bounded retry
+        // alive while its startup window remains so a transient read failure does
+        // not permanently miss the completed Result Envelope.
+      }
+      if (finalAttempt) {
+        this.#resultRechecks.delete(dispatchId);
+        return;
+      }
+      this.#scheduleResultRecheckAttempt(dispatchId, attempt + 1);
+    });
   }
 
   #scheduleDispatchTimers(dispatch: StoredDispatch): void {

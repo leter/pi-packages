@@ -277,6 +277,73 @@ describe("OriginMonitor", () => {
     monitor.stop();
   });
 
+  it("re-reads a partially rendered matching Result Envelope before marking it malformed", async () => {
+    const { registry, herdr, clock, monitor } = await harness();
+    await monitor.start();
+    const partial = '• DISPATCH_RESULT\n  {"id":"hd_monitor","outcome":"done","summary":"Codex staged';
+
+    await herdr.emit({
+      type: "output-matched",
+      paneId: "p-target",
+      matchedLine: "• DISPATCH_RESULT",
+      read: {
+        paneId: "p-target",
+        workspaceId: "w-current",
+        tabId: "t-current",
+        source: "recent_unwrapped",
+        format: "text",
+        text: partial,
+        revision: 2,
+        truncated: false,
+      },
+    });
+    expect(registry.listAttention("hd_monitor")).toEqual([]);
+
+    await clock.advance(4_999);
+    expect(registry.getDispatch("hd_monitor")?.lifecycle).toBe("active");
+    expect(registry.listAttention("hd_monitor")).toEqual([]);
+
+    herdr.text = `${partial}\n  delivery verified"}`;
+    await clock.advance(1);
+
+    expect(registry.getDispatch("hd_monitor")).toMatchObject({
+      lifecycle: "settled",
+      finalOutcome: "done",
+    });
+    expect(registry.listAttention("hd_monitor")).toEqual([]);
+    monitor.stop();
+  });
+
+  it("records a still-malformed streamed result after the bounded re-read window", async () => {
+    const { registry, herdr, clock, monitor } = await harness();
+    await monitor.start();
+    const partial = 'DISPATCH_RESULT {"id":"hd_monitor","outcome":"done","summary":"unfinished';
+
+    await herdr.emit({
+      type: "output-matched",
+      paneId: "p-target",
+      matchedLine: partial,
+      read: {
+        paneId: "p-target",
+        workspaceId: "w-current",
+        tabId: "t-current",
+        source: "recent_unwrapped",
+        format: "text",
+        text: partial,
+        revision: 2,
+        truncated: false,
+      },
+    });
+    herdr.text = partial;
+    await clock.advance(5_000);
+
+    expect(registry.getDispatch("hd_monitor")?.lifecycle).toBe("active");
+    expect(registry.listAttention("hd_monitor")).toEqual([
+      expect.objectContaining({ condition: "malformed-result" }),
+    ]);
+    monitor.stop();
+  });
+
   it("re-resolves a moved terminal and persists only its fresh pane route", async () => {
     const { registry, herdr, monitor } = await harness();
     await monitor.start();

@@ -56,6 +56,50 @@ describe("Result Envelope", () => {
     );
   });
 
+  it("ignores the exact outbound Result Envelope contract template", () => {
+    expect(
+      parseResultLine(
+        'DISPATCH_RESULT {"id":"hd_1","outcome":"done|blocked|failed|cancelled","summary":"..."}',
+        "hd_1",
+      ),
+    ).toEqual({ status: "ignore" });
+  });
+
+  it("accepts a Codex result rendered after its hard-wrapped contract template", () => {
+    const tail = `Finish by printing exactly one single-line Result Envelope, not fenced in Markdown:
+  DISPATCH_RESULT {"id":"hd_1","outcome":"done|blocked|
+  failed|cancelled","summary":"..."}
+
+• DISPATCH_RESULT
+  {"id":"hd_1","outcome":"done","summary":"Codex live reread
+  verified"}`;
+
+    expect(scanResultTail(tail, "hd_1")).toEqual({
+      valid: expect.objectContaining({
+        status: "valid",
+        result: expect.objectContaining({ outcome: "done", summary: "Codex live rereadverified" }),
+      }),
+      malformed: [],
+    });
+  });
+
+  it("accepts a Grok result whose bare prefix row has a decorative timestamp", () => {
+    const tail = `DISPATCH_RESULT                                                1:39 PM
+     {"id":"hd_1","outcome":"done","summa
+     ry":"Grok compatibility probe passed"}`;
+
+    expect(scanResultTail(tail, "hd_1")).toEqual({
+      valid: expect.objectContaining({
+        status: "valid",
+        result: expect.objectContaining({
+          outcome: "done",
+          summary: "Grok compatibility probe passed",
+        }),
+      }),
+      malformed: [],
+    });
+  });
+
   it("takes the first valid matching envelope outside Markdown fences", () => {
     const tail = `\`\`\`json
 DISPATCH_RESULT {"id":"hd_1","outcome":"failed","summary":"example"}

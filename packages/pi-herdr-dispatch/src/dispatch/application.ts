@@ -70,7 +70,7 @@ export type ConfirmationResult =
   | {
       status: "delivery-unverified";
       dispatchId: string;
-      lifecycle: "delivering" | "active";
+      lifecycle: "delivering";
     }
   | { status: "failed"; dispatchId: string; reason: string }
   | { status: "already-settled"; dispatchId: string; outcome: string };
@@ -456,12 +456,6 @@ export class DispatchApplication {
       return { status: "active", dispatchId: proposal.id, echoVerified: true };
     }
 
-    let lifecycle: "delivering" | "active" = "delivering";
-    if (delivery.reason === "echo-not-found" || delivery.reason === "echo-read-failed") {
-      const settled = this.#markActiveOrReadSettlement(proposal.id, now);
-      if (settled) return settled;
-      lifecycle = "active";
-    }
     const dispatch = this.#registry.getDispatch(proposal.id);
     if (dispatch?.lifecycle === "settled") {
       return {
@@ -476,7 +470,7 @@ export class DispatchApplication {
       now,
     );
     if (settled) return settled;
-    return { status: "delivery-unverified", dispatchId: proposal.id, lifecycle };
+    return { status: "delivery-unverified", dispatchId: proposal.id, lifecycle: "delivering" };
   }
 
   #addDeliveryAttentionOrReadSettlement(
