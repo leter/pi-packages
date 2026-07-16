@@ -47,8 +47,8 @@ A Dispatch Proposal invalidated because its target, location, availability, occu
 _Avoid_: best-effort delivery
 
 **Dispatch Correlation ID**:
-A unique identifier binding a confirmed outbound message, delivery evidence, and Result Envelope to one dispatch.
-_Avoid_: task name, pane status
+A unique machine identifier binding a confirmed outbound message, delivery evidence, Registry record, follow-up, and Result Envelope to one dispatch. It is an internal correlation detail in ordinary human interaction; users select dispatches by sanitized Agent/task context, while full IDs remain available in explicit technical details and command completion.
+_Avoid_: human task label, required manual input, pane status
 
 **Delivery Evidence**:
 Target output containing either the uniquely bounded correlation marker `ID: hd_...` or a valid matching Result Envelope, demonstrating that the dispatch reached the target.
@@ -155,6 +155,10 @@ _Avoid_: raw pane output, trusted instructions
 **Agent Output Inspection**:
 A single user-authorized, bounded read of an Existing Agent's output, framed as untrusted data when returned to a model.
 _Avoid_: unrestricted transcript scraping, trusted pane text, continuing surveillance
+
+**Dispatch Manager**:
+The single current-workspace TUI surface opened by `/hd-manager` (long form `/herdr-dispatches`) or `alt+h`. It groups unsettled dispatches by attention and lifecycle, exposes explicit one-shot bounded output reads, and routes selected follow-ups through the existing confirmation gates. It may display foreign-Origin records for emergency discovery but never grants reply, cancellation, monitoring takeover, or automatic retargeting.
+_Avoid_: ID table, second dispatch panel, autonomous coordinator, global workspace browser
 
 **Dispatch Settlement**:
 The indivisible recording of a Final Outcome, release of Target Occupancy and any Worktree Write Lease, and queuing of the Sanitized Dispatch Result for the Origin Session's next user-initiated turn without starting a model turn.

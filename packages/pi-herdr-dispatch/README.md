@@ -1,5 +1,7 @@
 # pi-herdr-dispatch
 
+English | [简体中文](./README.zh-CN.md)
+
 A Pi extension under staged development for safely dispatching explicitly confirmed work to coding Agents that already exist in one local Herdr workspace.
 
 > **Status:** Phase 6 implementation and disposable-topology acceptance are complete. The package is ready for reviewed local development use, but remains `private` at version `0.0.0-development`; publishing requires a separate user decision.
@@ -24,7 +26,7 @@ npm test
 pi install "$PWD/packages/pi-herdr-dispatch"
 ```
 
-Restart Pi or run `/reload`, then verify `/herdr-agents` and `/herdr-dispatches`. Remove the development installation with:
+Restart Pi or run `/reload`, then verify `/hd-agents` and `/hd-manager`. Remove the development installation with:
 
 ```bash
 pi remove /absolute/path/to/pi-packages/packages/pi-herdr-dispatch
@@ -32,18 +34,62 @@ pi remove /absolute/path/to/pi-packages/packages/pi-herdr-dispatch
 
 The package intentionally remains private/development through acceptance. These instructions install a local checkout; they do not publish anything.
 
+### Development loop
+
+`pi install ./local/path` records a path reference in `~/.pi/agent/settings.json`; nothing is copied, and Pi loads `src/index.ts` directly with no build step. Install once, then iterate with:
+
+1. Edit source.
+2. Run `/reload` in the Pi session (inside its Herdr pane). Reload is safe here: the extension reopens the Registry, restarts monitoring with a bounded catch-up read, and re-attaches the widget, so dispatch state survives.
+3. For pure rendering or model logic, `npx vitest run test/unit/dispatch-view.test.ts` is a faster inner loop than a live reload; keep `/reload` for interaction feel and keybindings.
+
+Reinstalling is only needed when the checkout moves, on another machine, or to remove the package.
+
 ## Dispatch workflow
 
-- `/herdr-agents` — list current-workspace Eligible Agents.
-- `/herdr-dispatch` — create and confirm a manual proposal.
-- `/herdr-dispatches` — list unsettled dispatches for this Origin Session.
-- `/herdr-dispatch-reply <id>` — preview and confirm a reply when an Active Dispatch has attention.
-- `/herdr-dispatch-cancel <id>` — request a normal cancellation; this never sends `Ctrl+C`.
-- `/herdr-dispatch-resolve <id>` — manually or emergently settle after evidence and confirmation.
-- `/herdr-agent-output <target> [lines]` — perform one explicitly requested bounded output read.
-- `/herdr-dispatch-setup` — explicitly install one selected Herdr status integration.
+The readable `hd-*` aliases are the recommended interactive commands; the original names remain available for compatibility.
+
+- `/hd-agents` (`/herdr-agents`) — list current-workspace Eligible Agents.
+- `/hd-new` (`/herdr-dispatch`) — create and confirm a manual proposal.
+- `/hd-manager` (`/herdr-dispatches`, or `alt+h`) — open the current-workspace Dispatch Manager, browse human-readable tasks, and perform explicit bounded output reads (`r` for 50 lines, `R` for 200).
+- `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — choose, preview, and confirm a reply when an Active Dispatch has attention.
+- `/hd-cancel [id-or-prefix]` (`/herdr-dispatch-cancel`) — choose and confirm a normal cancellation request; this never sends `Ctrl+C`.
+- `/hd-resolve [id-or-prefix]` (`/herdr-dispatch-resolve`) — choose and manually or emergently settle after evidence and confirmation.
+- `/hd-output <target> [lines]` (`/herdr-agent-output`) — perform one explicitly requested bounded output read.
+- `/hd-setup` (`/herdr-dispatch-setup`) — explicitly install one selected Herdr status integration.
 
 Model tools expose scoped listing, proposal, status, and one-shot inspection. Reply, cancellation, resolution, Agent creation, waits, and force interruption are never model tools.
+
+## Using the Dispatch Manager
+
+`/hd-manager` (or `alt+h`; long form `/herdr-dispatches`) opens the Dispatch Manager. Rows are grouped in action order — `NEEDS ATTENTION`, then `RUNNING`, then `DELIVERING` — and show the target Agent, task summary, principal attention reason, and relative deadline. Dispatch IDs never appear in default rows; press `D` on a detail screen when you need the full identifiers.
+
+State glyphs pair a symbol, a theme color, and a label, so no state relies on color alone: `●` active, `◌` delivering, `▲` needs attention, `✓` done, `◼` blocked, `✗` failed, `○` cancelled.
+
+### List screen
+
+| Key | Action |
+|---|---|
+| `↑`/`↓` (or `ctrl+p`/`ctrl+n`) | Move selection |
+| `PageUp`/`PageDown` | Move by page (10-row window) |
+| `Home`/`End` | Jump to first/last record |
+| `Enter` or `→` | Open the selected dispatch |
+| `s` | Show or hide recently settled records |
+| `Esc`, `←`, or `Ctrl+C` | Close without changing anything |
+
+### Detail screen
+
+| Key | Action |
+|---|---|
+| `r` / `R` | One bounded output read (50 / 200 lines) — timestamped, framed as untrusted, never streamed |
+| `y` | Reply (shown only for an Active Dispatch with attention from this Origin Session) |
+| `c` | Request cancellation (never sends `Ctrl+C` to the target) |
+| `v` | Resolve manually; foreign-Origin records show the emergency-resolution label |
+| `D` | Toggle technical details (full dispatch ID, terminal, origin, workspace) |
+| `Esc` or `←` | Back to the list |
+
+Action keys only appear when the record's lifecycle, attention state, and Origin relationship allow them, and every action re-validates the record and passes through the existing preview and confirmation gates before anything is sent. Closing the manager with `Esc` or `Ctrl+C` can never mutate dispatch state.
+
+Typical flow: dispatch work with `/hd-new`, watch the widget counts below the editor, press `alt+h` when something needs attention, open the record, read its recent output with `r`, then choose reply, cancel, or resolve from the detail screen.
 
 Every dispatch proposal previews the complete outbound bytes and requires TUI confirmation. Editing creates a new immutable proposal and requires another preview. Non-TUI modes may list and inspect but cannot reserve, send, reply, cancel, resolve, or monitor.
 
@@ -101,7 +147,7 @@ The package does not authorize commits, pushes, deployment, publication, destruc
 
 ### `delivery-unverified`
 
-Do **not** resend automatically. The target may have accepted input even when the response or bounded echo was lost. Inspect the target and use `/herdr-dispatch-resolve <id>` only after deciding the final outcome.
+Do **not** resend automatically. The target may have accepted input even when the response or bounded echo was lost. Inspect the target and use `/hd-resolve` only after deciding the final outcome.
 
 ### Origin Session closed or Pi reloaded
 
@@ -125,7 +171,9 @@ State-changing behavior fails closed and never falls back to an empty or in-memo
 
 ## UI and notifications
 
-The extension adds one compact widget below the editor and never replaces Pi's footer. Herdr notification sounds are restricted to:
+The extension adds one compact widget below the editor and never replaces Pi's footer. `/hd-manager` (long form `/herdr-dispatches`; shortcut `alt+h`, TUI only) opens the Dispatch Manager: a current-workspace, attention-first list with recently settled current-Origin records folded away. Dispatch IDs are internal correlation details and appear only in explicit technical details. The manager re-reads the Registry on every render, refreshes relative times, and performs output reads only as explicit one-shot bounded tails (`r` 50 lines, `R` 200 lines, timestamped and framed as untrusted). Reply, cancellation, and resolution selections still pass through their existing preview, eligibility revalidation, and confirmation gates.
+
+The optional command selector supports exact IDs and unambiguous prefixes for advanced use, with full-ID argument completion. Ambiguous prefixes open a human-readable picker and are never guessed. A foreign-Origin record is discoverable only within the current Workspace Scope and exposes emergency resolution, not reply or cancellation. Herdr notification sounds are restricted to:
 
 - `done` for a successful `done` outcome;
 - `request` for attention, blocked, or failed outcomes;
@@ -138,6 +186,7 @@ It never calls `pane.report_metadata`.
 - [Design](./docs/DESIGN.md)
 - [Domain language](./docs/CONTEXT.md)
 - [Implementation plan](./docs/IMPLEMENTATION-PLAN.md)
+- [Dispatch interaction plan](./docs/DISPATCH-INTERACTION-PLAN.md)
 - [Compatibility spikes](./docs/SPIKE-RESULTS.md)
 - [Live acceptance results](./docs/ACCEPTANCE-RESULTS.md)
 - [Review findings](./docs/REVIEW-FINDINGS.md)

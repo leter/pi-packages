@@ -238,7 +238,7 @@ Commands proven read-only and not capable of bypassing typed inspection scope ar
 
 Allowed Herdr output is still untrusted. When it will enter model context, the corresponding tool result is wrapped in `<untrusted-herdr-cli-output>` framing.
 
-Commands that task, create, control, close, or block on another pane are denied and direct the user/model to `/herdr-dispatch` or `herdr_dispatch_propose`. The deny set includes at minimum:
+Commands that task, create, control, close, or block on another pane are denied and direct the user/model to `/hd-new` (long form `/herdr-dispatch`) or `herdr_dispatch_propose`. The deny set includes at minimum:
 
 - `herdr pane run|send-text|send-keys|close` when the target resolves to another pane;
 - `herdr pane split` (it creates another pane) and `herdr agent start`;
@@ -418,22 +418,28 @@ Herdr notifications occur only for Final Outcomes and Attention Conditions:
 - blocked, failed, overdue, malformed, result-missing, target-lost, target-moved, monitoring-paused, unacknowledged, delivery-unverified: sound `request`;
 - cancelled: sound `none`.
 
-Pi shows a one-line widget below the editor while records are active, for example `dispatches: 2 active · 1 attention`. It does not modify the existing custom footer.
+Pi shows a one-line widget below the editor while records are active, for example `dispatches: 2 running · 1 attention · alt+h manager`. It does not modify the existing custom footer. Human-facing rows, notifications, confirmations, and result cards lead with sanitized Agent/task display data rather than correlation IDs; canonical IDs remain in protocol, Registry, audit, model data, completion values, and explicit technical details.
 
 ## User interface
 
 ### Commands
 
-- `/herdr-agents` — Agent metadata from the current Workspace Scope only.
-- `/herdr-dispatch` — manual proposal wizard.
-- `/herdr-dispatches` — text list of current-workspace records and valid follow-up command hints; an explicit global view is for lease diagnosis only.
-- `/herdr-dispatch-reply <id>` — previewed reply for an Active Dispatch with attention.
-- `/herdr-dispatch-cancel <id>` — previewed normal cancellation.
-- `/herdr-dispatch-resolve <id>` — double-confirmed manual/emergency resolution.
-- `/herdr-agent-output <target> [lines]` — one bounded, untrusted-framed output inspection.
-- `/herdr-dispatch-setup` — optional, per-integration installation prompts.
+Every command keeps its descriptive long name for compatibility and registers a compact, readable `hd-*` interactive alias:
+
+- `/hd-agents` (`/herdr-agents`) — Agent metadata from the current Workspace Scope only.
+- `/hd-new` (`/herdr-dispatch`) — manual proposal wizard.
+- `/hd-manager` (`/herdr-dispatches`) — interactive current-workspace Dispatch Manager; `alt+h` opens the same panel. It groups attention, running, and delivering records, keeps a small current-Origin settled fold, and offers one-shot `r`/`R` output reads framed as untrusted.
+- `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — filtered task selection followed by a previewed reply for an Active Dispatch with attention.
+- `/hd-cancel [id-or-prefix]` (`/herdr-dispatch-cancel`) — filtered task selection followed by a previewed normal cancellation.
+- `/hd-resolve [id-or-prefix]` (`/herdr-dispatch-resolve`) — current-workspace task selection followed by manual or double-confirmed emergency resolution.
+- `/hd-output <target> [lines]` (`/herdr-agent-output`) — one bounded, untrusted-framed output inspection.
+- `/hd-setup` (`/herdr-dispatch-setup`) — optional, per-integration installation prompts.
 
 There is no automatic force-cancel command in V1.
+
+The optional selector is an advanced escape hatch. Exact IDs win; otherwise a prefix must resolve unambiguously across retained current-workspace records. Zero matches fail closed, multiple matches require explicit human selection, and a settled match reports its recorded outcome. No `latest`, `last`, or ordinal alias is accepted. Reply and cancellation candidates remain exact-Origin only; foreign-Origin records expose only emergency resolution.
+
+The manager is live: `DispatchRuntime.onStateChanged()` requests a render after Registry-backed changes and a 30-second tick refreshes relative time. Selection is retained by canonical ID internally. Output inspection is never automatic or streamed: `r` performs one 50-line read and `R` one 200-line read, each timestamped and bounded.
 
 ### Model tools
 
