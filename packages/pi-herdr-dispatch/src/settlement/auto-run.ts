@@ -44,10 +44,14 @@ export interface AutoRunPendingDispatch {
   id: string;
   autoRunDepth: number;
   wakeOnSettle: boolean;
+  /** When this dispatch settled; used to ignore results that settled before arming. */
+  settledAt?: number;
 }
 
 export interface AutoRunDeliveryBatch {
   armed: boolean;
+  /** When Auto Run was armed for this session; results settled at or before it never wake. */
+  armedAt?: number;
   maxAutoRunDepth: number;
   pending: readonly AutoRunPendingDispatch[];
   deliver(dispatchId: string, wake?: { preamble: string }): AutoRunDeliveryStatus;
@@ -56,15 +60,14 @@ export interface AutoRunDeliveryBatch {
 
 /**
  * Serializes settlement wakes so that at most one Auto Run turn is ever in
- * flight (Pi's one-at-a-time followUp mode would otherwise queue one turn per
- * message, and a queued turn cannot be recalled by /hd-auto off).
- *
- * Wake-eligible results are held pending while any turn runs and are released
- * as one batch when the run fully settles: all but the last append quietly
- * (an idle Pi appends nextTurn messages immediately), the last carries the
- * preamble and triggers the turn, so a burst coalesces into a single turn
- * whose depth is max(batch depths) + 1. The marker therefore brackets exactly
- * the triggered Auto Run turn; proposals in an unrelated user turn stay depth 0.
+ * flight. Pi delivers follow-up messages one-at-a-time and only flushes queued
+ * `nextTurn` messages on the next user prompt, so results cannot be batched into
+ * a single triggered turn; instead each wake-eligible result triggers its own
+ * turn, strictly one at a time. While any turn runs (ours or the user's) every
+ * wake-eligible result is held fully pending, so `/hd-auto off` can still stop
+ * the rest — only the already-running turn survives. The marker brackets exactly
+ * the triggered turn (recorded here, cleared on `agent_settled`), so proposals in
+ * an unrelated user turn stay depth 0.
  */
 export class AutoRunCoordinator {
   #turnActive = false;
@@ -93,15 +96,19 @@ export class AutoRunCoordinator {
   }
 
   deliverPending(batch: AutoRunDeliveryBatch): void {
-    const wakeBatch: AutoRunPendingDispatch[] = [];
+    let firstWake: { dispatch: AutoRunPendingDispatch; nextDepth: number; remainingBudget: number } | undefined;
     for (const dispatch of batch.pending) {
-      const decision = decideSettlementWake({
-        armed: batch.armed,
-        dispatch,
-        maxAutoRunDepth: batch.maxAutoRunDepth,
-      });
+      const armed = batch.armed && wokeAfterArming(dispatch, batch.armedAt);
+      const decision = decideSettlementWake({ armed, dispatch, maxAutoRunDepth: batch.maxAutoRunDepth });
       if (decision.wake) {
-        wakeBatch.push(dispatch);
+        // Strict one-at-a-time: remember only the oldest wake-eligible result.
+        // The rest stay pending and are re-evaluated after this turn settles, so
+        // a burst becomes a sequence of single-result turns, not one queued pile.
+        firstWake ??= {
+          dispatch,
+          nextDepth: decision.nextDepth,
+          remainingBudget: decision.remainingBudget,
+        };
         continue;
       }
       if (decision.reason === "depth-exhausted" && !this.#exhaustionNotified.has(dispatch.id)) {
@@ -111,24 +118,32 @@ export class AutoRunCoordinator {
       batch.deliver(dispatch.id);
     }
 
-    if (wakeBatch.length === 0) return;
-    // While a turn runs or a wake is already in flight, wake-eligible results
-    // stay fully pending (not even quietly sent: a message queued mid-turn
-    // could no longer be upgraded to a wake later). noteRunSettled's caller
-    // re-runs delivery, so nothing stalls.
+    if (!firstWake) return;
+    // Hold every wake-eligible result while a turn runs (ours or the user's) or a
+    // wake is already in flight. noteRunSettled's caller re-runs delivery.
     if (this.#turnActive || this.#wakeDepth !== undefined) return;
 
-    const nextDepth = Math.max(...wakeBatch.map((dispatch) => dispatch.autoRunDepth)) + 1;
-    const remainingBudget = batch.maxAutoRunDepth - nextDepth;
-    const trigger = wakeBatch.at(-1)!;
-    for (const dispatch of wakeBatch.slice(0, -1)) batch.deliver(dispatch.id);
-    this.#wakeDepth = nextDepth;
-    const status = batch.deliver(trigger.id, {
-      preamble: buildAutoRunPreamble(Math.max(0, remainingBudget)),
-    });
-    // Nothing new was sent, so no turn will start and no bracket is open.
+    this.#wakeDepth = firstWake.nextDepth;
+    let status: AutoRunDeliveryStatus;
+    try {
+      status = batch.deliver(firstWake.dispatch.id, {
+        preamble: buildAutoRunPreamble(Math.max(0, firstWake.remainingBudget)),
+      });
+    } catch (error) {
+      // Delivery failed before a turn could start: release the bracket so a later
+      // settlement is not permanently blocked by a stale wake marker.
+      this.#wakeDepth = undefined;
+      throw error;
+    }
+    // Nothing new was sent, so no turn started and no bracket is open.
     if (status === "already-delivered") this.#wakeDepth = undefined;
   }
+}
+
+/** A result only wakes if it settled strictly after Auto Run was armed. */
+function wokeAfterArming(dispatch: AutoRunPendingDispatch, armedAt: number | undefined): boolean {
+  if (armedAt === undefined) return true;
+  return dispatch.settledAt !== undefined && dispatch.settledAt > armedAt;
 }
 
 /**

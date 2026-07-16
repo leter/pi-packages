@@ -186,12 +186,16 @@ export class DispatchRuntime {
         if (this.autoRunState()?.armed) await this.#notifyAutoRunArmedOnStart();
         await this.deliverPendingContext(ctx);
         if (ctx.mode === "tui") {
-          // Settlements written by other processes (emergency resolution) have
-          // no in-process event; a bounded poll keeps an armed idle Origin wakeable.
-          this.#pendingDeliveryTimer = setInterval(
-            () => void this.deliverPendingContext(ctx).catch(() => undefined),
-            config.livenessPollMs,
-          );
+          // Settlements written by other processes (emergency resolution) have no
+          // in-process event; while Auto Run is armed a poll keeps an idle Origin
+          // wakeable. When disarmed the poll does nothing — agent_end delivery on
+          // the user's next turn already drains the quiet queue. It reuses
+          // livenessPollMs (1–60s), so the cadence follows that setting.
+          this.#pendingDeliveryTimer = setInterval(() => {
+            if (this.autoRunState()?.armed) {
+              void this.deliverPendingContext(ctx).catch(() => undefined);
+            }
+          }, config.livenessPollMs);
           this.#pendingDeliveryTimer.unref();
         }
       }
@@ -212,14 +216,15 @@ export class DispatchRuntime {
     if (!registry) return;
     const context = this.#contextPort(ctx);
     const sessionId = ctx.sessionManager.getSessionId();
-    const armed =
-      this.#mutationUnavailableReason === "" && registry.isAutoRunArmed(sessionId);
+    const armedAt =
+      this.#mutationUnavailableReason === "" ? registry.autoRunArmedAt(sessionId) : undefined;
     const pending = (onlyDispatchId
       ? [registry.getDispatch(onlyDispatchId)].filter((item) => item !== undefined)
       : registry.listPendingContextDelivery(sessionId)
     ).filter((dispatch) => dispatch.originSessionId === sessionId);
     this.#autoRun.deliverPending({
-      armed,
+      armed: armedAt !== undefined,
+      ...(armedAt === undefined ? {} : { armedAt }),
       maxAutoRunDepth: this.#config.maxAutoRunDepth,
       pending,
       deliver: (dispatchId, wake) => this.#contextDelivery!.deliver(dispatchId, context, wake),
