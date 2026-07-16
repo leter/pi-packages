@@ -422,7 +422,7 @@ Every command keeps its descriptive long name for compatibility and registers a 
 
 - `/hd-agents` (`/herdr-agents`) — Agent metadata from the current Workspace Scope only.
 - `/hd-new` (`/herdr-dispatch`) — manual dispatch wizard; completion sends immediately without a final confirmation prompt.
-- `/hd-manager` (`/herdr-dispatches`) — interactive current-workspace Dispatch Manager; `alt+h` opens the same panel. It renders as a rounded framed panel (title and counts embedded in the top border, key hints in the bottom border, display-width-aware for CJK), groups attention, running, and delivering records, keeps a small current-Origin settled fold, and offers one-shot `r`/`R` output reads framed as untrusted.
+- `/hd-manager` (`/herdr-dispatches`) — interactive current-workspace Dispatch Manager; `alt+h` opens the same panel. It renders as a rounded framed panel (title and counts embedded in the top border, key hints in the bottom border, display-width-aware for CJK), groups attention, running, and delivering records, keeps a small current-Origin settled fold, and offers one-shot `r`/`R` output reads framed as untrusted. A settled record's detail offers `f` — a Follow-up Dispatch: a brand-new Automatic Dispatch to the same target through the full typed path (settlement is never reopened).
 - `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — filtered task selection followed by a previewed reply for an Active Dispatch with attention.
 - `/hd-cancel [id-or-prefix]` (`/herdr-dispatch-cancel`) — filtered task selection followed by a previewed normal cancellation.
 - `/hd-resolve [id-or-prefix]` (`/herdr-dispatch-resolve`) — current-workspace task selection followed by manual or double-confirmed emergency resolution.

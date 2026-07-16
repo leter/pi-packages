@@ -86,6 +86,7 @@ State glyphs pair a symbol, a theme color, and a label, so no state relies on co
 | `y` | Reply (shown only for an Active Dispatch with attention from this Origin Session) |
 | `c` | Request cancellation (never sends `Ctrl+C` to the target) |
 | `v` | Resolve manually; foreign-Origin records show the emergency-resolution label |
+| `f` | Follow-up dispatch (settled records only): start a fresh automatic dispatch to the same target through the full typed path |
 | `D` | Toggle technical details (full dispatch ID, terminal, origin, workspace) |
 | `Esc` or `←` | Back to the list |
 
@@ -93,7 +94,7 @@ Action keys only appear when the record's lifecycle, attention state, and Origin
 
 Typical flow: dispatch work with `/hd-new`, watch the widget counts below the editor, press `alt+h` when something needs attention, open the record, read its recent output with `r`, then choose reply, cancel, or resolve from the detail screen.
 
-A settled result is not silently done: besides the one-shot notification, it counts as `✓ N 已完成` in the widget and sits in the `已完成 · 未读` Manager group until you open its detail, which marks it seen and folds it into the settled history.
+A settled result is not silently done: besides the one-shot notification, it counts as `✓ N 已完成` in the widget and sits in the `已完成 · 未读` Manager group until you open its detail, which marks it seen and folds it into the settled history. From that detail, `f` seeds a follow-up dispatch to the same Agent — a brand-new dispatch (settlement is never reopened) that rides on the target pane's surviving conversation context, re-validated for eligibility, occupancy, and leases like any other.
 
 Dispatch is automatic by default in TUI mode. `herdr_dispatch_propose` and a completed `/hd-new` wizard build one immutable outbound message and send it without a proposal confirmation, grant setup, count limit, expiry, or renewal. The typed path still revalidates current-workspace target identity, status provenance, cwd/canonical worktree, occupancy, leases, and concurrency before durable intent and delivery. Non-TUI modes cannot reserve, send, reply, cancel, resolve, or monitor.
 
