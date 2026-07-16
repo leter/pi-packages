@@ -312,13 +312,14 @@ describe("themed renderers", () => {
     )!.render(120).join("\n");
     expect(active).toContain("<success>✓</success>");
     const widget = renderDispatchWidget(
-      { delivering: 1, active: 2, attention: 1 },
+      { delivering: 1, active: 2, attention: 1, unseenDone: 1 },
       fakeTheme,
     ).render(200).join("\n");
     expect(widget).toContain("<warning>◌ 1 投递中</warning>");
     expect(widget).toContain("<accent>● 2 运行中</accent>");
     expect(widget).toContain("<warning>▲ 1 待处理</warning>");
-    const quiet = renderDispatchWidget({ delivering: 0, active: 0, attention: 0 }, fakeTheme)
+    expect(widget).toContain("<success>✓ 1 已完成</success>");
+    const quiet = renderDispatchWidget({ delivering: 0, active: 0, attention: 0, unseenDone: 0 }, fakeTheme)
       .render(200)
       .join("\n");
     expect(quiet).toContain("<dim>派发 · alt+h</dim>");

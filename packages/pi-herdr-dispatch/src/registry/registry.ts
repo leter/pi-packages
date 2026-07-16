@@ -628,6 +628,34 @@ export class DispatchRegistry {
     );
   }
 
+  /** Settled dispatches whose result the user has not opened yet, newest first. */
+  listUnseenSettled(targetWorkspaceId: string): readonly StoredDispatch[] {
+    if (!targetWorkspaceId) throw new TypeError("targetWorkspaceId must not be empty");
+    return this.#read("list unseen settled dispatches", () => {
+      const rows = this.#database
+        .prepare(
+          `SELECT * FROM dispatches
+           WHERE lifecycle = 'settled' AND result_seen_at IS NULL AND target_workspace_id = ?
+           ORDER BY settled_at DESC, id DESC LIMIT 50`,
+        )
+        .all(targetWorkspaceId) as unknown as DispatchRow[];
+      return rows.map(mapDispatch);
+    });
+  }
+
+  /** Marks a settled dispatch's result as seen; presentation metadata only. */
+  markResultSeen(dispatchId: string, seenAt: number): void {
+    validateTimestamp(seenAt, "seenAt");
+    this.#mutate("mark dispatch result seen", () => {
+      this.#database
+        .prepare(
+          `UPDATE dispatches SET result_seen_at = ?, updated_at = ?
+           WHERE id = ? AND lifecycle = 'settled' AND result_seen_at IS NULL`,
+        )
+        .run(seenAt, seenAt, dispatchId);
+    });
+  }
+
   listRecentSettled(originSessionId: string, limit: number): readonly StoredDispatch[] {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new RangeError("recent settled limit must be from 1 to 100");
@@ -837,6 +865,7 @@ interface DispatchRow {
   delivery_started_at: number;
   active_at: number | null;
   settled_at: number | null;
+  result_seen_at: number | null;
   updated_at: number;
 }
 
@@ -937,6 +966,9 @@ function mapDispatch(row: DispatchRow): StoredDispatch {
     deliveryStartedAt: row.delivery_started_at,
     ...(row.active_at !== null ? { activeAt: row.active_at } : {}),
     ...(row.settled_at !== null ? { settledAt: row.settled_at } : {}),
+    ...(row.result_seen_at !== null && row.result_seen_at !== undefined
+      ? { resultSeenAt: row.result_seen_at }
+      : {}),
     updatedAt: row.updated_at,
   };
 }

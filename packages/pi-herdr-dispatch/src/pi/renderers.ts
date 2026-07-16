@@ -314,6 +314,7 @@ export interface WidgetCounts {
   delivering: number;
   active: number;
   attention: number;
+  unseenDone: number;
 }
 
 /** Themed one-line widget: counts colored only when they demand attention. */
@@ -324,6 +325,7 @@ export function renderDispatchWidget(counts: WidgetCounts, theme: Theme): Text {
     copy.delivering ? paint("warning", `◌ ${copy.delivering}`) : "",
     copy.running ? paint("accent", `● ${copy.running}`) : "",
     copy.attention ? paint("warning", `${ATTENTION_GLYPH} ${copy.attention}`) : "",
+    copy.done ? paint("success", `✓ ${copy.done}`) : "",
   ].filter(Boolean);
   if (segments.length === 0) {
     return new Text(paint("dim", UI_COPY.presentation.widgetQuiet()), 0, 0);

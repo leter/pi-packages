@@ -40,6 +40,8 @@ export interface DispatchViewPorts {
   listAttention(dispatchId: string): readonly AttentionRecord[];
   /** One explicit bounded tail read; lines is 50 or 200. */
   inspect(terminalId: string, lines: number): Promise<{ text: string }>;
+  /** Marks a settled record's result as seen when its detail is opened. */
+  markResultSeen?(dispatchId: string): void;
   onStateChanged(listener: () => void): () => void;
   now?(): number;
 }
@@ -155,6 +157,7 @@ export class DispatchViewComponent implements Component {
         this.#screen = { kind: "detail", dispatchId: this.#selectedId };
         this.#output = { status: "none" };
         this.#showTechnical = false;
+        this.#markSeenIfUnseen(this.#selectedId);
       }
       return;
     }
@@ -227,6 +230,18 @@ export class DispatchViewComponent implements Component {
       ),
       chrome: detailChrome(dispatch, attention, snapshot.originSessionId),
     };
+  }
+
+  /** Viewing a settled result is what marks it seen (presentation metadata only). */
+  #markSeenIfUnseen(dispatchId: string): void {
+    try {
+      const dispatch = this.#ports.getDispatch(dispatchId);
+      if (dispatch?.lifecycle === "settled" && dispatch.resultSeenAt === undefined) {
+        this.#ports.markResultSeen?.(dispatchId);
+      }
+    } catch {
+      // A failed Registry read never crashes input handling.
+    }
   }
 
   #currentDispatch(): StoredDispatch | undefined {

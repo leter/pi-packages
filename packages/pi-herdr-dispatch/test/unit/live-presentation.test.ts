@@ -32,6 +32,7 @@ describe("dispatch widget", () => {
     ];
     const registry = {
       listUnsettledInWorkspace: () => unsettled,
+      listUnseenSettled: () => [],
       listAttention: (id: string) =>
         id === "hd_1"
           ? [
@@ -94,6 +95,7 @@ describe("dispatch widget", () => {
       listUnsettledInWorkspace: () => [
         { id: "hd_1", lifecycle: "active", originSessionId: "session-origin" },
       ],
+      listUnseenSettled: () => [],
       listAttention: () => [{ condition }],
     } as unknown as DispatchRegistry;
 
@@ -109,6 +111,7 @@ describe("dispatch widget", () => {
         { id: "hd_delivering", lifecycle: "delivering", originSessionId: "session-origin" },
         { id: "hd_active", lifecycle: "active", originSessionId: "session-origin" },
       ],
+      listUnseenSettled: () => [],
       listAttention: () => [],
     } as unknown as DispatchRegistry;
 
@@ -125,6 +128,7 @@ describe("dispatch widget", () => {
     ]);
     const registry = {
       listUnsettledInWorkspace,
+      listUnseenSettled: () => [],
       listAttention: () => [],
     } as unknown as DispatchRegistry;
 

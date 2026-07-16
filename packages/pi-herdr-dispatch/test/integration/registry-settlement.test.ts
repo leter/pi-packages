@@ -84,6 +84,32 @@ describe("first-wins settlement and active-branch claims", () => {
     expect(registry.listAttention("hd_settle")).toEqual([]);
   });
 
+  it("tracks unseen settled results until their detail is opened", async () => {
+    const [registry] = await registryPair();
+    registry.confirmDeliveryIntent(intent());
+    registry.markActive("hd_settle", 1_100);
+    registry.settle({
+      dispatchId: "hd_settle",
+      outcome: "done",
+      sourceTerminalId: "term_target",
+      rawEnvelope: 'DISPATCH_RESULT {"id":"hd_settle","outcome":"done"}',
+      sanitizedResult: { id: "hd_settle", outcome: "done", summary: "Complete" },
+      kind: "result",
+      settledAt: 2_100,
+    });
+
+    const unseen = registry.listUnseenSettled("w1");
+    expect(unseen.map((dispatch) => dispatch.id)).toEqual(["hd_settle"]);
+    expect(unseen[0]!.resultSeenAt).toBeUndefined();
+
+    registry.markResultSeen("hd_settle", 2_200);
+    expect(registry.listUnseenSettled("w1")).toEqual([]);
+    expect(registry.getDispatch("hd_settle")).toMatchObject({ resultSeenAt: 2_200 });
+
+    registry.markResultSeen("hd_settle", 9_999);
+    expect(registry.getDispatch("hd_settle")).toMatchObject({ resultSeenAt: 2_200 });
+  });
+
   it("accepts settlement directly from durable delivering intent", async () => {
     const [registry] = await registryPair();
     registry.confirmDeliveryIntent(intent());

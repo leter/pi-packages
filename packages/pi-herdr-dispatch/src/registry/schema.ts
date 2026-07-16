@@ -1,4 +1,4 @@
-export const REGISTRY_SCHEMA_VERSION = 3;
+export const REGISTRY_SCHEMA_VERSION = 4;
 
 export const REGISTRY_SCHEMA_V1 = `
 CREATE TABLE dispatches (
@@ -135,4 +135,9 @@ CREATE UNIQUE INDEX automation_grants_active_origin_idx
 
 export const REGISTRY_SCHEMA_V3 = `
 DROP TABLE IF EXISTS automation_grants;
+`;
+
+export const REGISTRY_SCHEMA_V4 = `
+ALTER TABLE dispatches ADD COLUMN result_seen_at INTEGER;
+UPDATE dispatches SET result_seen_at = settled_at WHERE lifecycle = 'settled';
 `;

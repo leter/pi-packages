@@ -177,6 +177,26 @@ describe("dispatch view model", () => {
     expect(hint).not.toContain("c 取消");
   });
 
+  it("shows unseen settled results above the fold until they are viewed", () => {
+    const unseenDone = dispatch({
+      id: "hd_unseen",
+      lifecycle: "settled",
+      finalOutcome: "done",
+      settledAt: 900_000,
+    });
+    const snapshot: DispatchViewSnapshot = {
+      originSessionId: "session_origin",
+      unsettled: [{ dispatch: dispatch({ id: "hd_live" }), attention: [] }],
+      unseenSettled: [unseenDone],
+      settled: [],
+    };
+    const rendered = plainAll(buildListLines(snapshot, "hd_live", false, 1_000_000)).join("\n");
+    expect(rendered).toContain("已完成 · 未读");
+    expect(rendered).toContain("✓");
+    expect(rendered).not.toContain("hd_unseen");
+    expect(selectableIds(snapshot, false)).toEqual(["hd_live", "hd_unseen"]);
+  });
+
   it("keeps settled dispatches folded until requested", () => {
     const snapshot: DispatchViewSnapshot = {
       originSessionId: "session_origin",
@@ -291,7 +311,12 @@ interface Harness {
   inspect: ReturnType<typeof vi.fn>;
   unsubscribe: ReturnType<typeof vi.fn>;
   done: ReturnType<typeof vi.fn>;
-  data: { unsettled: UnsettledEntry[]; settled: StoredDispatch[] };
+  data: {
+    unsettled: UnsettledEntry[];
+    unseenSettled: StoredDispatch[];
+    settled: StoredDispatch[];
+  };
+  markResultSeen: ReturnType<typeof vi.fn>;
 }
 
 function harness(): Harness {
@@ -300,25 +325,33 @@ function harness(): Harness {
       { dispatch: dispatch({ id: "hd_one" }), attention: [] },
       { dispatch: dispatch({ id: "hd_two", targetTerminalId: "term_two_0000000000" }), attention: [] },
     ],
+    unseenSettled: [],
     settled: [],
   };
   const tui = { requestRender: vi.fn() };
   const inspect = vi.fn(async () => ({ text: "agent output line" }));
   const unsubscribe = vi.fn();
   const done = vi.fn();
+  const markResultSeen = vi.fn();
   const ports: DispatchViewPorts = {
-    snapshot: () => ({ originSessionId: "session_origin", unsettled: data.unsettled, settled: data.settled }),
+    snapshot: () => ({
+      originSessionId: "session_origin",
+      unsettled: data.unsettled,
+      unseenSettled: data.unseenSettled,
+      settled: data.settled,
+    }),
     getDispatch: (id) =>
-      [...data.unsettled.map((entry) => entry.dispatch), ...data.settled].find(
+      [...data.unsettled.map((entry) => entry.dispatch), ...data.unseenSettled, ...data.settled].find(
         (candidate) => candidate.id === id,
       ),
     listAttention: (id) => data.unsettled.find((entry) => entry.dispatch.id === id)?.attention ?? [],
     inspect,
+    markResultSeen,
     onStateChanged: () => unsubscribe,
     now: () => 1_000_000,
   };
   const component = new DispatchViewComponent(tui, fakeTheme(), ports, done);
-  return { component, tui, inspect, unsubscribe, done, data };
+  return { component, tui, inspect, unsubscribe, done, data, markResultSeen };
 }
 
 const UP = "\x1b[A";
@@ -410,6 +443,21 @@ describe("dispatch view component", () => {
     }
   });
 
+  it("centers the empty-state message within the framed body", () => {
+    const { component, data } = harness();
+    data.unsettled = [];
+    data.unseenSettled = [];
+    data.settled = [];
+    const message = "没有活跃的派发 · 用 /hd-new 发起一个";
+    const row = component.render(60).find((line) => line.includes(message));
+
+    expect(row).toBeDefined();
+    const messageStart = row!.indexOf(message);
+    expect(visibleWidth(row!.slice(0, messageStart))).toBe(12);
+    expect(visibleWidth(row!.slice(messageStart + message.length))).toBe(12);
+    expect(visibleWidth(row!)).toBe(60);
+  });
+
   it("limits the visible list to ten dispatch rows and supports page navigation", () => {
     const { component, data } = harness();
     data.unsettled = Array.from({ length: 14 }, (_, index) => ({
@@ -424,6 +472,23 @@ describe("dispatch view component", () => {
     output = component.render(120).join("\n");
     expect(output).toContain("Task 9");
     expect(output).not.toContain("Task 0");
+  });
+
+  it("marks an unseen settled result seen once when its detail is opened", () => {
+    const { component, data, markResultSeen } = harness();
+    data.unsettled = [];
+    data.unseenSettled = [
+      dispatch({ id: "hd_unseen", lifecycle: "settled", finalOutcome: "done", settledAt: 900_000 }),
+    ];
+    markResultSeen.mockImplementation((id: string) => {
+      const record = data.unseenSettled.find((candidate) => candidate.id === id);
+      if (record) record.resultSeenAt = 950_000;
+    });
+    component.render(120);
+    component.handleInput(ENTER);
+    component.handleInput(ESCAPE);
+    component.handleInput(ENTER);
+    expect(markResultSeen).toHaveBeenCalledExactlyOnceWith("hd_unseen");
   });
 
   it("uses focused Ctrl+C to close without returning an action", () => {

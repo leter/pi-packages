@@ -53,6 +53,7 @@ function readWidgetCounts(
       ({ dispatch, needsAttention }) => dispatch.lifecycle === "active" && !needsAttention,
     ).length,
     attention: entries.filter(({ needsAttention }) => needsAttention).length,
+    unseenDone: registry.listUnseenSettled(targetWorkspaceId).length,
   };
 }
 

@@ -361,6 +361,14 @@ export class DispatchApplication {
     return this.#registry.listRecentSettled(originSessionId, limit);
   }
 
+  listUnseenSettled(): readonly StoredDispatch[] {
+    return this.#registry.listUnseenSettled(this.#workspaceId);
+  }
+
+  markResultSeen(dispatchId: string, seenAt: number): void {
+    this.#registry.markResultSeen(dispatchId, seenAt);
+  }
+
   async inspectAgent(target: string, requestedLines: number): Promise<{ target: ProposalTarget; text: string }> {
     if (!Number.isSafeInteger(requestedLines) || requestedLines < 1 || requestedLines > MAX_INSPECTION_LINES) {
       throw new RangeError(`inspection lines must be from 1 to ${MAX_INSPECTION_LINES}`);

@@ -32,6 +32,9 @@ export interface UnsettledEntry {
 export interface DispatchViewSnapshot {
   originSessionId: string;
   unsettled: readonly UnsettledEntry[];
+  /** Settled with an unopened result; shown above the settled fold until viewed. */
+  unseenSettled?: readonly StoredDispatch[];
+  /** Recently settled and already seen; excludes unseenSettled records. */
   settled: readonly StoredDispatch[];
 }
 
@@ -121,6 +124,7 @@ export function sortUnsettled(entries: readonly UnsettledEntry[]): UnsettledEntr
 
 export function selectableIds(snapshot: DispatchViewSnapshot, showSettled: boolean): string[] {
   const ids = sortUnsettled(snapshot.unsettled).map((entry) => entry.dispatch.id);
+  ids.push(...(snapshot.unseenSettled ?? []).map((dispatch) => dispatch.id));
   if (showSettled) ids.push(...snapshot.settled.map((dispatch) => dispatch.id));
   return ids;
 }
@@ -175,6 +179,17 @@ export function buildListLines(
     appendGroup(lines, UI_COPY.manager.groupDelivering(), visibleEntries(delivering, visibleIds), selectedId, snapshot.originSessionId, now);
   }
 
+  const unseen = snapshot.unseenSettled ?? [];
+  if (unseen.length > 0) {
+    lines.push({ spans: [] });
+    lines.push({ spans: [span(UI_COPY.manager.groupUnseenSettled(), "success", true)] });
+    for (const dispatch of unseen.filter(
+      (candidate) => visibleIds === undefined || visibleIds.has(candidate.id),
+    )) {
+      lines.push(...settledRows(dispatch, dispatch.id === selectedId, now));
+    }
+  }
+
   if (snapshot.settled.length > 0) {
     lines.push({ spans: [] });
     lines.push({
@@ -190,33 +205,38 @@ export function buildListLines(
       for (const dispatch of snapshot.settled.filter(
         (candidate) => visibleIds === undefined || visibleIds.has(candidate.id),
       )) {
-        const state = outcomeMark(dispatch.finalOutcome ?? "?");
-        const selected = dispatch.id === selectedId;
-        lines.push({
-          selected,
-          spans: [
-            span(selected ? " → " : "   ", "accent", selected),
-            span(`${state.glyph} `, state.color),
-            span(agentDisplayName(dispatch), "text", true),
-            span(` · ${taskSummary(dispatch.task)}`, "text"),
-          ],
-        });
-        lines.push({
-          selected,
-          spans: [
-            span("     ", "dim"),
-            span(state.label, state.color),
-            span(
-              dispatch.settledAt === undefined ? "" : ` · ${relativeAge(dispatch.settledAt, now)}`,
-              "dim",
-            ),
-          ],
-        });
+        lines.push(...settledRows(dispatch, dispatch.id === selectedId, now));
       }
     }
   }
 
   return lines;
+}
+
+function settledRows(dispatch: StoredDispatch, selected: boolean, now: number): ViewLine[] {
+  const state = outcomeMark(dispatch.finalOutcome ?? "?");
+  return [
+    {
+      selected,
+      spans: [
+        span(selected ? " → " : "   ", "accent", selected),
+        span(`${state.glyph} `, state.color),
+        span(agentDisplayName(dispatch), "text", true),
+        span(` · ${taskSummary(dispatch.task)}`, "text"),
+      ],
+    },
+    {
+      selected,
+      spans: [
+        span("     ", "dim"),
+        span(state.label, state.color),
+        span(
+          dispatch.settledAt === undefined ? "" : ` · ${relativeAge(dispatch.settledAt, now)}`,
+          "dim",
+        ),
+      ],
+    },
+  ];
 }
 
 export interface ViewChrome {

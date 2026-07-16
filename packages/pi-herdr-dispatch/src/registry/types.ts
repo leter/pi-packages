@@ -57,6 +57,8 @@ export interface StoredDispatch {
   deliveryStartedAt: number;
   activeAt?: number;
   settledAt?: number;
+  /** When the user opened this settled dispatch's result; unset = unseen. */
+  resultSeenAt?: number;
   updatedAt: number;
 }
 

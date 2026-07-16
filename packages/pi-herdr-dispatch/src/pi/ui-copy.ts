@@ -95,6 +95,7 @@ export interface HumanUiCopy {
     groupAttention(): string;
     groupRunning(): string;
     groupDelivering(): string;
+    groupUnseenSettled(): string;
     settledHeading(count: number, shown: boolean): string;
     listKeybar(settledShown: boolean): string;
     emergencyResolutionRequired(): string;
@@ -139,10 +140,16 @@ export interface HumanUiCopy {
     widgetSeparator(): string;
     widgetManagerHint(): string;
     widgetQuiet(): string;
-    widget(counts: { delivering: number; active: number; attention: number }): {
+    widget(counts: {
+      delivering: number;
+      active: number;
+      attention: number;
+      unseenDone: number;
+    }): {
       delivering?: string;
       running?: string;
       attention?: string;
+      done?: string;
       plain: string;
     };
   };
@@ -361,6 +368,7 @@ export const UI_COPY = Object.freeze({
     groupAttention: () => "待处理",
     groupRunning: () => "运行中",
     groupDelivering: () => "投递中",
+    groupUnseenSettled: () => "已完成 · 未读",
     settledHeading: (count, shown) =>
       shown ? `已结算 · 最近 ${count} 条` : `已结算 · ${count} 条已隐藏 · 按 S 显示`,
     listKeybar: (settledShown) =>
@@ -437,13 +445,15 @@ export const UI_COPY = Object.freeze({
       const delivering = counts.delivering > 0 ? `${counts.delivering} 投递中` : undefined;
       const running = counts.active > 0 ? `${counts.active} 运行中` : undefined;
       const attention = counts.attention > 0 ? `${counts.attention} 待处理` : undefined;
-      const plainSegments = [delivering, running, attention].filter(
+      const done = counts.unseenDone > 0 ? `${counts.unseenDone} 已完成` : undefined;
+      const plainSegments = [delivering, running, attention, done].filter(
         (segment): segment is string => segment !== undefined,
       );
       return {
         delivering,
         running,
         attention,
+        done,
         plain: plainSegments.length === 0 ? "派发 · alt+h" : `派发: ${plainSegments.join(" · ")}`,
       };
     },

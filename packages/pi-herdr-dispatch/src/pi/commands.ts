@@ -133,17 +133,25 @@ export function registerDispatchCommands(
     const ports: DispatchViewPorts = {
       snapshot: () => {
         const dispatches = candidates();
+        const unseenSettled = action ? [] : app.listUnseenSettled();
+        const unseenIds = new Set(unseenSettled.map((dispatch) => dispatch.id));
         return {
           originSessionId,
           unsettled: dispatches.map((dispatch) => ({
             dispatch,
             attention: app.listAttention(dispatch.id),
           })),
-          settled: action ? [] : app.listRecentSettled(originSessionId, SETTLED_DISPLAY_LIMIT),
+          unseenSettled,
+          settled: action
+            ? []
+            : app
+                .listRecentSettled(originSessionId, SETTLED_DISPLAY_LIMIT)
+                .filter((dispatch) => !unseenIds.has(dispatch.id)),
         };
       },
       getDispatch: (dispatchId) => app.getDispatch(dispatchId),
       listAttention: (dispatchId) => app.listAttention(dispatchId),
+      markResultSeen: (dispatchId) => app.markResultSeen(dispatchId, Date.now()),
       inspect: async (terminalId, lines) => ({
         text: (await app.inspectAgent(terminalId, lines)).text,
       }),
