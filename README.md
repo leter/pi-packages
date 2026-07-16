@@ -15,10 +15,12 @@ Each directory under [`packages/`](./packages) is an independent Pi package with
 ## Development
 
 ```bash
-npm install
-npm run check
-npm test
+npm ci
+npm run verify   # type-check + full test suite (scripts/verify.sh)
+npm run doctor   # environment diagnosis (scripts/doctor.sh)
 ```
+
+`scripts/verify.sh` also supports a single package (`verify.sh pi-herdr-dispatch`) and the Herdr live contract tests (`verify.sh live`, inside a Herdr pane). Agent-facing conventions live in [AGENTS.md](./AGENTS.md).
 
 During local development, install a package by absolute path:
 

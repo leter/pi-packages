@@ -9,7 +9,9 @@
   ],
   "scripts": {
     "check": "npm run check --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present",
+    "verify": "bash scripts/verify.sh",
+    "doctor": "bash scripts/doctor.sh"
   },
   "engines": {
     "node": ">=24"
