@@ -47,6 +47,7 @@ class FakeMonitorHerdr implements OriginMonitorHerdrPort {
   text = "";
   targets: HerdrMonitorTarget[] = [];
   readRequests: (50 | 200)[] = [];
+  operations: string[] = [];
   #event?: (event: HerdrMonitorEvent) => void | Promise<void>;
   #state?: (state: HerdrSubscriptionState) => void | Promise<void>;
 
@@ -56,6 +57,7 @@ class FakeMonitorHerdr implements OriginMonitorHerdrPort {
 
   async readTail(paneId: string, lines: 50 | 200): Promise<HerdrPaneRead> {
     this.readRequests.push(lines);
+    this.operations.push(`read:${paneId}:${lines}`);
     return {
       paneId,
       workspaceId: "w-current",
@@ -74,12 +76,19 @@ class FakeMonitorHerdr implements OriginMonitorHerdrPort {
     stateListener?: (state: HerdrSubscriptionState) => void,
   ): Promise<void> {
     this.targets = [...targets];
+    this.operations.push(`subscribe:${targets.map((target) => target.paneId).join(",")}`);
     this.#event = listener;
     this.#state = stateListener;
     await this.emitState({ status: "connected" });
   }
 
   async emit(event: HerdrMonitorEvent): Promise<void> {
+    if (
+      (event.type === "agent-status-changed" || event.type === "output-matched") &&
+      !this.targets.some((target) => target.paneId === event.paneId)
+    ) {
+      return;
+    }
     await this.#event?.(event);
   }
 
@@ -356,9 +365,10 @@ describe("OriginMonitor", () => {
     monitor.stop();
   });
 
-  it("re-resolves a moved terminal and persists only its fresh pane route", async () => {
+  it("re-anchors target subscriptions after a move and handles completion on the fresh route", async () => {
     const { registry, herdr, monitor } = await harness();
     await monitor.start();
+    herdr.operations.length = 0;
     herdr.resolved = {
       pane: { ...pane, paneId: "p-moved" },
       agent: { ...pane, paneId: "p-moved", screenDetectionSkipped: true },
@@ -373,6 +383,50 @@ describe("OriginMonitor", () => {
 
     expect(registry.getDispatch("hd_monitor")).toEqual(
       expect.objectContaining({ targetTerminalId: "term-target", targetPaneId: "p-moved" }),
+    );
+    expect(herdr.targets).toEqual([{ paneId: "p-moved", correlationId: "hd_monitor" }]);
+    expect(herdr.operations).toEqual(["read:p-moved:200", "subscribe:p-moved"]);
+
+    herdr.text = 'DISPATCH_RESULT {"id":"hd_monitor","outcome":"done","summary":"Complete"}';
+    await herdr.emit({
+      type: "agent-status-changed",
+      paneId: "p-moved",
+      workspaceId: "w-current",
+      status: "done",
+    });
+
+    expect(registry.getDispatch("hd_monitor")).toEqual(
+      expect.objectContaining({ lifecycle: "settled", finalOutcome: "done" }),
+    );
+    monitor.stop();
+  });
+
+  it("recovers an unmatched status from a stale target subscription instead of dropping it", async () => {
+    const { registry, herdr, clock, monitor } = await harness();
+    await monitor.start();
+    registry.updateTargetRoute("hd_monitor", "p-moved", clock.now());
+    herdr.resolved = {
+      pane: { ...pane, paneId: "p-moved" },
+      agent: { ...pane, paneId: "p-moved", screenDetectionSkipped: true },
+    };
+    herdr.operations.length = 0;
+    herdr.text = "target is blocked";
+
+    await herdr.emit({
+      type: "agent-status-changed",
+      paneId: "p-target",
+      workspaceId: "w-current",
+      status: "blocked",
+    });
+
+    expect(herdr.targets).toEqual([{ paneId: "p-moved", correlationId: "hd_monitor" }]);
+    expect(herdr.operations).toEqual([
+      "read:p-moved:200",
+      "subscribe:p-moved",
+      "read:p-moved:50",
+    ]);
+    expect(registry.listAttention("hd_monitor")).toContainEqual(
+      expect.objectContaining({ condition: "blocked-runtime" }),
     );
     monitor.stop();
   });

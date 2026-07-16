@@ -8,7 +8,7 @@ import {
 } from "../domain/worktree-audit.js";
 import { hasDeliveryEcho } from "../herdr/delivery.js";
 import type { ResolvedHerdrTarget } from "../herdr/adapter.js";
-import type { HerdrPaneRead } from "../herdr/protocol.js";
+import type { HerdrAgentStatus, HerdrPaneRead } from "../herdr/protocol.js";
 import type {
   HerdrMonitorEvent,
   HerdrMonitorTarget,
@@ -151,8 +151,11 @@ export class OriginMonitor {
     for (const dispatch of this.#dispatches()) await this.#catchUp(dispatch);
   }
 
-  async #catchUp(dispatch: StoredDispatch): Promise<void> {
-    const resolved = await this.#resolve(dispatch);
+  async #catchUp(
+    dispatch: StoredDispatch,
+    resolvedTarget?: ResolvedHerdrTarget,
+  ): Promise<void> {
+    const resolved = resolvedTarget ?? await this.#resolve(dispatch);
     if (!resolved) {
       await this.#attention(dispatch.id, "target-lost", { terminalId: dispatch.targetTerminalId });
       return;
@@ -186,6 +189,8 @@ export class OriginMonitor {
           const settled = await this.#processRead(dispatch, event.read, false);
           if (!settled) this.#beginResultRecheck(dispatch.id);
         }
+      } else {
+        await this.#recoverUnmatchedStatusEvent(event.paneId);
       }
       return;
     }
@@ -202,30 +207,61 @@ export class OriginMonitor {
       return;
     }
     const dispatch = this.#dispatches().find((item) => item.targetPaneId === event.paneId);
-    if (!dispatch) return;
-    if (event.status === "working") {
+    if (!dispatch) {
+      await this.#recoverUnmatchedStatusEvent(event.paneId, event.status);
+      return;
+    }
+    await this.#handleStatusEvent(dispatch, event.status);
+  }
+
+  async #handleStatusEvent(dispatch: StoredDispatch, status: HerdrAgentStatus): Promise<void> {
+    if (status === "working") {
       this.#acknowledged.add(dispatch.id);
       this.#clearAttentionBenign(dispatch.id, "unacknowledged");
       return;
     }
-    if (event.status === "blocked") {
+    if (status === "blocked") {
       const tail = await this.#herdr.readTail(dispatch.targetPaneId, 50);
       await this.#attention(dispatch.id, "blocked-runtime", { tail: tail.text, lines: 50 });
       return;
     }
-    if (event.status === "idle" || event.status === "done") {
+    if (status === "idle" || status === "done") {
       const tail = await this.#herdr.readTail(dispatch.targetPaneId, 200);
       if (!(await this.#processRead(dispatch, tail))) {
-        await this.#attention(dispatch.id, "result-missing", { status: event.status });
+        await this.#attention(dispatch.id, "result-missing", { status });
       }
     }
   }
 
   async #handlePossibleRouteChange(dispatch: StoredDispatch): Promise<void> {
+    const subscribedPaneId = this.#targets.find(
+      (target) => target.correlationId === dispatch.id,
+    )?.paneId;
     const resolved = await this.#resolve(dispatch);
     if (!resolved) {
       await this.#attention(dispatch.id, "target-lost", { terminalId: dispatch.targetTerminalId });
+      return;
     }
+    if (dispatch.targetPaneId === resolved.pane.paneId && subscribedPaneId === resolved.pane.paneId) return;
+    const current = this.#registry.getDispatch(dispatch.id);
+    if (!current || current.lifecycle === "settled") return;
+    await this.#catchUp(current, resolved);
+    await this.refresh();
+  }
+
+  async #recoverUnmatchedStatusEvent(
+    paneId: string,
+    status?: HerdrAgentStatus,
+  ): Promise<void> {
+    const target = this.#targets.find((candidate) => candidate.paneId === paneId);
+    if (!target) return;
+    const dispatch = this.#registry.getDispatch(target.correlationId);
+    if (!dispatch || dispatch.lifecycle === "settled") return;
+    await this.#handlePossibleRouteChange(dispatch);
+    if (status === undefined) return;
+    const current = this.#registry.getDispatch(dispatch.id);
+    if (!current || current.lifecycle === "settled" || this.#isSettlementPaused(current.id)) return;
+    await this.#handleStatusEvent(current, status);
   }
 
   async #handleConnectionState(state: HerdrSubscriptionState): Promise<void> {
