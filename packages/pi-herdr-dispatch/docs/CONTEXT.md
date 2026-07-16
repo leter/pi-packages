@@ -156,6 +156,10 @@ _Avoid_: ID table, second dispatch panel, autonomous coordinator, global workspa
 The indivisible recording of a Final Outcome, release of Target Occupancy and any Worktree Write Lease, and queuing of the Sanitized Dispatch Result for the Origin Session's next user-initiated turn without starting a model turn.
 _Avoid_: autonomous continuation, partial release
 
+**Unseen Settlement**:
+A settled dispatch whose result the user has not opened in the Dispatch Manager. It stays ambiently visible (widget count, above-the-fold Manager group) until its detail is opened, which records the seen timestamp — presentation metadata, never lifecycle state ([ADR 0012](./adr/0012-unseen-settlement.md)).
+_Avoid_: lifecycle state, reservation holder, automatic expiry
+
 **Dispatch Reply**:
 A separately confirmed follow-up sent to an unsettled dispatch with attention, retaining the same correlation ID and reservations.
 _Avoid_: new dispatch, autonomous reply
@@ -227,3 +231,4 @@ Product copy (UI strings, notifications) is Simplified Chinese ([ADR 0011](./adr
 | Manual Resolution | 手动处理 |
 | Emergency Resolution | 应急处理 |
 | deadline | 截止 |
+| Unseen Settlement | 已完成 · 未读 |
