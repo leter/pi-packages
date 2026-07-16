@@ -314,17 +314,37 @@ describe("themed renderers", () => {
     )!.render(120).join("\n");
     expect(active).toContain("<success>✓</success>");
     const widget = renderDispatchWidget(
-      { delivering: 1, active: 2, attention: 1, unseenDone: 1 },
+      { delivering: 1, active: 2, attention: 1, unseenDone: 1, autoRunArmed: false },
       fakeTheme,
     ).render(200).join("\n");
     expect(widget).toContain("<warning>◌ 1 投递中</warning>");
     expect(widget).toContain("<accent>● 2 运行中</accent>");
     expect(widget).toContain("<warning>▲ 1 待处理</warning>");
     expect(widget).toContain("<success>✓ 1 已完成</success>");
-    const quiet = renderDispatchWidget({ delivering: 0, active: 0, attention: 0, unseenDone: 0 }, fakeTheme)
+    const quiet = renderDispatchWidget({ delivering: 0, active: 0, attention: 0, unseenDone: 0, autoRunArmed: false }, fakeTheme)
       .render(200)
       .join("\n");
     expect(quiet).toContain("<dim>派发 · alt+h</dim>");
     expect(quiet).not.toContain("运行中");
+  });
+
+  it("keeps an armed Auto Run visible in the widget, even with nothing running", () => {
+    const armedQuiet = renderDispatchWidget(
+      { delivering: 0, active: 0, attention: 0, unseenDone: 0, autoRunArmed: true },
+      fakeTheme,
+    )
+      .render(200)
+      .join("\n");
+    expect(armedQuiet).toContain("<accent>⚡自动</accent>");
+    expect(armedQuiet).toContain("alt+h");
+
+    const armedBusy = renderDispatchWidget(
+      { delivering: 0, active: 2, attention: 0, unseenDone: 0, autoRunArmed: true },
+      fakeTheme,
+    )
+      .render(200)
+      .join("\n");
+    expect(armedBusy).toContain("<accent>⚡自动</accent>");
+    expect(armedBusy).toContain("<accent>● 2 运行中</accent>");
   });
 });

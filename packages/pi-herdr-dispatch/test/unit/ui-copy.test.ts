@@ -82,6 +82,8 @@ describe("human UI copy catalog", () => {
       "enter 详情 · c 清空未读 · s 显示已结算",
     );
     expect(UI_COPY.manager.heading(0, 0, 0)).toBe("");
+    expect(UI_COPY.manager.heading(2, 0, 0, true)).toBe("⚡自动 · 2 运行中");
+    expect(UI_COPY.manager.heading(0, 0, 0, true)).toBe("⚡自动");
     expect(UI_COPY.manager.technicalLabel("workspace")).toBe("工作区");
   });
 

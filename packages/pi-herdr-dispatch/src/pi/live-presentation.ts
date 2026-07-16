@@ -62,6 +62,7 @@ function readWidgetCounts(
     ).length,
     attention: entries.filter(({ needsAttention }) => needsAttention).length,
     unseenDone: registry.listUnseenSettled(targetWorkspaceId).length,
+    autoRunArmed: registry.isAutoRunArmed(originSessionId),
   };
 }
 

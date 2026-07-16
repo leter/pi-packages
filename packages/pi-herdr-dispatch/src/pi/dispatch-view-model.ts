@@ -37,6 +37,8 @@ export interface DispatchViewSnapshot {
   unseenSettled?: readonly StoredDispatch[];
   /** Recently settled and already seen; excludes unseenSettled records. */
   settled: readonly StoredDispatch[];
+  /** Whether this Origin Session has Auto Run armed; shown in the top border. */
+  autoRunArmed?: boolean;
 }
 
 export type OutputReadState =
@@ -249,7 +251,12 @@ export function listChrome(snapshot: DispatchViewSnapshot, showSettled: boolean)
   const delivering = entries.filter(
     (entry) => entry.attention.length === 0 && entry.dispatch.lifecycle === "delivering",
   ).length;
-  const counts = UI_COPY.manager.heading(active, delivering, attention);
+  const counts = UI_COPY.manager.heading(
+    active,
+    delivering,
+    attention,
+    snapshot.autoRunArmed ?? false,
+  );
   return {
     title: UI_COPY.manager.title(),
     ...(counts === "" ? {} : { counts, countsColor: attention > 0 ? "warning" : "muted" }),

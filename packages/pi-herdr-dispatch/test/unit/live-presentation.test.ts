@@ -32,6 +32,7 @@ describe("dispatch widget", () => {
       { id: "hd_2", lifecycle: "delivering", originSessionId: "session-origin" },
     ];
     const registry = {
+      isAutoRunArmed: () => false,
       listUnsettledInWorkspace: () => unsettled,
       listUnseenSettled: () => [],
       listAttention: (id: string) =>
@@ -90,7 +91,8 @@ describe("dispatch widget", () => {
         { id: "hd_1", lifecycle: "active", originSessionId: "session-origin" },
       ];
       const registry = {
-        listUnsettledInWorkspace: () => unsettled,
+        isAutoRunArmed: () => false,
+      listUnsettledInWorkspace: () => unsettled,
         listUnseenSettled: () => [],
         listAttention: () => [],
       } as unknown as DispatchRegistry;
@@ -126,6 +128,7 @@ describe("dispatch widget", () => {
   ] as const)("groups an active dispatch with %s under attention, not running", (condition) => {
     const presentation = ui();
     const registry = {
+      isAutoRunArmed: () => false,
       listUnsettledInWorkspace: () => [
         { id: "hd_1", lifecycle: "active", originSessionId: "session-origin" },
       ],
@@ -141,6 +144,7 @@ describe("dispatch widget", () => {
   it("keeps clean delivering and active lifecycle counts distinct", () => {
     const presentation = ui();
     const registry = {
+      isAutoRunArmed: () => false,
       listUnsettledInWorkspace: () => [
         { id: "hd_delivering", lifecycle: "delivering", originSessionId: "session-origin" },
         { id: "hd_active", lifecycle: "active", originSessionId: "session-origin" },
@@ -161,6 +165,7 @@ describe("dispatch widget", () => {
       { id: "hd_current", lifecycle: "active", originSessionId: "session-origin" },
     ]);
     const registry = {
+      isAutoRunArmed: () => false,
       listUnsettledInWorkspace,
       listUnseenSettled: () => [],
       listAttention: () => [],

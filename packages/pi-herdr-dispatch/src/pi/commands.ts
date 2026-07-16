@@ -244,6 +244,7 @@ export function registerDispatchCommands(
         const unseenIds = new Set(unseenSettled.map((dispatch) => dispatch.id));
         return {
           originSessionId,
+          autoRunArmed: runtime.autoRunState()?.armed ?? false,
           unsettled: dispatches.map((dispatch) => ({
             dispatch,
             attention: app.listAttention(dispatch.id),
@@ -315,6 +316,37 @@ export function registerDispatchCommands(
             (dispatchId) => app.listAttention(dispatchId),
             Date.now(),
           ),
+          "info",
+        );
+      }),
+  });
+
+  registerCommandWithAlias(pi, "herdr-dispatch-auto", "hd-auto", {
+    description: UI_COPY.command.description("auto"),
+    getArgumentCompletions: () => ["on", "off"].map((value) => ({ value, label: value })),
+    handler: async (args, ctx) =>
+      handle(ctx, async () => {
+        const argument = args.trim().toLowerCase();
+        if (argument === "") {
+          const state = runtime.autoRunState();
+          if (!state) {
+            throw new Error(
+              runtime.mutationUnavailableReason ?? UI_COPY.command.runtimeUnavailable(),
+            );
+          }
+          ctx.ui.notify(UI_COPY.command.autoStatus(state.armed, state.maxDepth), "info");
+          return;
+        }
+        if (argument !== "on" && argument !== "off") {
+          throw new Error(UI_COPY.command.autoUsage());
+        }
+        if (ctx.mode !== "tui") throw new Error(UI_COPY.command.autoTuiOnly());
+        runtime.setAutoRunArmed(argument === "on");
+        const state = runtime.autoRunState();
+        ctx.ui.notify(
+          argument === "on"
+            ? UI_COPY.command.autoEnabled(state?.maxDepth ?? 0)
+            : UI_COPY.command.autoDisabled(),
           "info",
         );
       }),

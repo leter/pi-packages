@@ -11,6 +11,7 @@ export type HumanCommand =
   | "new"
   | "create"
   | "manager"
+  | "auto"
   | "reply"
   | "cancel"
   | "resolve"
@@ -99,11 +100,21 @@ export interface HumanUiCopy {
     followupTask(): string;
     redispatchTargetBusy(): string;
     redispatchTargetGone(): string;
+    autoUsage(): string;
+    autoTuiOnly(): string;
+    autoStatus(armed: boolean, maxDepth: number): string;
+    autoEnabled(maxDepth: number): string;
+    autoDisabled(): string;
   };
   readonly manager: {
     title(): string;
     detailTitle(): string;
-    heading(running: number, delivering: number, attention: number): string;
+    heading(
+      running: number,
+      delivering: number,
+      attention: number,
+      autoRunArmed?: boolean,
+    ): string;
     groupAttention(): string;
     groupRunning(): string;
     groupDelivering(): string;
@@ -152,12 +163,15 @@ export interface HumanUiCopy {
     widgetSeparator(): string;
     widgetManagerHint(): string;
     widgetQuiet(): string;
+    widgetAutoRun(): string;
     widget(counts: {
       delivering: number;
       active: number;
       attention: number;
       unseenDone: number;
+      autoRunArmed: boolean;
     }): {
+      autoRun?: string;
       delivering?: string;
       running?: string;
       attention?: string;
@@ -261,6 +275,7 @@ const commandDescriptions: Readonly<Record<HumanCommand, string>> = Object.freez
   new: "使用现有 Agent 创建并立即发送一个 Herdr 派发",
   create: "创建一个新 Agent 并立即发送 Herdr 派发",
   manager: "打开 Herdr 派发管理器",
+  auto: "查看或切换自动运行(结算结果自动唤醒模型)",
   reply: "预览并确认对一个有待处理状况的运行中派发的回复",
   cancel: "预览并确认一次常规取消请求",
   resolve: "经确认后手动或应急处理一个派发",
@@ -389,12 +404,23 @@ export const UI_COPY = Object.freeze({
     followupTask: () => "追加任务(发往同一目标)",
     redispatchTargetBusy: () => "目标 Agent 当前不可用——正在工作、受阻或已被占用。",
     redispatchTargetGone: () => "目标 Agent 已不在当前工作区——它的 pane 可能已被关闭。",
+    autoUsage: () => "用法:/hd-auto [on|off]",
+    autoTuiOnly: () => "自动运行切换仅在 TUI 模式下可用",
+    autoStatus: (armed, maxDepth) =>
+      armed
+        ? `⚡自动运行:已开启 · 深度上限 ${maxDepth}。结算结果会自动唤醒模型;达到深度上限后安静排队等待人工查看。`
+        : "自动运行:已关闭。结算结果会安静排队,等你下一次发言时进入上下文。",
+    autoEnabled: (maxDepth) =>
+      `⚡自动运行已开启(本会话持久,resume 后仍然生效)· 深度上限 ${maxDepth}。用 /hd-auto off 关闭。`,
+    autoDisabled: () =>
+      "自动运行已关闭:之后的结算不再唤醒模型;已在途的唤醒最多还会触发一次。正在运行的回合请用 Esc 中断。",
   },
   manager: {
     title: () => "任务派发",
     detailTitle: () => "派发详情",
-    heading: (running, delivering, attention) =>
+    heading: (running, delivering, attention, autoRunArmed = false) =>
       [
+        autoRunArmed ? "⚡自动" : "",
         running > 0 ? `${running} 运行中` : "",
         delivering > 0 ? `${delivering} 投递中` : "",
         attention > 0 ? `${attention} 待处理` : "",
@@ -484,7 +510,9 @@ export const UI_COPY = Object.freeze({
     widgetSeparator: () => "  ·  ",
     widgetManagerHint: () => "  ·  alt+h",
     widgetQuiet: () => "派发 · alt+h",
+    widgetAutoRun: () => "⚡自动",
     widget: (counts) => {
+      const autoRun = counts.autoRunArmed ? "⚡自动" : undefined;
       const delivering = counts.delivering > 0 ? `${counts.delivering} 投递中` : undefined;
       const running = counts.active > 0 ? `${counts.active} 运行中` : undefined;
       const attention = counts.attention > 0 ? `${counts.attention} 待处理` : undefined;
@@ -492,12 +520,17 @@ export const UI_COPY = Object.freeze({
       const plainSegments = [delivering, running, attention, done].filter(
         (segment): segment is string => segment !== undefined,
       );
+      const label = autoRun ? `派发 ${autoRun}` : "派发";
       return {
+        autoRun,
         delivering,
         running,
         attention,
         done,
-        plain: plainSegments.length === 0 ? "派发 · alt+h" : `派发: ${plainSegments.join(" · ")}`,
+        plain:
+          plainSegments.length === 0
+            ? `${label} · alt+h`
+            : `${label}: ${plainSegments.join(" · ")}`,
       };
     },
   },

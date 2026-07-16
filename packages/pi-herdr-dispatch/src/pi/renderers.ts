@@ -315,12 +315,16 @@ export interface WidgetCounts {
   active: number;
   attention: number;
   unseenDone: number;
+  autoRunArmed: boolean;
 }
 
-/** Themed one-line widget: counts colored only when they demand attention. */
+/** Themed one-line widget: counts colored only when they demand attention; an armed Auto Run stays visible even when quiet. */
 export function renderDispatchWidget(counts: WidgetCounts, theme: Theme): Text {
   const paint = fg(theme);
   const copy = UI_COPY.presentation.widget(counts);
+  const label = copy.autoRun
+    ? `${paint("dim", UI_COPY.presentation.widgetLabel())} ${paint("accent", copy.autoRun)}`
+    : paint("dim", UI_COPY.presentation.widgetLabel());
   const segments = [
     copy.delivering ? paint("warning", `◌ ${copy.delivering}`) : "",
     copy.running ? paint("accent", `● ${copy.running}`) : "",
@@ -328,10 +332,11 @@ export function renderDispatchWidget(counts: WidgetCounts, theme: Theme): Text {
     copy.done ? paint("success", `✓ ${copy.done}`) : "",
   ].filter(Boolean);
   if (segments.length === 0) {
-    return new Text(paint("dim", UI_COPY.presentation.widgetQuiet()), 0, 0);
+    if (!copy.autoRun) return new Text(paint("dim", UI_COPY.presentation.widgetQuiet()), 0, 0);
+    return new Text(`${label}${paint("dim", UI_COPY.presentation.widgetManagerHint())}`, 0, 0);
   }
   return new Text(
-    `${paint("dim", UI_COPY.presentation.widgetLabel())}  ${segments.join(
+    `${label}  ${segments.join(
       paint("dim", UI_COPY.presentation.widgetSeparator()),
     )}${paint("dim", UI_COPY.presentation.widgetManagerHint())}`,
     0,
