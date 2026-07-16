@@ -168,7 +168,7 @@ While running, the monitor:
 - subscribes to `pane.output_matched` for the escaped correlation ID and then reads/parses a bounded pane tail;
 - consumes `agent_status_changed`, `pane.closed`, and `pane.moved` events;
 - uses revision values only as an optional “output advanced” optimization, never as a line cursor or acceptance condition;
-- polls `PaneInfo.cwd` every five seconds and requires two consecutive mismatches before adding `target-moved`;
+- polls target liveness every five seconds and adds `target-lost` when the stored terminal can no longer be resolved;
 - evaluates startup windows and deadlines.
 
 When the Origin Session is closed, no other Pi takes over. Results, notifications, and lease release are delayed; Target Occupancy and Worktree Write Leases remain durable. This is an explicit V1 trade-off.
@@ -241,7 +241,7 @@ Commands that task, create, control, close, or block on another pane are denied 
 - `herdr api snapshot`, redirected to typed, current-Workspace-Scope tools such as `herdr_agents_list`;
 - any non-allowlisted Herdr command whose effect on a foreign pane/resource cannot be proven read-only.
 
-An omitted, focused, name-based, or otherwise ambiguous target is treated as foreign. The current-pane exception is accepted only when the classifier proves the resolved pane ID equals `HERDR_PANE_ID`; it is never inferred from focus. A compound shell command is allowed only when every Herdr invocation in it is classified read-only. A literal Herdr invocation that cannot be parsed is denied rather than guessed safe.
+An omitted, focused, name-based, or otherwise ambiguous target is treated as foreign. The current-pane exception is accepted only when the classifier proves the resolved pane ID equals `HERDR_PANE_ID`; it is never inferred from focus. A compound shell command is allowed only when every Herdr invocation in it is classified read-only. Command launchers (`bash -c`, `eval`, `xargs`, `sudo`, `env`, and similar wrappers) are never unwrapped: any launcher invocation that mentions `herdr` is denied outright, trading occasional false positives for a simpler fail-closed classifier. A literal Herdr invocation that cannot be parsed is denied rather than guessed safe.
 
 This gate preserves the skill's inspection value while preventing its documented tasking workflow from becoming the normal bypass. It is not a shell sandbox: indirection through generated scripts, aliases, alternate binaries, custom tools, direct socket code, or an external terminal may evade classification.
 
@@ -282,7 +282,6 @@ Attention Conditions may coexist:
 - `malformed-result`
 - `result-missing`
 - `target-lost`
-- `target-moved`
 
 Final Outcomes are `done`, `blocked`, `failed`, and `cancelled`. Every Final Outcome settles the dispatch and releases Target Occupancy and any Worktree Write Lease. Continuing after `blocked` requires a new automatic dispatch proposal.
 
@@ -294,7 +293,7 @@ Before a reply is sent, confirmation displays the captured untrusted tail and wa
 
 If the target becomes idle-like (`idle` or `done`) without a valid result, `result-missing` is added. The extension does not nudge or infer completion.
 
-If the terminal ID disappears, `target-lost` is added. If two consecutive five-second polls show `PaneInfo.cwd` outside the confirmed directory/worktree, `target-moved` is added. These pausing Attention Conditions stop normal settlement and retain reservations until manual resolution.
+If the terminal ID disappears, `target-lost` is added. This pausing Attention Condition stops normal settlement and retains reservations until manual resolution.
 
 If the local Herdr socket is unavailable while the Origin Session is active, the stored `monitoring-paused` Attention Condition is added, one notification is emitted, and reconnect uses exponential backoff. No outcome is inferred and no reservation is released.
 
@@ -306,7 +305,7 @@ A normal cancellation is previewed and confirmed through `/herdr-dispatch-cancel
 
 V1 does not send `Ctrl+C`. If normal cancellation does not settle, the UI instructs the user to focus the target pane, interrupt it manually, verify that it is idle-like, then run `/herdr-dispatch-resolve`.
 
-`delivery-unverified`, `result-missing`, `target-lost`, and `target-moved` have no standalone lease-release operation. Manual resolution:
+`delivery-unverified`, `result-missing`, and `target-lost` have no standalone lease-release operation. Manual resolution:
 
 1. shows current target/worktree status and bounded untrusted output;
 2. requires `blocked`, `failed`, or `cancelled` plus a summary; manual resolution never claims `done`;
@@ -408,7 +407,7 @@ Herdr 0.7.3 protocol 16 has no dedicated pane metadata-token field, and independ
 Herdr notifications occur only for Final Outcomes and Attention Conditions:
 
 - `done`: sound `done`;
-- blocked, failed, overdue, malformed, result-missing, target-lost, target-moved, monitoring-paused, unacknowledged, delivery-unverified: sound `request`;
+- blocked, failed, overdue, malformed, result-missing, target-lost, monitoring-paused, unacknowledged, delivery-unverified: sound `request`;
 - cancelled: sound `none`.
 
 Pi shows a one-line widget below the editor while records are active, for example `dispatches: 2 running · 1 attention · alt+h manager`. The widget reads current Registry counts on every render rather than capturing a state snapshot, so an ordinary TUI repaint repairs any missed change notification. Its groups match the Manager: `running` counts only Active Dispatches with no Attention Conditions, `delivering` counts only clean Delivering Dispatches, and `attention` counts affected dispatches rather than summing concurrent conditions. It does not modify the existing custom footer. Human-facing rows, notifications, confirmations, and result cards lead with sanitized Agent/task display data rather than correlation IDs; canonical IDs remain in protocol, Registry, audit, model data, completion values, and explicit technical details.
@@ -474,15 +473,11 @@ Defaults:
   "maxActivePerTargetWorkspace": 4,
   "maxActiveGlobal": 8,
   "retentionDays": 30,
-  "inspectionLines": 50,
-  "maxInspectionLines": 200,
-  "catchUpLines": 200,
-  "cwdPollMs": 5000,
-  "cwdDriftSamples": 2
+  "livenessPollMs": 5000
 }
 ```
 
-Invalid configuration disables state-changing functionality. `catchUpLines` and inspection bounds are requests to Herdr, not guarantees about retained history; a shorter returned tail is accepted and absence never proves non-delivery.
+The inspection bounds (50-line default, 200-line hard limit) and the 200-line catch-up read are fixed constants, not configuration. Invalid configuration disables state-changing functionality. Line bounds are requests to Herdr, not guarantees about retained history; a shorter returned tail is accepted and absence never proves non-delivery.
 
 ## Authoritative Herdr semantics
 
@@ -556,7 +551,7 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 4. Kill the Origin during `delivering`; resume with echo present and with no detectable echo.
 5. Close the Origin while the target finishes; resume and settle from the bounded tail.
 6. Exercise blocked-runtime → confirmed reply → valid result, with the focused-input warning visible.
-7. Exercise overdue, normal cancellation, manual interrupt guidance, result-missing, target-lost, and target-moved.
+7. Exercise overdue, normal cancellation, manual interrupt guidance, result-missing, and target-lost.
 8. Restart Herdr during active work and record identity/history behavior without assuming continuity.
 9. Verify no result triggers a model turn and forks/clones do not claim Origin results.
 10. Verify settlement injects only sanitized results while explicit inspection returns untrusted-framed output.

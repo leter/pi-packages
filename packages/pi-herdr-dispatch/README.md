@@ -1,7 +1,5 @@
 # pi-herdr-dispatch
 
-English | [简体中文](./README.zh-CN.md)
-
 A Pi extension under staged development for automatically dispatching work through a typed, Registry-backed path to coding Agents that already exist in one local Herdr workspace.
 
 > **Status:** Experimental, with Phase 6 acceptance restored. The delivery, result, and widget fixes passed a fresh real Pi/Claude Code/Codex/OpenCode/Droid/Amp/Grok matrix, and automatic-default dispatch passed a post-schema-v3 no-prompt live probe. The package remains `private` at `0.0.0-development`; no package has been published.
@@ -108,11 +106,7 @@ Optional file: `~/.config/pi-herdr-dispatch/config.json`
   "maxActivePerTargetWorkspace": 4,
   "maxActiveGlobal": 8,
   "retentionDays": 30,
-  "inspectionLines": 50,
-  "maxInspectionLines": 200,
-  "catchUpLines": 200,
-  "cwdPollMs": 5000,
-  "cwdDriftSamples": 2
+  "livenessPollMs": 5000
 }
 ```
 
@@ -157,7 +151,7 @@ Reservations remain durable. Resume the exact Origin Session. It resolves stored
 
 Herdr 0.7.3 regenerates terminal IDs. A missing stored terminal becomes `target-lost` even if pane ID, cwd, Agent label, or retained history looks similar. V1 never retargets heuristically; inspect and manually resolve.
 
-### `result-missing`, `target-moved`, or `target-lost`
+### `result-missing` or `target-lost`
 
 Reservations remain held. Review the displayed bounded evidence, then use manual resolution. There is no standalone lease-release command.
 

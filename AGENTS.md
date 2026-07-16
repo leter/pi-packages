@@ -35,5 +35,5 @@ Rules:
 ## Documentation contract
 
 - `CONTEXT-MAP.md` indexes the bounded contexts; each package's `docs/CONTEXT.md` is the terminology authority — use its exact terms in code, docs, and commit messages.
-- User-visible behavior changes must update the package README **and** its translations (e.g. `README.zh-CN.md`) in the same change. The English version is authoritative.
+- User-visible behavior changes must update the package README in the same change.
 - Design-level changes (state vocabulary, lifecycle, safety rules) must update the package's `docs/DESIGN.md`; significant decisions get an ADR under `docs/adr/`.
