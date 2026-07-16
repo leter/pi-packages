@@ -69,7 +69,7 @@ describe("Dispatch Registry migrations and fail-closed opening", () => {
     });
     openRegistries.push(registry);
 
-    expect(registry.health().schemaVersion).toBe(4);
+    expect(registry.health().schemaVersion).toBe(REGISTRY_SCHEMA_VERSION);
     const raw = openRaw(location.path);
     expect(
       raw.prepare("SELECT name FROM sqlite_master WHERE name = 'automation_grants'").get(),
@@ -107,7 +107,7 @@ describe("Dispatch Registry migrations and fail-closed opening", () => {
     });
     openRegistries.push(registry);
 
-    expect(registry.health().schemaVersion).toBe(4);
+    expect(registry.health().schemaVersion).toBe(REGISTRY_SCHEMA_VERSION);
     const raw = openRaw(location.path);
     expect(
       raw.prepare("SELECT name FROM sqlite_master WHERE name = 'automation_grants'").get(),

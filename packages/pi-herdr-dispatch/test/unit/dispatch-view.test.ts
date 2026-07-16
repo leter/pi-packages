@@ -40,7 +40,9 @@ function dispatch(overrides: Partial<StoredDispatch> = {}): StoredDispatch {
     createdAt: 1_000_000,
     confirmedAt: 1_000_000,
     deliveryStartedAt: 1_000_000,
-    updatedAt: 1_000_000,
+    autoRunDepth: 0,
+  wakeOnSettle: true,
+  updatedAt: 1_000_000,
     ...overrides,
   };
 }

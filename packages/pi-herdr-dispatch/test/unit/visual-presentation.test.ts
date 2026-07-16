@@ -51,6 +51,8 @@ const dispatch: StoredDispatch = {
   confirmedAt: 1_000_000,
   deliveryStartedAt: 1_000_000,
   activeAt: 1_000_000,
+  autoRunDepth: 0,
+  wakeOnSettle: true,
   updatedAt: 1_000_000,
 };
 

@@ -145,13 +145,13 @@ export class DispatchRegistry {
             target_workspace_id, target_terminal_id, target_pane_id, target_agent_label,
             target_cwd, worktree_path, mode, lifecycle, task, constraints_json,
             payload, payload_hash, deadline_at, created_at, confirmed_at,
-            delivery_started_at, updated_at
+            delivery_started_at, auto_run_depth, wake_on_settle, updated_at
           ) VALUES (
             :id, :originSessionId, :originSessionFile, :originWorkspaceId,
             :targetWorkspaceId, :targetTerminalId, :targetPaneId, :targetAgentLabel,
             :targetCwd, :worktreePath, :mode, 'delivering', :task, :constraintsJson,
             :payload, :payloadHash, :deadlineAt, :createdAt, :confirmedAt,
-            :deliveryStartedAt, :updatedAt
+            :deliveryStartedAt, :autoRunDepth, :wakeOnSettle, :updatedAt
           )`,
         )
         .run({
@@ -174,6 +174,8 @@ export class DispatchRegistry {
           createdAt: intent.confirmedAt,
           confirmedAt: intent.confirmedAt,
           deliveryStartedAt: intent.confirmedAt,
+          autoRunDepth: intent.autoRunDepth ?? 0,
+          wakeOnSettle: intent.wakeOnSettle === false ? 0 : 1,
           updatedAt: intent.confirmedAt,
         });
 
@@ -719,6 +721,47 @@ export class DispatchRegistry {
     });
   }
 
+  /** Arms Auto Run for one exact Origin Session; idempotent. */
+  armAutoRun(originSessionId: string, armedAt: number): void {
+    if (!originSessionId) throw new TypeError("originSessionId must not be empty");
+    validateTimestamp(armedAt, "armedAt");
+    this.#mutate("arm auto run", () => {
+      const inserted = this.#database
+        .prepare(
+          `INSERT INTO auto_run_sessions(origin_session_id, armed_at)
+           VALUES (?, ?) ON CONFLICT(origin_session_id) DO NOTHING`,
+        )
+        .run(originSessionId, armedAt);
+      if (changes(inserted.changes) === 1) {
+        this.#appendAudit(null, "auto-run-armed", { originSessionId }, armedAt);
+      }
+    });
+  }
+
+  /** Disarms Auto Run: later settlements stop triggering turns; an already-enqueued wake may still fire once. */
+  disarmAutoRun(originSessionId: string, disarmedAt: number): void {
+    if (!originSessionId) throw new TypeError("originSessionId must not be empty");
+    validateTimestamp(disarmedAt, "disarmedAt");
+    this.#mutate("disarm auto run", () => {
+      const deleted = this.#database
+        .prepare("DELETE FROM auto_run_sessions WHERE origin_session_id = ?")
+        .run(originSessionId);
+      if (changes(deleted.changes) === 1) {
+        this.#appendAudit(null, "auto-run-disarmed", { originSessionId }, disarmedAt);
+      }
+    });
+  }
+
+  isAutoRunArmed(originSessionId: string): boolean {
+    if (!originSessionId) throw new TypeError("originSessionId must not be empty");
+    return this.#read("read auto run state", () => {
+      const row = this.#database
+        .prepare("SELECT armed_at FROM auto_run_sessions WHERE origin_session_id = ?")
+        .get(originSessionId);
+      return row !== undefined;
+    });
+  }
+
   purgeSettledBefore(cutoff: number, purgedAt: number): number {
     validateTimestamp(cutoff, "retention cutoff");
     validateTimestamp(purgedAt, "purgedAt");
@@ -913,6 +956,8 @@ interface DispatchRow {
   active_at: number | null;
   settled_at: number | null;
   result_seen_at: number | null;
+  auto_run_depth: number;
+  wake_on_settle: number;
   updated_at: number;
 }
 
@@ -1016,6 +1061,8 @@ function mapDispatch(row: DispatchRow): StoredDispatch {
     ...(row.result_seen_at !== null && row.result_seen_at !== undefined
       ? { resultSeenAt: row.result_seen_at }
       : {}),
+    autoRunDepth: row.auto_run_depth,
+    wakeOnSettle: row.wake_on_settle !== 0,
     updatedAt: row.updated_at,
   };
 }
@@ -1054,6 +1101,12 @@ function validateIntent(intent: ConfirmDeliveryIntent): void {
     if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) {
       throw new RegistryStateError(`${name} must be a positive integer`);
     }
+  }
+  if (
+    intent.autoRunDepth !== undefined &&
+    (!Number.isSafeInteger(intent.autoRunDepth) || intent.autoRunDepth < 0)
+  ) {
+    throw new RegistryStateError("autoRunDepth must be a non-negative integer");
   }
 }
 

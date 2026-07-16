@@ -31,6 +31,10 @@ export interface ConfirmDeliveryIntent {
   confirmedAt: number;
   maxActivePerTargetWorkspace?: number;
   maxActiveGlobal?: number;
+  /** Auto Run relay counter: 0 for user-turn proposals, parent depth + 1 inside an Auto Run turn. */
+  autoRunDepth?: number;
+  /** False downgrades this dispatch so its settlement never triggers an Auto Run turn. */
+  wakeOnSettle?: boolean;
 }
 
 export interface StoredDispatch {
@@ -59,6 +63,10 @@ export interface StoredDispatch {
   settledAt?: number;
   /** When the user opened this settled dispatch's result; unset = unseen. */
   resultSeenAt?: number;
+  /** Auto Run relay counter guaranteeing every settlement-wake chain terminates. */
+  autoRunDepth: number;
+  /** Whether an armed Origin Session may be woken by this dispatch's settlement. */
+  wakeOnSettle: boolean;
   updatedAt: number;
 }
 

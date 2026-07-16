@@ -1,4 +1,4 @@
-export const REGISTRY_SCHEMA_VERSION = 4;
+export const REGISTRY_SCHEMA_VERSION = 5;
 
 export const REGISTRY_SCHEMA_V1 = `
 CREATE TABLE dispatches (
@@ -140,4 +140,14 @@ DROP TABLE IF EXISTS automation_grants;
 export const REGISTRY_SCHEMA_V4 = `
 ALTER TABLE dispatches ADD COLUMN result_seen_at INTEGER;
 UPDATE dispatches SET result_seen_at = settled_at WHERE lifecycle = 'settled';
+`;
+
+export const REGISTRY_SCHEMA_V5 = `
+ALTER TABLE dispatches ADD COLUMN auto_run_depth INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE dispatches ADD COLUMN wake_on_settle INTEGER NOT NULL DEFAULT 1;
+
+CREATE TABLE auto_run_sessions (
+  origin_session_id TEXT PRIMARY KEY,
+  armed_at INTEGER NOT NULL
+) STRICT;
 `;

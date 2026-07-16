@@ -6,6 +6,7 @@ import {
   REGISTRY_SCHEMA_V2,
   REGISTRY_SCHEMA_V3,
   REGISTRY_SCHEMA_V4,
+  REGISTRY_SCHEMA_V5,
   REGISTRY_SCHEMA_VERSION,
 } from "./schema.js";
 
@@ -52,6 +53,7 @@ export async function migrateRegistry(
       if (lockedVersion < 2) database.exec(REGISTRY_SCHEMA_V2);
       if (lockedVersion < 3) database.exec(REGISTRY_SCHEMA_V3);
       if (lockedVersion < 4) database.exec(REGISTRY_SCHEMA_V4);
+      if (lockedVersion < 5) database.exec(REGISTRY_SCHEMA_V5);
       database.exec(`PRAGMA user_version = ${REGISTRY_SCHEMA_VERSION}`);
     }
     database.exec("COMMIT");
