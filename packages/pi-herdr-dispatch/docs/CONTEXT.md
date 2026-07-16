@@ -96,10 +96,6 @@ _Avoid_: completed dispatch, inferred success
 An unsettled dispatch whose confirmed terminal identity disappeared before settlement.
 _Avoid_: automatic retargeting, automatic release
 
-**Target-Moved Dispatch**:
-An unsettled dispatch whose target persistently left its confirmed directory or worktree.
-_Avoid_: transient child-shell directory, automatic lease transfer
-
 **Monitoring-Paused Dispatch**:
 An unsettled dispatch whose monitoring is temporarily paused. An active Origin Monitor stores this Attention Condition when its local Herdr connection is unavailable. When the Origin Session itself is closed, the monitoring gap is a derived fact recognized on resume, not a condition written while no monitor is running. Reservations remain intact in either case.
 _Avoid_: failed dispatch, takeover candidate, necessarily stored condition
@@ -185,3 +181,49 @@ _Avoid_: chat-local state, in-memory fallback, full event sourcing
 **Origin Monitor**:
 The monitoring role performed only by the running TUI Origin Session for dispatches it confirmed. V1 has no takeover by another Pi session.
 _Avoid_: global coordinator, foreign-session settlement
+
+## Chinese product-copy terminology
+
+Product copy (UI strings, notifications) is Simplified Chinese ([ADR 0011](./adr/0011-chinese-product-copy.md)). This table is the single authority for translating the terms above; every human-facing string in `src/pi/ui-copy.ts` must use exactly these renderings. English remains authoritative for code identifiers, docs, commit messages, and all model-facing strings.
+
+| English term | Product copy (zh-CN) |
+|---|---|
+| Dispatch | 派发 |
+| Dispatch Proposal | 派发提议 |
+| Origin Session | 源会话 |
+| Agent | Agent(不译) |
+| Eligible Agent | 可用 Agent |
+| Dispatch Target | 目标 Agent |
+| Target Occupancy | 目标占用 |
+| Worktree Write Lease | worktree 写租约 |
+| Reservation | 预留 |
+| Dispatch Manager | 派发管理器 |
+| lifecycle `delivering` | 投递中 |
+| lifecycle `active` | 运行中 |
+| lifecycle `settled` / Settlement | 已结算 / 结算 |
+| Attention Condition | 待处理状况 |
+| `delivery-unverified` | 投递未验证 |
+| `unacknowledged` | 未应答 |
+| `blocked-runtime` | 运行时受阻 |
+| `overdue` | 已超期 |
+| `malformed-result` | 结果格式错误 |
+| `result-missing` | 结果缺失 |
+| `target-lost` | 目标丢失 |
+| `monitoring-paused` | 监控已暂停 |
+| Final Outcome | 最终结果 |
+| outcome `done` | 完成 |
+| outcome `blocked` | 受阻 |
+| outcome `failed` | 失败 |
+| outcome `cancelled` | 已取消 |
+| agent status `idle` | 空闲 |
+| agent status `working` | 工作中 |
+| agent status `unknown` | 未知 |
+| mode `write` | 写入 |
+| mode `non-mutating` | 非变更 |
+| provenance reported / screen-detected | 已上报 / ~屏测 |
+| Result Envelope | 结果信封 |
+| Dispatch Reply | 派发回复 |
+| Cancellation Request | 取消请求 |
+| Manual Resolution | 手动处理 |
+| Emergency Resolution | 应急处理 |
+| deadline | 截止 |

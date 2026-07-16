@@ -9,7 +9,7 @@ Read the repo-root `AGENTS.md` first for git rules, scripts, and environment. Th
 - Output reads are explicit one-shot bounded tails (50 or 200 lines, adapter hard limit), timestamped, never streamed, never automatic.
 - Ambiguous delivery is never resent automatically. Ambiguous ID prefixes are never guessed. Uncertain states fail closed and name the uncertainty plainly.
 - A foreign-Origin record exposes only the emergency-resolution path, with its double confirmation intact.
-- Product copy (UI strings, notifications) is English and is defined through the typed pure catalog in `src/pi/ui-copy.ts`. Contractual model-facing safety/framing strings stay outside that catalog.
+- Product copy (UI strings, notifications) is Simplified Chinese, defined through the typed pure catalog in `src/pi/ui-copy.ts` and using exactly the terminology table in `docs/CONTEXT.md` (ADR 0011). Contractual model-facing safety/framing strings stay outside that catalog and remain English — never translate them. Code identifiers, docs, and commit messages remain English.
 
 ## Visual vocabulary
 

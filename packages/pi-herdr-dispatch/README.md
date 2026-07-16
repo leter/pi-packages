@@ -13,6 +13,10 @@ A Pi extension under staged development for automatically dispatching work throu
 
 The extension never creates Agents, panes, workspaces, worktrees, or coordinators during normal operation. It dispatches only to existing Agents in the captured current workspace.
 
+## Language
+
+Product copy (UI strings and notifications) is Simplified Chinese, rendered from the typed catalog in `src/pi/ui-copy.ts` using the terminology table in `docs/CONTEXT.md` ([ADR 0011](./docs/adr/0011-chinese-product-copy.md)). Model-facing safety and framing strings intentionally remain English, so bounded-output headers mix Chinese chrome with English trust markers. Documentation and code remain English.
+
 ## Development installation
 
 ```bash
@@ -59,7 +63,7 @@ Model tools expose scoped listing, proposal, status, and one-shot inspection. Re
 
 ## Using the Dispatch Manager
 
-`/hd-manager` (or `alt+h`; long form `/herdr-dispatches`) opens the Dispatch Manager. Rows are grouped in action order — `NEEDS ATTENTION`, then `RUNNING`, then `DELIVERING` — and show the target Agent, task summary, principal attention reason, and relative deadline. Dispatch IDs never appear in default rows; press `D` on a detail screen when you need the full identifiers.
+`/hd-manager` (or `alt+h`; long form `/herdr-dispatches`) opens the Dispatch Manager. Rows are grouped in action order — `待处理` (needs attention), then `运行中` (running), then `投递中` (delivering) — and show the target Agent, task summary, principal attention reason, and relative deadline. Dispatch IDs never appear in default rows; press `D` on a detail screen when you need the full identifiers.
 
 State glyphs pair a symbol, a theme color, and a label, so no state relies on color alone: `●` active, `◌` delivering, `▲` needs attention, `✓` done, `◼` blocked, `✗` failed, `○` cancelled.
 
@@ -165,7 +169,7 @@ State-changing behavior fails closed and never falls back to an empty or in-memo
 
 ## UI and notifications
 
-The extension adds one compact widget below the editor and never replaces Pi's footer. `/hd-manager` (long form `/herdr-dispatches`; shortcut `alt+h`, TUI only) opens the Dispatch Manager: a current-workspace, attention-first list with recently settled current-Origin records folded away. Dispatch IDs are internal correlation details and appear only in explicit technical details. The widget and manager re-read current-workspace Registry state on every render instead of caching status. `running` excludes dispatches grouped under attention, and the attention count is the number of affected dispatches—not the number of concurrent conditions. Every foreign-Origin unsettled record counts as attention so reservations left by an earlier Origin Session remain visible in the ambient UI. The manager also refreshes relative times, and performs output reads only as explicit one-shot bounded tails (`r` 50 lines, `R` 200 lines, timestamped and framed as untrusted). Reply, cancellation, and resolution selections still pass through their existing preview, eligibility revalidation, and confirmation gates.
+The extension adds one compact widget below the editor and never replaces Pi's footer. `/hd-manager` (long form `/herdr-dispatches`; shortcut `alt+h`, TUI only) opens the Dispatch Manager: a current-workspace, attention-first list with recently settled current-Origin records folded away. Dispatch IDs are internal correlation details and appear only in explicit technical details. Human-facing tables align and truncate by terminal display columns, including double-width CJK text. The widget and manager re-read current-workspace Registry state on every render instead of caching status. `running` excludes dispatches grouped under attention, and the attention count is the number of affected dispatches—not the number of concurrent conditions. Every foreign-Origin unsettled record counts as attention so reservations left by an earlier Origin Session remain visible in the ambient UI. The manager also refreshes relative times, and performs output reads only as explicit one-shot bounded tails (`r` 50 lines, `R` 200 lines, timestamped and framed as untrusted). Reply, cancellation, and resolution selections still pass through their existing preview, eligibility revalidation, and confirmation gates.
 
 The optional command selector supports exact IDs and unambiguous prefixes for advanced use, with full-ID argument completion. Ambiguous prefixes open a human-readable picker and are never guessed. A foreign-Origin record is discoverable only within the current Workspace Scope and exposes emergency resolution, not reply or cancellation. Herdr notification sounds are restricted to:
 
