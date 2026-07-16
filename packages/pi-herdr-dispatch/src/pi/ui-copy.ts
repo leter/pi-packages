@@ -85,6 +85,9 @@ export interface HumanUiCopy {
     setupInstallFailed(code: number): string;
     setupInstalled(integration: string): string;
     outputUsage(): string;
+    followupTask(): string;
+    redispatchTargetBusy(): string;
+    redispatchTargetGone(): string;
   };
   readonly manager: {
     title(): string;
@@ -109,7 +112,7 @@ export interface HumanUiCopy {
     outputReadFailed(): string;
     outputEarlierLinesNotShown(count: number): string;
     outputReadEnd(time: string): string;
-    detailKeybar(actions: readonly HumanDispatchAction[]): string;
+    detailKeybar(actions: readonly HumanDispatchAction[], redispatch?: boolean): string;
     technicalHeading(): string;
     technicalLabel(label: TechnicalLabel): string;
     viewUnavailable(reason: string): string;
@@ -351,6 +354,9 @@ export const UI_COPY = Object.freeze({
     setupInstallFailed: (code) => `Herdr 集成安装退出码 ${code}`,
     setupInstalled: (integration) => `已安装 Herdr ${integration} 集成。`,
     outputUsage: () => "用法:/hd-output <目标> [行数]",
+    followupTask: () => "追加任务(发往同一目标)",
+    redispatchTargetBusy: () => "目标 Agent 当前不可用——正在工作、受阻或已被占用。",
+    redispatchTargetGone: () => "目标 Agent 已不在当前工作区——它的 pane 可能已被关闭。",
   },
   manager: {
     title: () => "Herdr 派发",
@@ -384,11 +390,12 @@ export const UI_COPY = Object.freeze({
     outputReadFailed: () => " ── 输出 · 读取失败 ──",
     outputEarlierLinesNotShown: (count) => ` … 之前 ${count} 行未显示`,
     outputReadEnd: (time) => ` ── 结束 · 读取于 ${time} · 仅按需读取 ──`,
-    detailKeybar: (actions) => {
+    detailKeybar: (actions, redispatch = false) => {
       const labels = [
         actions.includes("reply") ? "y 回复" : "",
         actions.includes("cancel") ? "c 取消" : "",
         actions.includes("resolve") ? "v 处理" : "",
+        redispatch ? "f 追加派发" : "",
       ].filter(Boolean);
       return ` r/R 读输出${labels.length > 0 ? ` · ${labels.join(" · ")}` : ""} · D 详情`;
     },

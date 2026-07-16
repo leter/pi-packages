@@ -46,7 +46,9 @@ export interface DispatchViewPorts {
   now?(): number;
 }
 
-export type DispatchViewResult = { action: DispatchAction; dispatchId: string } | undefined;
+export type DispatchViewResult =
+  | { action: DispatchAction | "redispatch"; dispatchId: string }
+  | undefined;
 
 export interface DispatchViewOptions {
   action?: DispatchAction;
@@ -185,6 +187,13 @@ export class DispatchViewComponent implements Component {
     const key = printableKey(data);
     if (key === "r") return this.#startRead(50);
     if (key === "R") return this.#startRead(200);
+    if (key === "f") {
+      const dispatch = this.#currentDispatch();
+      if (dispatch?.lifecycle === "settled") {
+        this.#finish({ action: "redispatch", dispatchId: dispatch.id });
+      }
+      return;
+    }
     if (key === "D" || key === "d") {
       this.#showTechnical = !this.#showTechnical;
       return;

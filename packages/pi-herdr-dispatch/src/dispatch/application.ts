@@ -361,6 +361,12 @@ export class DispatchApplication {
     return this.#registry.listRecentSettled(originSessionId, limit);
   }
 
+  /** Whether a terminal still exists in the current workspace (regardless of eligibility). */
+  async agentTerminalExists(terminalId: string): Promise<boolean> {
+    const snapshot = await this.#herdr.currentWorkspaceSnapshot();
+    return snapshot.agents.some((agent) => agent.terminalId === terminalId);
+  }
+
   listUnseenSettled(): readonly StoredDispatch[] {
     return this.#registry.listUnseenSettled(this.#workspaceId);
   }

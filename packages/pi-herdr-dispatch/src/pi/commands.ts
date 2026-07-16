@@ -59,40 +59,49 @@ export function registerDispatchCommands(
         if (!selected) return;
         const target = targets[options.indexOf(selected)];
         if (!target) throw new Error(UI_COPY.command.selectedAgentUnavailable());
-        const task = await ctx.ui.editor(UI_COPY.command.completeTask());
-        if (task === undefined) return;
-        const mode = await selectDomainValue(
-          (title, options) => ctx.ui.select(title, options),
-          UI_COPY.command.mutationMode(),
-          ["non-mutating", "write"] as const,
-          (value) => UI_COPY.state.mode(value),
-        );
-        if (mode === undefined) return;
-        const deadlineInput = await ctx.ui.input(UI_COPY.command.deadlineMinutes(), "30");
-        if (deadlineInput === undefined) return;
-        const request: CreateProposalRequest = {
-          target: target.terminalId,
-          task,
-          mode,
-          deadlineMinutes: Number(deadlineInput),
-          allowProjectDependencyInstall:
-            mode === "write"
-              ? await ctx.ui.confirm(
-                  UI_COPY.command.dependencyInstallTitle(),
-                  UI_COPY.command.dependencyInstallQuestion(),
-                )
-              : false,
-        };
-        const result = await controller.proposeAndDispatch(request, interactionContext(ctx));
-        ctx.ui.notify(
-          UI_COPY.presentation.confirmationResult(
-            result.status,
-            "outcome" in result ? String(result.outcome) : undefined,
-          ),
-          result.status === "active" ? "info" : "warning",
-        );
+        await completeDispatchWizard(ctx, target.terminalId, UI_COPY.command.completeTask());
       }),
   });
+
+  /** Shared tail of the dispatch wizard: task, mode, deadline, dependency consent, send. */
+  const completeDispatchWizard = async (
+    ctx: ExtensionContext,
+    targetTerminalId: string,
+    taskTitle: string,
+  ): Promise<void> => {
+    const task = await ctx.ui.editor(taskTitle);
+    if (task === undefined) return;
+    const mode = await selectDomainValue(
+      (title, options) => ctx.ui.select(title, options),
+      UI_COPY.command.mutationMode(),
+      ["non-mutating", "write"] as const,
+      (value) => UI_COPY.state.mode(value),
+    );
+    if (mode === undefined) return;
+    const deadlineInput = await ctx.ui.input(UI_COPY.command.deadlineMinutes(), "30");
+    if (deadlineInput === undefined) return;
+    const request: CreateProposalRequest = {
+      target: targetTerminalId,
+      task,
+      mode,
+      deadlineMinutes: Number(deadlineInput),
+      allowProjectDependencyInstall:
+        mode === "write"
+          ? await ctx.ui.confirm(
+              UI_COPY.command.dependencyInstallTitle(),
+              UI_COPY.command.dependencyInstallQuestion(),
+            )
+          : false,
+    };
+    const result = await controller.proposeAndDispatch(request, interactionContext(ctx));
+    ctx.ui.notify(
+      UI_COPY.presentation.confirmationResult(
+        result.status,
+        "outcome" in result ? String(result.outcome) : undefined,
+      ),
+      result.status === "active" ? "info" : "warning",
+    );
+  };
 
   let dispatchViewOpen = false;
   const executeFollowup = async (
@@ -167,6 +176,24 @@ export function registerDispatchCommands(
     if (!result) return;
     const dispatch = app.getDispatch(result.dispatchId);
     if (!dispatch) throw new Error(UI_COPY.command.selectedDispatchUnavailable());
+    if (result.action === "redispatch") {
+      if (runtime.mutationUnavailableReason) throw new Error(runtime.mutationUnavailableReason);
+      const target = (await app.listEligibleAgents()).find(
+        (candidate) => candidate.terminalId === dispatch.targetTerminalId,
+      );
+      if (!target) {
+        const exists = await app.agentTerminalExists(dispatch.targetTerminalId);
+        ctx.ui.notify(
+          exists
+            ? UI_COPY.command.redispatchTargetBusy()
+            : UI_COPY.command.redispatchTargetGone(),
+          "warning",
+        );
+        return;
+      }
+      await completeDispatchWizard(ctx, target.terminalId, UI_COPY.command.followupTask());
+      return;
+    }
     await executeFollowup(result.action, dispatch, ctx);
   };
 
@@ -338,7 +365,7 @@ function emptyActionMessage(action: DispatchAction): string {
   return UI_COPY.command.noDispatchForAction(action);
 }
 
-function interactionContext(ctx: ExtensionCommandContext) {
+function interactionContext(ctx: ExtensionContext) {
   const sessionFile = ctx.sessionManager.getSessionFile();
   return {
     mode: ctx.mode,

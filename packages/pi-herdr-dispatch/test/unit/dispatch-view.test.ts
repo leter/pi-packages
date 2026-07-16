@@ -289,6 +289,8 @@ describe("dispatch view model", () => {
     ).hint;
     expect(settledHint).not.toContain("y 回复");
     expect(settledHint).toContain("D 详情");
+    expect(settledHint).toContain("f 追加派发");
+    expect(detailChrome(dispatch(), [attention("overdue")]).hint).not.toContain("f 追加派发");
   });
 
   it("renders clock time with zero padding", () => {
@@ -489,6 +491,25 @@ describe("dispatch view component", () => {
     component.handleInput(ESCAPE);
     component.handleInput(ENTER);
     expect(markResultSeen).toHaveBeenCalledExactlyOnceWith("hd_unseen");
+  });
+
+  it("offers a follow-up dispatch from a settled detail via f", () => {
+    const { component, data, done } = harness();
+    data.unsettled = [];
+    data.unseenSettled = [
+      dispatch({ id: "hd_done", lifecycle: "settled", finalOutcome: "done", settledAt: 900_000 }),
+    ];
+    component.render(120);
+    component.handleInput(ENTER);
+    component.handleInput("f");
+    expect(done).toHaveBeenCalledExactlyOnceWith({ action: "redispatch", dispatchId: "hd_done" });
+  });
+
+  it("ignores f on an unsettled detail", () => {
+    const { component, done } = harness();
+    component.handleInput(ENTER);
+    component.handleInput("f");
+    expect(done).not.toHaveBeenCalled();
   });
 
   it("uses focused Ctrl+C to close without returning an action", () => {

@@ -274,6 +274,11 @@ export function detailChrome(
   };
 }
 
+/** A settled record can seed a fresh Automatic Dispatch to the same target. */
+export function canRedispatch(dispatch: StoredDispatch): boolean {
+  return dispatch.lifecycle === "settled";
+}
+
 export function buildDetailLines(
   dispatch: StoredDispatch,
   attention: readonly AttentionRecord[],
@@ -381,7 +386,7 @@ export function detailKeybar(
   originSessionId = dispatch.originSessionId,
 ): string {
   const actions = availableActions(dispatch, attention, originSessionId);
-  return UI_COPY.manager.detailKeybar(actions);
+  return UI_COPY.manager.detailKeybar(actions, canRedispatch(dispatch));
 }
 
 export function clockTime(timestamp: number): string {
