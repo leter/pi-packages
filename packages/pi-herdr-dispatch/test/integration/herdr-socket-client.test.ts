@@ -111,6 +111,33 @@ describe("HerdrSocketClient", () => {
     );
   });
 
+  it("reports a failed Herdr subscription child probe as the parent API error", async () => {
+    const fake = await server((request, connection) => {
+      connection.sendRaw(
+        `${JSON.stringify({
+          id: `${request.id}:sub:2:probe`,
+          error: { code: "internal_error", message: "failed to decode pane get error" },
+        })}\n`,
+      );
+    });
+    const client = await HerdrSocketClient.connect(fake.socketPath);
+
+    await expect(
+      client.request(
+        "events.subscribe",
+        { subscriptions: [{ type: "pane.agent_status_changed", pane_id: "p-stale" }] },
+        "subscription_started",
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining<Partial<HerdrApiError>>({
+        name: "HerdrApiError",
+        code: "internal_error",
+        message: "failed to decode pane get error",
+      }),
+    );
+    client.close();
+  });
+
   it("delivers lifecycle and subscription event envelopes without confusing them for replies", async () => {
     const listener = vi.fn();
     const fake = await server((request, connection) => {

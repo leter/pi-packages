@@ -42,6 +42,7 @@ export class HerdrTimeoutError extends Error {
 }
 
 interface PendingRequest {
+  readonly method: string;
   readonly expectedType: string;
   readonly resolve: (result: Record<string, unknown>) => void;
   readonly reject: (error: Error) => void;
@@ -112,7 +113,7 @@ export class HerdrSocketClient {
         this.#pending.delete(id);
         reject(new HerdrTimeoutError(`Herdr request ${method} timed out`));
       }, this.#requestTimeoutMs);
-      this.#pending.set(id, { expectedType, resolve, reject, timeout });
+      this.#pending.set(id, { method, expectedType, resolve, reject, timeout });
       const line = `${JSON.stringify({ id, method, params })}\n`;
       this.#socket.write(line, (error) => {
         if (error) this.#failRequest(id, new HerdrDisconnectedError("Herdr request write failed", true, { cause: error }));
@@ -170,7 +171,17 @@ export class HerdrSocketClient {
     }
     if (typeof envelope.id !== "string") throw new HerdrProtocolError("response id must be a string");
     const pending = this.#pending.get(envelope.id);
-    if (!pending) throw new HerdrProtocolError(`unexpected response id ${envelope.id}`);
+    if (!pending) {
+      const parent = this.#subscriptionProbeParent(envelope.id);
+      if (!parent) throw new HerdrProtocolError(`unexpected response id ${envelope.id}`);
+      const error = object(envelope.error, "subscription probe error");
+      if (envelope.result !== undefined || typeof error.code !== "string" || typeof error.message !== "string") {
+        throw new HerdrProtocolError("subscription probe response must contain one valid error");
+      }
+      this.#complete(parent.id, parent.pending);
+      parent.pending.reject(new HerdrApiError(error.code, error.message));
+      return;
+    }
 
     const hasResult = envelope.result !== undefined;
     const hasError = envelope.error !== undefined;
@@ -213,6 +224,19 @@ export class HerdrSocketClient {
     });
     this.#rejectAll(error);
     this.#notifyDisconnect(error);
+  }
+
+  #subscriptionProbeParent(responseId: string): { id: string; pending: PendingRequest } | undefined {
+    for (const [id, pending] of this.#pending) {
+      if (
+        pending.method === "events.subscribe" &&
+        responseId.startsWith(id) &&
+        /^:sub:\d+:probe$/u.test(responseId.slice(id.length))
+      ) {
+        return { id, pending };
+      }
+    }
+    return undefined;
   }
 
   #complete(id: string, pending: PendingRequest): void {

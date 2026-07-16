@@ -205,6 +205,19 @@ describe("OriginMonitor", () => {
     monitor.stop();
   });
 
+  it("marks a missing resumed target lost before installing target subscriptions", async () => {
+    const { registry, herdr, monitor } = await harness("delivering", true);
+    herdr.resolved = undefined;
+
+    await monitor.start();
+
+    expect(registry.listAttention("hd_monitor")).toEqual([
+      expect.objectContaining({ condition: "target-lost" }),
+    ]);
+    expect(herdr.targets).toEqual([]);
+    monitor.stop();
+  });
+
   it("settles the first valid result from the confirmed terminal and releases reservations once", async () => {
     const { registry, herdr, monitor, onSettled } = await harness();
     herdr.text =

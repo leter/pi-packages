@@ -102,9 +102,9 @@ export class OriginMonitor {
         );
       }
     }
+    await this.#catchUpAll();
     await this.refresh();
     this.#initializing = false;
-    await this.#catchUpAll();
     this.#scheduleCwdPoll();
   }
 
@@ -112,10 +112,12 @@ export class OriginMonitor {
     if (!this.#running) return;
     const dispatches = this.#dispatches();
     await this.watchTargets(
-      dispatches.map((dispatch) => ({
-        paneId: dispatch.targetPaneId,
-        correlationId: dispatch.id,
-      })),
+      dispatches
+        .filter((dispatch) => !this.#isSettlementPaused(dispatch.id))
+        .map((dispatch) => ({
+          paneId: dispatch.targetPaneId,
+          correlationId: dispatch.id,
+        })),
     );
     for (const dispatch of dispatches) this.#scheduleDispatchTimers(dispatch);
   }

@@ -173,7 +173,7 @@ While running, the monitor:
 
 When the Origin Session is closed, no other Pi takes over. Results, notifications, and lease release are delayed; Target Occupancy and Worktree Write Leases remain durable. This is an explicit V1 trade-off.
 
-On `/resume`, `/reload`, or Herdr socket reconnect, the Origin Monitor obtains a fresh snapshot, resolves the stored terminal ID, and performs a bounded 200-line `recent_unwrapped` Catch-Up Read. This is tail catch-up, not a revision-based Recovery Scan. If the terminal ID no longer exists, the record becomes `target-lost`.
+On `/resume`, `/reload`, or Herdr socket reconnect, the Origin Monitor obtains a fresh snapshot, resolves the stored terminal ID, and performs a bounded 200-line `recent_unwrapped` Catch-Up Read **before** installing target-specific subscriptions. This is tail catch-up, not a revision-based Recovery Scan. If the terminal ID no longer exists, the record becomes `target-lost` and is excluded from target-specific subscriptions while settlement is paused, so a stale pane route cannot disable the Adapter or its manual-resolution path. Herdr may report a failed child-subscription probe with a response ID derived as `<parent>:sub:<index>:probe`; the socket client attributes that bounded form to the pending `events.subscribe` request as an API error while continuing to reject unrelated response IDs as protocol failures.
 
 Herdr 0.7.3 regenerates terminal IDs across a clean server restart even when workspace and pane IDs are restored. Therefore every unsettled record whose pre-restart terminal ID disappears follows `target-lost`; V1 never claims continuity from a matching pane ID, cwd, Agent label, or retained history.
 
