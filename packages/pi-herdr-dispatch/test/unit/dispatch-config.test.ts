@@ -32,6 +32,7 @@ describe("dispatch configuration", () => {
         startupWindowMs: 12_000,
         agentStartupTimeoutMs: 90_000,
         maxActiveGlobal: 10,
+        maxAutoRunDepth: 20,
       }),
     ).toEqual({
       ...DEFAULT_DISPATCH_CONFIG,
@@ -39,6 +40,7 @@ describe("dispatch configuration", () => {
       startupWindowMs: 12_000,
       agentStartupTimeoutMs: 90_000,
       maxActiveGlobal: 10,
+      maxAutoRunDepth: 20,
     });
   });
 
@@ -52,6 +54,9 @@ describe("dispatch configuration", () => {
     { maxActivePerTargetWorkspace: 9, maxActiveGlobal: 8 },
     { inspectionLines: 80 },
     { maxInspectionLines: 1000 },
+    { maxAutoRunDepth: 0 },
+    { maxAutoRunDepth: 21 },
+    { maxAutoRunDepth: 2.5 },
   ])("rejects unsafe config instead of partially applying it: %j", (value) => {
     expect(() => parseDispatchConfig(value)).toThrow();
   });

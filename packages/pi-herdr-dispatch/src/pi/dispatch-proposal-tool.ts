@@ -21,6 +21,12 @@ const proposalParameters = Type.Object({
   allowProjectDependencyInstall: Type.Optional(
     Type.Boolean({ description: "Explicitly allow project-local dependency installation" }),
   ),
+  wakeOnSettle: Type.Optional(
+    Type.Boolean({
+      description:
+        "Set false to downgrade this dispatch so its settlement never triggers an Auto Run turn; it cannot enable Auto Run, which only the user arms",
+    }),
+  ),
 });
 
 export interface DispatchProposalToolParams {
@@ -29,6 +35,7 @@ export interface DispatchProposalToolParams {
   mode: "non-mutating" | "write";
   deadlineMinutes?: number;
   allowProjectDependencyInstall?: boolean;
+  wakeOnSettle?: boolean;
 }
 
 export interface DispatchProposalToolOutcome {

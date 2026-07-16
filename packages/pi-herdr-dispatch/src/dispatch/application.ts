@@ -59,6 +59,8 @@ export interface CreateProposalRequest {
   task: string;
   deadlineMinutes?: number;
   allowProjectDependencyInstall?: boolean;
+  /** False downgrades this dispatch so its settlement never triggers an Auto Run turn. */
+  wakeOnSettle?: boolean;
 }
 
 export interface OriginIdentity {
@@ -89,6 +91,8 @@ export interface DispatchApplicationOptions {
   onIntentRecorded?: () => void | Promise<void>;
   captureWorktreeSnapshot?: (worktreePath: string) => Promise<WorktreeSnapshot>;
   onSettled?: (dispatchId: string, outcome: FinalOutcome) => void;
+  /** Auto Run Depth for proposals confirmed right now: 0 in a user turn, parent depth + 1 in an Auto Run turn. */
+  currentAutoRunDepth?: () => number;
 }
 
 export class ProposalTargetError extends Error {
@@ -118,6 +122,7 @@ export class DispatchApplication {
   readonly #onIntentRecorded: () => void | Promise<void>;
   readonly #captureWorktreeSnapshot: (worktreePath: string) => Promise<WorktreeSnapshot>;
   readonly #onSettled: (dispatchId: string, outcome: FinalOutcome) => void;
+  readonly #currentAutoRunDepth: () => number;
   readonly #proposals = new Map<string, DispatchProposal>();
 
   constructor(options: DispatchApplicationOptions) {
@@ -135,6 +140,7 @@ export class DispatchApplication {
     this.#onIntentRecorded = options.onIntentRecorded ?? (() => undefined);
     this.#captureWorktreeSnapshot = options.captureWorktreeSnapshot ?? captureWorktreeSnapshot;
     this.#onSettled = options.onSettled ?? (() => undefined);
+    this.#currentAutoRunDepth = options.currentAutoRunDepth ?? (() => 0);
   }
 
   get defaultDeadlineMinutes(): number {
@@ -258,6 +264,7 @@ export class DispatchApplication {
       task: request.task,
       deadlineMinutes,
       allowProjectDependencyInstall: request.allowProjectDependencyInstall ?? false,
+      wakeOnSettle: request.wakeOnSettle ?? true,
     };
     const now = this.#now();
     const proposal = createDispatchProposal(factoryInput, {
@@ -323,6 +330,8 @@ export class DispatchApplication {
       confirmedAt,
       maxActivePerTargetWorkspace: this.#config.maxActivePerTargetWorkspace,
       maxActiveGlobal: this.#config.maxActiveGlobal,
+      autoRunDepth: this.#currentAutoRunDepth(),
+      wakeOnSettle: proposal.wakeOnSettle,
     });
     if (beforeSnapshot) {
       this.#registry.recordAudit(

@@ -50,6 +50,7 @@ export function registerDispatchTools(
         ...(params.allowProjectDependencyInstall === undefined
           ? {}
           : { allowProjectDependencyInstall: params.allowProjectDependencyInstall }),
+        ...(params.wakeOnSettle === false ? { wakeOnSettle: false } : {}),
       };
       const result = await controller.proposeAndDispatch(request, interactionContext(ctx));
       const details: ConfirmationResultDetails = {

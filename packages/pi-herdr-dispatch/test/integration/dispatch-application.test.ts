@@ -105,7 +105,10 @@ class FakeHerdr implements HerdrDispatchPort {
   }
 }
 
-async function harness(configOverrides: Partial<typeof DEFAULT_DISPATCH_CONFIG> = {}) {
+async function harness(
+  configOverrides: Partial<typeof DEFAULT_DISPATCH_CONFIG> = {},
+  applicationOverrides: { currentAutoRunDepth?: () => number } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), "pi-herdr-application-"));
   roots.push(root);
   const registry = await openDispatchRegistry(join(root, "registry.sqlite"));
@@ -123,6 +126,7 @@ async function harness(configOverrides: Partial<typeof DEFAULT_DISPATCH_CONFIG> 
     nextCorrelationId: () => `hd_test_${++sequence}`,
     resolveWorktree: async () => "/canonical/worktree",
     captureWorktreeSnapshot: async () => ({ fingerprint: "before", entries: [], diffStat: "" }),
+    ...applicationOverrides,
   });
   return {
     application,
@@ -423,5 +427,42 @@ describe("DispatchApplication", () => {
       expect.objectContaining({ lifecycle: "settled", finalOutcome: "failed" }),
     );
     expect(registry.listTargetOccupancy()).toEqual([]);
+  });
+
+  it("records the current Auto Run Depth and defaults wake on settle", async () => {
+    const { application, registry } = await harness({}, { currentAutoRunDepth: () => 2 });
+    const proposal = await application.createProposal({
+      target: "term-target",
+      mode: "non-mutating",
+      task: "Aggregate the review results.",
+      deadlineMinutes: 15,
+      allowProjectDependencyInstall: false,
+    });
+
+    await application.confirmProposal(proposal, origin);
+
+    expect(registry.getDispatch(proposal.id)).toEqual(
+      expect.objectContaining({ autoRunDepth: 2, wakeOnSettle: true }),
+    );
+  });
+
+  it("stores the model's per-proposal wake downgrade without touching the payload bytes", async () => {
+    const { application, registry } = await harness();
+    const proposal = await application.createProposal({
+      target: "term-target",
+      mode: "non-mutating",
+      task: "Fire-and-forget probe.",
+      deadlineMinutes: 15,
+      allowProjectDependencyInstall: false,
+      wakeOnSettle: false,
+    });
+    expect(proposal.wakeOnSettle).toBe(false);
+    expect(proposal.payload).not.toContain("wake");
+
+    await application.confirmProposal(proposal, origin);
+
+    expect(registry.getDispatch(proposal.id)).toEqual(
+      expect.objectContaining({ autoRunDepth: 0, wakeOnSettle: false }),
+    );
   });
 });

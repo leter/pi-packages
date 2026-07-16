@@ -22,6 +22,8 @@ export interface DispatchProposalInput {
   task: string;
   deadlineMinutes: number;
   allowProjectDependencyInstall: boolean;
+  /** Origin-side Auto Run downgrade; not part of the outbound payload bytes. */
+  wakeOnSettle?: boolean;
 }
 
 export interface DispatchProposal {
@@ -31,6 +33,7 @@ export interface DispatchProposal {
   readonly task: string;
   readonly constraints: readonly string[];
   readonly allowProjectDependencyInstall: boolean;
+  readonly wakeOnSettle: boolean;
   readonly advisoryWarning: string;
   readonly createdAt: number;
   readonly deadlineAt: number;
@@ -102,6 +105,7 @@ DISPATCH_RESULT {"id":"${id}","outcome":"done|blocked|failed|cancelled","summary
     task,
     constraints,
     allowProjectDependencyInstall: input.allowProjectDependencyInstall,
+    wakeOnSettle: input.wakeOnSettle ?? true,
     advisoryWarning: ADVISORY_SAFETY_WARNING,
     createdAt,
     deadlineAt,

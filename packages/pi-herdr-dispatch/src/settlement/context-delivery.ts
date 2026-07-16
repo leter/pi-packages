@@ -11,6 +11,15 @@ export interface DispatchResultMessageDetails {
   taskSummary: string;
 }
 
+/**
+ * Delivery is either the quiet queued default or an Auto Run wake (ADR 0014):
+ * idle Pi starts a turn, a streaming Pi processes the message at the next
+ * turn boundary. An armed wake never uses nextTurn, which would stall the chain.
+ */
+export type ContextDeliveryOptions =
+  | { deliverAs: "nextTurn"; triggerTurn: false }
+  | { deliverAs: "followUp"; triggerTurn: true };
+
 export interface OriginContextPort {
   getSessionId(): string;
   getLeafId(): string | null;
@@ -22,8 +31,13 @@ export interface OriginContextPort {
       display: boolean;
       details: DispatchResultMessageDetails;
     },
-    options: { deliverAs: "nextTurn"; triggerTurn: false },
+    options: ContextDeliveryOptions,
   ): void;
+}
+
+export interface AutoRunWake {
+  /** Fixed model-facing Auto Run preamble prepended to the untrusted envelope. */
+  preamble: string;
 }
 
 export class OriginContextDelivery {
@@ -45,6 +59,7 @@ export class OriginContextDelivery {
   deliver(
     dispatchId: string,
     context: OriginContextPort,
+    wake?: AutoRunWake,
   ): "delivered" | "already-delivered" | "pending-branch-change" {
     const dispatch = this.#registry.getDispatch(dispatchId);
     if (!dispatch || dispatch.lifecycle !== "settled") {
@@ -71,10 +86,11 @@ export class OriginContextDelivery {
     if (!entry && !this.#enqueued.has(dispatchId)) {
       this.#enqueued.add(dispatchId);
       try {
+        const envelope = formatSanitizedResult(result.sanitizedResult);
         context.sendMessage(
           {
             customType: DISPATCH_RESULT_CUSTOM_TYPE,
-            content: formatSanitizedResult(result.sanitizedResult),
+            content: wake ? `${wake.preamble}\n\n${envelope}` : envelope,
             display: true,
             details: {
               dispatchId,
@@ -83,7 +99,9 @@ export class OriginContextDelivery {
               taskSummary: summarizeTask(dispatch.task, 100),
             },
           },
-          { deliverAs: "nextTurn", triggerTurn: false },
+          wake
+            ? { deliverAs: "followUp", triggerTurn: true }
+            : { deliverAs: "nextTurn", triggerTurn: false },
         );
       } catch (error) {
         entry = findResultEntry(context.getBranch(), dispatchId);

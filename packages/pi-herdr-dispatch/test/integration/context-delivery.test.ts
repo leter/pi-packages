@@ -7,8 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DISPATCH_RESULT_CUSTOM_TYPE,
   OriginContextDelivery,
+  type ContextDeliveryOptions,
   type OriginContextPort,
 } from "../../src/settlement/context-delivery.js";
+import { buildAutoRunPreamble } from "../../src/settlement/auto-run.js";
 import { openDispatchRegistry, type DispatchRegistry } from "../../src/registry/registry.js";
 
 const roots: string[] = [];
@@ -31,7 +33,7 @@ class FakeOriginContext implements OriginContextPort {
   switchAfterAppend = false;
   deferAppend = false;
   pendingMessage?: Parameters<OriginContextPort["sendMessage"]>[0];
-  lastOptions?: { deliverAs: "nextTurn"; triggerTurn: false };
+  lastOptions?: ContextDeliveryOptions;
 
   constructor(readonly sessionId = "session-origin") {}
 
@@ -49,7 +51,7 @@ class FakeOriginContext implements OriginContextPort {
 
   sendMessage(
     message: Parameters<OriginContextPort["sendMessage"]>[0],
-    options: { deliverAs: "nextTurn"; triggerTurn: false },
+    options: ContextDeliveryOptions,
   ): void {
     this.sends += 1;
     this.lastOptions = options;
@@ -234,6 +236,31 @@ describe("Origin active-branch context delivery", () => {
         .getBranch()
         .filter((item) => item.type === "custom_message" && item.customType === DISPATCH_RESULT_CUSTOM_TYPE),
     ).toHaveLength(1);
+  });
+
+  it("wakes with followUp + triggerTurn and the framed preamble, never marking the result seen", async () => {
+    const registry = await settledRegistry();
+    const delivery = new OriginContextDelivery(registry, () => 2_000);
+    const context = new FakeOriginContext();
+
+    expect(
+      delivery.deliver("hd_context", context, { preamble: buildAutoRunPreamble(4) }),
+    ).toBe("delivered");
+
+    expect(context.lastOptions).toEqual({ deliverAs: "followUp", triggerTurn: true });
+    const resultEntry = context
+      .getBranch()
+      .find((item) => item.type === "custom_message" && item.customType === DISPATCH_RESULT_CUSTOM_TYPE);
+    if (resultEntry?.type === "custom_message") {
+      const content = String(resultEntry.content);
+      expect(content.startsWith("[HERDR AUTO RUN]")).toBe(true);
+      expect(content).toContain("Remaining Auto Run budget on this chain: 4.");
+      expect(content).toContain("BEGIN_HERDR_DISPATCH_RESULT_UNTRUSTED");
+    } else {
+      expect.unreachable("wake delivery must append the result entry");
+    }
+    expect(registry.getDispatch("hd_context")?.resultSeenAt).toBeUndefined();
+    expect(registry.listUnseenSettled("w1").map((item) => item.id)).toEqual(["hd_context"]);
   });
 
   it("rejects forks and clones with a different session ID", async () => {
