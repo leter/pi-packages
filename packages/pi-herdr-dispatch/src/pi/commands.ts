@@ -25,6 +25,7 @@ import {
   formatInspectionText,
 } from "./visual.js";
 import type { DispatchRuntime } from "./dispatch-runtime.js";
+import { selectDomainValue } from "./select-value.js";
 import { UI_COPY } from "./ui-copy.js";
 
 export function registerDispatchCommands(
@@ -60,11 +61,13 @@ export function registerDispatchCommands(
         if (!target) throw new Error(UI_COPY.command.selectedAgentUnavailable());
         const task = await ctx.ui.editor(UI_COPY.command.completeTask());
         if (task === undefined) return;
-        const mode = await ctx.ui.select(UI_COPY.command.mutationMode(), [
-          UI_COPY.state.mode("non-mutating"),
-          UI_COPY.state.mode("write"),
-        ]);
-        if (mode !== "non-mutating" && mode !== "write") return;
+        const mode = await selectDomainValue(
+          (title, options) => ctx.ui.select(title, options),
+          UI_COPY.command.mutationMode(),
+          ["non-mutating", "write"] as const,
+          (value) => UI_COPY.state.mode(value),
+        );
+        if (mode === undefined) return;
         const deadlineInput = await ctx.ui.input(UI_COPY.command.deadlineMinutes(), "30");
         if (deadlineInput === undefined) return;
         const request: CreateProposalRequest = {

@@ -2,6 +2,7 @@ import { DispatchFollowupService, type FollowupProposal } from "../dispatch/foll
 import type { FinalOutcome } from "../registry/types.js";
 import type { ProposalUI } from "./dispatch-controller.js";
 import { agentDisplayName, taskSummary } from "./dispatch-view-model.js";
+import { selectDomainValue } from "./select-value.js";
 import { UI_COPY } from "./ui-copy.js";
 
 export interface FollowupContext {
@@ -53,12 +54,12 @@ export class FollowupController {
       );
       if (!attested) return UI_COPY.followup.emergencyCancelledBeforeAttestation();
     }
-    const outcomes = ["blocked", "failed", "cancelled"] as const;
-    const choice = await context.ui.select(
+    const outcome = await selectDomainValue(
+      (title, options) => context.ui.select(title, options),
       UI_COPY.followup.manualFinalOutcome(),
-      outcomes.map((value) => UI_COPY.state.outcome(value)),
+      ["blocked", "failed", "cancelled"] as const,
+      (value) => UI_COPY.state.outcome(value),
     );
-    const outcome = outcomes.find((value) => UI_COPY.state.outcome(value) === choice);
     if (outcome === undefined) {
       return UI_COPY.followup.resolutionCancelled();
     }
