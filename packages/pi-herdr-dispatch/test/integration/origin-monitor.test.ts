@@ -431,6 +431,46 @@ describe("OriginMonitor", () => {
     monitor.stop();
   });
 
+  it("clears stale unacknowledged attention when catch-up sees the target working", async () => {
+    const { registry, herdr, monitor } = await harness();
+    registry.addAttention("hd_monitor", "unacknowledged", {}, 1_000);
+    herdr.resolved = {
+      pane: { ...pane, agentStatus: "working" },
+      agent: { ...pane, agentStatus: "working", screenDetectionSkipped: true },
+    };
+
+    await monitor.start();
+
+    expect(registry.listAttention("hd_monitor").map((item) => item.condition)).not.toContain(
+      "unacknowledged",
+    );
+    monitor.stop();
+  });
+
+  it("heals a missed working event through the liveness poll", async () => {
+    const { registry, herdr, clock, monitor } = await harness();
+    herdr.resolved = {
+      pane: { ...pane, agentStatus: "unknown" },
+      agent: { ...pane, agentStatus: "unknown", screenDetectionSkipped: true },
+    };
+    await monitor.start();
+    await clock.advance(5_000);
+    expect(registry.listAttention("hd_monitor").map((item) => item.condition)).toContain(
+      "unacknowledged",
+    );
+
+    herdr.resolved = {
+      pane: { ...pane, agentStatus: "working" },
+      agent: { ...pane, agentStatus: "working", screenDetectionSkipped: true },
+    };
+    await clock.advance(5_000);
+
+    expect(registry.listAttention("hd_monitor").map((item) => item.condition)).not.toContain(
+      "unacknowledged",
+    );
+    monitor.stop();
+  });
+
   it("uses fake time for startup and deadline attention while a drifted cwd stays quiet", async () => {
     const { registry, herdr, clock, monitor, onAttention } = await harness();
     herdr.resolved = {

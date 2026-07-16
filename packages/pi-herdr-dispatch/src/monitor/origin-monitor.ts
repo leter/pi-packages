@@ -174,6 +174,7 @@ export class OriginMonitor {
       }
     } else if (resolved.pane.agentStatus === "working") {
       this.#acknowledged.add(current.id);
+      this.#clearAttentionBenign(current.id, "unacknowledged");
     } else if (resolved.pane.agentStatus === "idle" || resolved.pane.agentStatus === "done") {
       await this.#attention(current.id, "result-missing", { status: resolved.pane.agentStatus });
     }
@@ -472,6 +473,11 @@ export class OriginMonitor {
     const resolved = await this.#resolve(dispatch);
     if (!resolved) {
       await this.#attention(dispatch.id, "target-lost", { terminalId: dispatch.targetTerminalId });
+      return;
+    }
+    if (resolved.pane.agentStatus === "working") {
+      this.#acknowledged.add(dispatch.id);
+      this.#clearAttentionBenign(dispatch.id, "unacknowledged");
     }
   }
 
