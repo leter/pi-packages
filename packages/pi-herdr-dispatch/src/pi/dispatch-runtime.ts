@@ -11,10 +11,7 @@ import {
 } from "../domain/config.js";
 import { HerdrAdapter } from "../herdr/adapter.js";
 import { OriginMonitor } from "../monitor/origin-monitor.js";
-import {
-  buildAutoRunPreamble,
-  decideSettlementWake,
-} from "../settlement/auto-run.js";
+import { AutoRunCoordinator } from "../settlement/auto-run.js";
 import {
   OriginContextDelivery,
   type OriginContextPort,
@@ -51,8 +48,8 @@ export class DispatchRuntime {
   #originSessionId?: string;
   #workspaceId?: string;
   #config: DispatchConfig = { ...DEFAULT_DISPATCH_CONFIG };
-  /** Auto Run Depth for proposals in the currently triggered turn; cleared when the agent run settles. */
-  #autoRunTurnDepth?: number;
+  readonly #autoRun = new AutoRunCoordinator();
+  #pendingDeliveryTimer?: NodeJS.Timeout;
   #mutationUnavailableReason = UI_COPY.runtime.dispatchSessionNotStarted();
   readonly #stateListeners = new Set<() => void>();
 
@@ -150,7 +147,10 @@ export class DispatchRuntime {
           herdr: this.#adapter,
           config,
           workspaceId,
-          onSettled: (dispatchId) => void this.#notifyOutcome(dispatchId),
+          onSettled: (dispatchId) => {
+            void this.#notifyOutcome(dispatchId);
+            void this.deliverPendingContext(ctx, dispatchId).catch(() => undefined);
+          },
         });
         this.#application = new DispatchApplication({
           config,
@@ -158,7 +158,7 @@ export class DispatchRuntime {
           herdr: this.#adapter,
           workspaceId,
           originTerminalId: originPane.terminalId,
-          currentAutoRunDepth: () => this.#autoRunTurnDepth ?? 0,
+          currentAutoRunDepth: () => this.#autoRun.currentDepth(),
           ...(this.#monitor === undefined
             ? {}
             : {
@@ -168,7 +168,10 @@ export class DispatchRuntime {
                   this.#updateWidget();
                 },
               }),
-          onSettled: (dispatchId) => void this.#notifyOutcome(dispatchId),
+          onSettled: (dispatchId) => {
+            void this.#notifyOutcome(dispatchId);
+            void this.deliverPendingContext(ctx, dispatchId).catch(() => undefined);
+          },
         });
         if (ctx.mode === "tui") {
           this.#agentLauncher = new AgentLaunchService({
@@ -182,6 +185,15 @@ export class DispatchRuntime {
         this.#updateWidget();
         if (this.autoRunState()?.armed) await this.#notifyAutoRunArmedOnStart();
         await this.deliverPendingContext(ctx);
+        if (ctx.mode === "tui") {
+          // Settlements written by other processes (emergency resolution) have
+          // no in-process event; a bounded poll keeps an armed idle Origin wakeable.
+          this.#pendingDeliveryTimer = setInterval(
+            () => void this.deliverPendingContext(ctx).catch(() => undefined),
+            config.livenessPollMs,
+          );
+          this.#pendingDeliveryTimer.unref();
+        }
       }
       return this.#application !== undefined;
     } catch (error) {
@@ -202,35 +214,28 @@ export class DispatchRuntime {
     const sessionId = ctx.sessionManager.getSessionId();
     const armed =
       this.#mutationUnavailableReason === "" && registry.isAutoRunArmed(sessionId);
-    const pending = onlyDispatchId
+    const pending = (onlyDispatchId
       ? [registry.getDispatch(onlyDispatchId)].filter((item) => item !== undefined)
-      : registry.listPendingContextDelivery(sessionId);
-    for (const dispatch of pending) {
-      if (dispatch.originSessionId !== sessionId) continue;
-      const decision = decideSettlementWake({
-        armed,
-        dispatch,
-        maxAutoRunDepth: this.#config.maxAutoRunDepth,
-      });
-      if (decision.wake) {
-        // The marker outlives this delivery until the triggered run settles, so
-        // proposals created in the woken turn inherit max(settled depths) + 1.
-        this.#autoRunTurnDepth = Math.max(this.#autoRunTurnDepth ?? 0, decision.nextDepth);
-        this.#contextDelivery.deliver(dispatch.id, context, {
-          preamble: buildAutoRunPreamble(decision.remainingBudget),
-        });
-        continue;
-      }
-      const delivered = this.#contextDelivery.deliver(dispatch.id, context);
-      if (decision.reason === "depth-exhausted" && delivered === "delivered") {
-        await this.#notifyAutoRunDepthExhausted(dispatch.id);
-      }
-    }
+      : registry.listPendingContextDelivery(sessionId)
+    ).filter((dispatch) => dispatch.originSessionId === sessionId);
+    this.#autoRun.deliverPending({
+      armed,
+      maxAutoRunDepth: this.#config.maxAutoRunDepth,
+      pending,
+      deliver: (dispatchId, wake) => this.#contextDelivery!.deliver(dispatchId, context, wake),
+      notifyDepthExhausted: (dispatchId) => void this.#notifyAutoRunDepthExhausted(dispatchId),
+    });
   }
 
-  /** Clears the Auto Run turn marker; wired to agent_settled, when queued continuations are drained. */
-  clearAutoRunTurnMarker(): void {
-    this.#autoRunTurnDepth = undefined;
+  /** A model turn started; wake-eligible settlements stay pending until the run settles. */
+  noteTurnStarted(): void {
+    this.#autoRun.noteTurnStarted();
+  }
+
+  /** The run fully settled: close the wake bracket and release anything held back. */
+  async noteRunSettled(ctx: ExtensionContext): Promise<void> {
+    this.#autoRun.noteRunSettled();
+    await this.deliverPendingContext(ctx);
   }
 
   autoRunState(): { armed: boolean; maxDepth: number } | undefined {
@@ -258,7 +263,9 @@ export class DispatchRuntime {
     this.#ui = undefined;
     this.#originSessionId = undefined;
     this.#workspaceId = undefined;
-    this.#autoRunTurnDepth = undefined;
+    this.#autoRun.reset();
+    if (this.#pendingDeliveryTimer) clearInterval(this.#pendingDeliveryTimer);
+    this.#pendingDeliveryTimer = undefined;
     this.#monitor?.stop();
     this.#monitor = undefined;
     this.#contextDelivery = undefined;

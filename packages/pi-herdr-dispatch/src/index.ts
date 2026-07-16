@@ -28,16 +28,20 @@ export default function piHerdrDispatch(pi: ExtensionAPI): void {
   registerSafetyGate(pi, {
     currentPaneId: () => process.env.HERDR_PANE_ID,
     getLeaseContext: () => runtime.registryRuntime.leaseContext(),
+    registryDatabasePath: () => runtime.registryRuntime.path,
   });
 
   pi.on("session_start", async (event, ctx) => {
     await runtime.start(ctx, event.reason);
   });
+  pi.on("agent_start", () => {
+    runtime.noteTurnStarted();
+  });
   pi.on("agent_end", async (_event, ctx) => {
     await runtime.deliverPendingContext(ctx);
   });
-  pi.on("agent_settled", () => {
-    runtime.clearAutoRunTurnMarker();
+  pi.on("agent_settled", async (_event, ctx) => {
+    await runtime.noteRunSettled(ctx);
   });
   pi.on("session_shutdown", () => {
     runtime.stop();
