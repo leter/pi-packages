@@ -2,7 +2,7 @@
 
 A Pi extension under staged development for automatically dispatching work through a typed, Registry-backed path to coding Agents in one local Herdr workspace, including an explicit TUI path that can create one new Agent before dispatch.
 
-> **Status:** Experimental, with Phase 6 acceptance restored. The delivery, result, and widget fixes passed a fresh real Pi/Claude Code/Codex/OpenCode/Droid/Amp/Grok matrix, and automatic-default dispatch passed a post-schema-v3 no-prompt live probe. Auto Run (Phase 8, [ADR 0014](./docs/adr/0014-auto-run-settlement-continuation.md)) is implemented with unit and integration coverage; its live acceptance item has not yet been run. The package remains `private` at `0.0.0-development`; no package has been published.
+> **Status:** Experimental, with Phase 6 acceptance restored. The delivery, result, and widget fixes passed a fresh real Pi/Claude Code/Codex/OpenCode/Droid/Amp/Grok matrix, and automatic-default dispatch passed a post-schema-v3 no-prompt live probe. Auto Run (Phase 8, [ADR 0014](./docs/adr/0014-auto-run-settlement-continuation.md)) is implemented; its wake decision, coordinator orchestration (burst coalescing, one-wake-in-flight, depth attribution), Registry access guard, and schema-v5 persistence are unit/integration tested, while the end-to-end DispatchRuntime wiring is left to its live acceptance item (L14), not yet run. The package remains `private` at `0.0.0-development`; no package has been published.
 
 ## Requirements
 
@@ -107,13 +107,13 @@ Dispatch is automatic by default in TUI mode. `herdr_dispatch_propose` and a com
 
 ## Auto Run (自动运行)
 
-By default a settled result only queues quietly and enters the model's context on your next message. `/hd-auto on` arms **Auto Run** for the current session: every settlement (done, blocked, failed, or cancelled) then wakes the model automatically — while it is busy, the result is processed right after the current turn ends, so bursts coalesce. The woken model receives the sanitized result in its usual untrusted framing plus a fixed preamble stating the remaining chain budget and its job: aggregate, verify, and decide whether one follow-up dispatch is warranted.
+By default a settled result only queues quietly and enters the model's context on your next message. `/hd-auto on` arms **Auto Run** for the current session: every settlement (done, blocked, failed, or cancelled) then wakes the model automatically. Only one Auto Run turn ever runs at a time — results that settle while a turn is in flight are held and released together when it finishes, so a burst of completions becomes a single follow-up turn rather than a pile-up. The woken model receives the sanitized result in its usual untrusted framing plus a fixed preamble stating the remaining chain budget and its job: aggregate, verify, and decide whether one follow-up dispatch is warranted.
 
 The chain always terminates: dispatches created during an automatic turn carry an **Auto Run Depth** one deeper than the settlement that triggered the turn, and at `maxAutoRunDepth` (default 5) the settlement queues quietly with one review notification instead of waking the model. Speaking to Pi yourself resets the chain — your own proposals are always depth 0.
 
 The switch is per-session, persisted, and restored on resume, so an armed session is kept loudly visible: a persistent `⚡自动` widget segment, the Dispatch Manager top border, a soundless notification on start/resume, and `/hd-auto` for the exact state. Automatic delivery never marks a result as read — the `已完成 · 未读` audit trail works exactly as before.
 
-`/hd-auto off` guarantees no new ignition; one already-enqueued wake may still fire, and a turn already running is stopped with Esc. Disarming never touches Pi's message queue, so no result can be lost. The model cannot arm Auto Run through any tool; it may only downgrade a single dispatch with `wakeOnSettle: false` so a fire-and-forget task stays quiet.
+`/hd-auto off` guarantees no new ignition: an Auto Run turn already running continues (stop it with Esc), but nothing held pending will trigger another — those results fall back to the quiet queue. Disarming never touches Pi's message queue, so no result can be lost. The model cannot arm Auto Run through any tool, and the Registry database it lives in is off-limits to covered `bash`/`edit`/`write`; the model may only downgrade a single dispatch with `wakeOnSettle: false` so a fire-and-forget task stays quiet.
 
 ## Configuration
 

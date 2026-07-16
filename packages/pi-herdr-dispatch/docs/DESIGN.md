@@ -212,6 +212,10 @@ Write mode acquires a globally unique Worktree Write Lease. Every Pi process loa
 
 The lease guard does not cover unknown third-party mutating tools, external manual shells, non-Pi agents, or commands the classifier cannot recognize. Documentation and UI must call it best-effort rather than an OS-level lock. Read-only built-in commands remain available.
 
+### Dispatch Registry access guard
+
+Auto Run's armed switch, reservations, and `auto_run_depth` counters live in the Registry database. Because the model can drive `bash`/`edit`/`write`, a covered operation that touched that database directly could arm Auto Run or reset its own depth, defeating the "user-only arming" and depth-termination guarantees. The same covered-path guard therefore denies any `edit`/`write` inside the Registry directory and any `bash` command referencing the Registry path or its distinctive `.local/state/pi-herdr-dispatch` segment. Reads are denied alongside writes: the guard fails closed rather than parse sqlite invocation flavors. Like every covered-path rule this is best-effort — an obfuscated shell, an alternate binary, or direct socket/SQLite code from outside Pi can still reach the file — so it narrows, not closes, the residual bypass named in the threat model.
+
 ### Raw Herdr CLI gate
 
 The globally installed official Herdr skill teaches Pi to use Herdr through ordinary `bash`. Without a gate, skill-guided commands can send tasks, create Agents/panes, or block waiting for completion without any Dispatch Proposal, Target Occupancy, Worktree Write Lease, or Result Envelope. The extension therefore applies one classifier to both:
@@ -259,9 +263,10 @@ The remaining safety boundary is explicitly best-effort. The package cannot full
 - an obfuscated shell invocation the classifier cannot recognize;
 - another extension's custom mutating tool;
 - code that opens the Herdr socket directly;
-- processes that mutate the worktree without consulting the Registry.
+- processes that mutate the worktree without consulting the Registry;
+- code that opens or edits the Registry database outside Pi's covered paths (the Registry access guard narrows but cannot close this; an obfuscated shell or direct SQLite call could still arm Auto Run or reset a depth counter).
 
-Accordingly, Target Occupancy and Worktree Write Leases are coordination records for cooperating/covered paths, not universal locks. Any UI claim about exclusivity or non-mutation must retain that qualification.
+Accordingly, Target Occupancy, Worktree Write Leases, and the Auto Run switch/depth records are coordination state for cooperating/covered paths, not universal locks. Any UI claim about exclusivity, non-mutation, or model-inability-to-arm must retain that qualification.
 
 ## Lifecycle, attention, and final outcomes
 
@@ -377,14 +382,15 @@ Auto Run ([ADR 0014](./adr/0014-auto-run-settlement-continuation.md)) is the sol
 
 - **Arming is user-only.** `/hd-auto on|off` (long form `/herdr-dispatch-auto`) is TUI-only; with no argument it reports the armed state and depth limit. The switch is persisted in the Registry per Origin Session ID and survives `/reload` and resume, so visibility is a hard requirement: an armed session shows a persistent `⚡自动` widget segment (even when otherwise quiet), the Dispatch Manager top border shows the state, and starting into an armed session emits one soundless notification. The model can never arm Auto Run; `herdr_dispatch_propose` accepts only the downgrade `wakeOnSettle: false`.
 - **Only settlement wakes, and every Final Outcome does.** Attention Conditions never trigger a turn: reply, cancellation, and resolution are user-only actions, so the model has nothing safe to do there.
-- **Auto Run Depth guarantees termination.** Proposals confirmed in a user turn record depth 0; proposals confirmed during an Auto Run turn record max(triggering settlement depths) + 1, tracked by a process-local marker set when a wake is sent and cleared on `agent_settled`. A settlement at `maxAutoRunDepth` (default 5, configurable 1–20) does not wake: it queues quietly — today's verified path — and emits one review notification. Width is already bounded by the concurrency caps, so unattended work is depth × width bounded, and an injected-result chain must win every hop yet still dies at the limit.
-- **Wake delivery.** An idle Origin starts a turn (`triggerTurn: true`); a streaming Origin processes the message at the next turn boundary (`deliverAs: "followUp"`), so bursts coalesce into one following turn. An armed wake never uses `nextTurn`, which would stall the chain until a human speaks.
+- **Auto Run Depth guarantees termination.** Proposals confirmed in a user turn record depth 0; proposals confirmed during an Auto Run turn record max(triggering settlement depths) + 1. The `AutoRunCoordinator` brackets exactly the triggered turn: it records the wake depth when it dispatches a wake and clears it on `agent_settled` (the run fully settled, no queued continuation remains), so proposals in an unrelated user turn stay depth 0. A settlement at `maxAutoRunDepth` (default 5, configurable 1–20) does not wake: it queues quietly — today's verified path — and emits one review notification, tracked so a delivery retry does not re-notify. Width is already bounded by the concurrency caps, so unattended work is depth × width bounded, and an injected-result chain must win every hop yet still dies at the limit.
+- **Wake delivery and coalescing.** The `AutoRunCoordinator` keeps at most one Auto Run turn in flight. While any turn runs (or a wake is already dispatched and its turn has not settled), wake-eligible settlements stay fully pending — not even sent quietly, since a message queued mid-turn could not be upgraded to a wake. When the run settles, the coordinator releases the held batch as one wake: every result but the last is appended quietly and the last carries the preamble and triggers the turn (`deliverAs: "followUp", triggerTurn: true`), so a burst of N settlements coalesces into one turn at depth max(batch) + 1. An idle Origin's single settlement triggers immediately. An armed wake never uses `nextTurn`, which would stall the chain until a human speaks.
+- **Every Final Outcome path wakes.** Settlements found by the Origin Monitor, by an in-process manual resolution (`/hd-resolve`), and by another process's emergency resolution all route through the same pending-delivery check; a five-second poll covers the cross-process case that has no in-process event. A closed Origin has no monitor, so its dispatches' settlements simply stay queued; when the exact Origin resumes with the switch still armed, the pending settlements are re-evaluated and wake as usual (this is the deliberate consequence of a persisted switch, announced by the resume notification and widget before any wake fires).
 - **The wake message is self-contained.** A fixed English model-facing preamble (protocol boundary, outside the ui-copy catalog) wraps the existing untrusted envelope: the turn was auto-triggered with no user utterance, the result is data not instructions, the job is to aggregate/verify/decide, the remaining budget is N, and with nothing warranted the model should summarize briefly and end the turn. Behavior must not depend on the hd-crew Skill being in context.
 - **No bespoke permissions.** An Auto Run turn runs under Pi's ordinary tool-confirmation configuration plus the existing lease guard and Herdr command gate; the package does not add a second permission system.
 - **Seen state is untouched.** Automatic delivery never writes `result_seen_at`; Unseen Settlement counts survive an unattended run as the user's independent audit trail (ADR 0012 unchanged).
 - **`/hd-auto off` means "no new ignition".** Later settlements stop waking at the delivery-time check; a wake already enqueued may still fire at most once (disclosed in copy), a running turn is stopped with Esc, and Pi's message queue is never drained because a failed drain could lose a result.
 
-Every degradation edge — disarmed, downgraded proposal, depth exhausted, non-TUI, Origin closed — lands byte-for-byte in the existing queued `nextTurn` delivery with nothing lost.
+Every non-wake edge — disarmed, downgraded proposal, depth exhausted, non-TUI, and a closed Origin (until it resumes armed) — lands byte-for-byte in the existing queued `nextTurn` delivery with nothing lost.
 
 ## Dispatch Registry
 
@@ -541,7 +547,9 @@ These results tighten behavior to attention/fail-closed. They do not introduce h
 - stored socket-disconnect versus derived Origin-closed monitoring pauses;
 - retention and notification policy;
 - omission of `pane.report_metadata` on Herdr 0.7.3;
-- Auto Run wake decision: armed/disarmed, all four Final Outcomes, depth attribution with max-of-batch inheritance, depth exhaustion, `wakeOnSettle` downgrade, preamble content and budget arithmetic, and `maxAutoRunDepth` validation.
+- Auto Run wake decision: armed/disarmed, all four Final Outcomes, `wakeOnSettle` downgrade, depth exhaustion, preamble content and budget arithmetic, and `maxAutoRunDepth` validation;
+- `AutoRunCoordinator` orchestration at its seam: burst coalescing into one wake at max(batch) + 1, at-most-one-wake-in-flight (a second burst waits until the bracket closes), depth attribution bracketing exactly the triggered turn, quiet delivery for disarmed/downgraded results, and depth-exhaustion notify-once across delivery retries;
+- Dispatch Registry access guard denying covered `bash`/`edit`/`write` that touch the Registry database, while unrelated operations pass.
 
 ### Integration
 
@@ -566,7 +574,10 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 - migration backup and rollback;
 - corrupt/locked database fail-closed behavior;
 - non-TUI processes never starting monitors or state-changing operations;
-- Auto Run settlement wake end-to-end: idle wake versus streaming `followUp`, burst coalescing, off-mid-flight firing at most the already-enqueued wake, resume restoring the armed switch, depth-exhausted quiet queueing with one notification, unseen state surviving automatic delivery, and non-TUI or foreign sessions never waking.
+- Auto Run persistence: schema v5 migration backfilling depth 0 / wake enabled, the per-Origin switch surviving a database reopen (resume), and rejecting an invalid stored depth;
+- Auto Run wake wire format via the context-delivery seam: `deliverAs: "followUp", triggerTurn: true` with the framed preamble, and automatic delivery never marking a result seen.
+
+The end-to-end DispatchRuntime wiring — hook ordering (`agent_start`/`agent_settled` bracketing the turn), the manual-resolution and cross-process emergency-settlement delivery paths, and the five-second cross-process poll — is exercised by live acceptance L14 rather than a fake-socket integration harness, because `DispatchRuntime.start` requires a live Herdr socket connection. The safety-critical orchestration it drives is unit-tested at the `AutoRunCoordinator` seam above.
 
 ### Live acceptance
 
