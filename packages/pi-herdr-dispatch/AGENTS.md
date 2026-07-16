@@ -9,18 +9,18 @@ Read the repo-root `AGENTS.md` first for git rules, scripts, and environment. Th
 - Output reads are explicit one-shot bounded tails (50 or 200 lines, adapter hard limit), timestamped, never streamed, never automatic.
 - Ambiguous delivery is never resent automatically. Ambiguous ID prefixes are never guessed. Uncertain states fail closed and name the uncertainty plainly.
 - A foreign-Origin record exposes only the emergency-resolution path, with its double confirmation intact.
-- Product copy (UI strings, notifications) is English.
+- Product copy (UI strings, notifications) is English and is defined through the typed pure catalog in `src/pi/ui-copy.ts`. Contractual model-facing safety/framing strings stay outside that catalog.
 
 ## Visual vocabulary
 
-- One state = one glyph + one Pi semantic theme color + one text label, defined once in `src/pi/visual.ts` (`StateMark`). Reuse it; never invent ad-hoc glyphs or colors.
+- One state = one glyph + one Pi semantic theme color in `src/pi/visual.ts` (`StateMark`) plus one text label from `src/pi/ui-copy.ts`. Reuse them; never invent ad-hoc glyphs, colors, or inline labels.
 - `error` / `✗` are reserved for the confirmed `failed` Final Outcome. Unsettled attention states (including `target-lost`) use `▲` / `warning`.
 - Color is never the only signal. Dispatch IDs (`hd_…`) never appear in default human-facing rows, notifications, or result cards — only behind explicit technical disclosure; tests assert this.
 - Theme colors are re-applied on every render, never cached across theme switches.
 
 ## Architecture layering
 
-- `src/pi/visual.ts` and `src/pi/dispatch-view-model.ts` are pure (no pi-tui, no I/O) and unit-testable; themed components (`renderers.ts`, `dispatch-view.ts`) only paint what the pure layer built.
+- `src/pi/ui-copy.ts`, `src/pi/visual.ts`, and `src/pi/dispatch-view-model.ts` are pure (no pi-tui, no I/O) and unit-testable; themed components (`renderers.ts`, `dispatch-view.ts`) only paint what the pure layer built.
 - Registry (`src/registry/`) is the durable source of truth (SQLite, fail-closed). UI re-reads it per render; nothing caches dispatch state.
 - Confirmation gates live in `dispatch-controller.ts` / `followup-controller.ts`; the safety guard in `safety-gate.ts`. Changes there require re-reading docs/DESIGN.md and the ADRs first.
 
