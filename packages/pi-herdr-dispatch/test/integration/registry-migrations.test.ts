@@ -10,7 +10,11 @@ import {
   RegistryUnavailableError,
   type DispatchRegistry,
 } from "../../src/registry/registry.js";
-import { REGISTRY_SCHEMA_VERSION } from "../../src/registry/schema.js";
+import {
+  REGISTRY_SCHEMA_V1,
+  REGISTRY_SCHEMA_V2,
+  REGISTRY_SCHEMA_VERSION,
+} from "../../src/registry/schema.js";
 
 const cleanupPaths: string[] = [];
 const openRegistries: DispatchRegistry[] = [];
@@ -52,6 +56,63 @@ describe("Dispatch Registry migrations and fail-closed opening", () => {
       backup.prepare("SELECT name FROM sqlite_master WHERE name = 'legacy_marker'").get(),
     ).toBeDefined();
     backup.close();
+  });
+
+  it("migrates a version-1 Registry to automatic-default dispatch without losing dispatch tables", async () => {
+    const location = await temporaryDatabasePath();
+    const versionOne = openRaw(location.path);
+    versionOne.exec(`${REGISTRY_SCHEMA_V1}\nPRAGMA user_version = 1;`);
+    versionOne.close();
+
+    const registry = await openDispatchRegistry(location.path, {
+      now: () => new Date("2026-07-16T04:00:00.000Z"),
+    });
+    openRegistries.push(registry);
+
+    expect(registry.health().schemaVersion).toBe(3);
+    const raw = openRaw(location.path);
+    expect(
+      raw.prepare("SELECT name FROM sqlite_master WHERE name = 'automation_grants'").get(),
+    ).toBeUndefined();
+    expect(raw.prepare("SELECT name FROM sqlite_master WHERE name = 'dispatches'").get()).toBeDefined();
+    raw.close();
+    expect((await readdir(location.directory)).filter((name) => name.includes("backup"))).toEqual([
+      "registry.sqlite.backup-2026-07-16T04-00-00.000Z",
+    ]);
+  });
+
+  it("migrates version 2 by removing obsolete Automation Grants", async () => {
+    const location = await temporaryDatabasePath();
+    const versionTwo = openRaw(location.path);
+    versionTwo.exec(`${REGISTRY_SCHEMA_V1}\n${REGISTRY_SCHEMA_V2}\nPRAGMA user_version = 2;`);
+    versionTwo
+      .prepare(
+        `INSERT INTO automation_grants(
+          id, origin_session_id, origin_workspace_id, targets_json, allow_write,
+          max_dispatches, used_dispatches, expires_at, created_at, revoked_at
+        ) VALUES (?, ?, ?, ?, 0, 5, 5, ?, ?, NULL)`,
+      )
+      .run(
+        "hag_existing",
+        "session-origin",
+        "w-current",
+        '[{"terminalId":"term-target","cwd":"/repo"}]',
+        10_000,
+        1_000,
+      );
+    versionTwo.close();
+
+    const registry = await openDispatchRegistry(location.path, {
+      now: () => new Date("2026-07-16T05:00:00.000Z"),
+    });
+    openRegistries.push(registry);
+
+    expect(registry.health().schemaVersion).toBe(3);
+    const raw = openRaw(location.path);
+    expect(
+      raw.prepare("SELECT name FROM sqlite_master WHERE name = 'automation_grants'").get(),
+    ).toBeUndefined();
+    raw.close();
   });
 
   it("rolls back a failed migration and preserves both original state and backup", async () => {

@@ -196,6 +196,7 @@ export class DispatchRegistry {
       this.#appendAudit(intent.id, "delivery-intent-confirmed", {
         payloadHash: intent.payloadHash,
         mode: intent.mode,
+        authorization: { kind: "automatic-default" },
       }, intent.confirmedAt);
     });
   }

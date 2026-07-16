@@ -1,4 +1,4 @@
-export const REGISTRY_SCHEMA_VERSION = 1;
+export const REGISTRY_SCHEMA_VERSION = 3;
 
 export const REGISTRY_SCHEMA_V1 = `
 CREATE TABLE dispatches (
@@ -108,4 +108,31 @@ ON dispatches
 BEGIN
   SELECT RAISE(ABORT, 'confirmed dispatch payload is immutable');
 END;
+`;
+
+export const REGISTRY_SCHEMA_V2 = `
+CREATE TABLE automation_grants (
+  id TEXT PRIMARY KEY,
+  origin_session_id TEXT NOT NULL,
+  origin_workspace_id TEXT NOT NULL,
+  targets_json TEXT NOT NULL CHECK (json_valid(targets_json)),
+  allow_write INTEGER NOT NULL CHECK (allow_write IN (0, 1)),
+  max_dispatches INTEGER NOT NULL CHECK (max_dispatches > 0),
+  used_dispatches INTEGER NOT NULL DEFAULT 0 CHECK (
+    used_dispatches >= 0 AND used_dispatches <= max_dispatches
+  ),
+  expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  revoked_at INTEGER,
+  CHECK (expires_at > created_at),
+  CHECK (revoked_at IS NULL OR revoked_at >= created_at)
+) STRICT;
+
+CREATE UNIQUE INDEX automation_grants_active_origin_idx
+  ON automation_grants(origin_session_id)
+  WHERE revoked_at IS NULL;
+`;
+
+export const REGISTRY_SCHEMA_V3 = `
+DROP TABLE IF EXISTS automation_grants;
 `;

@@ -8,7 +8,7 @@ import {
   type ProposalUI,
 } from "../../src/pi/dispatch-controller.js";
 
-function proposal(id: string, task = "Inspect") {
+function proposal(id: string) {
   return createDispatchProposal(
     {
       target: {
@@ -21,7 +21,7 @@ function proposal(id: string, task = "Inspect") {
         statusProvenance: "reported",
       },
       mode: "non-mutating",
-      task,
+      task: "Inspect",
       deadlineMinutes: 30,
       allowProjectDependencyInstall: false,
     },
@@ -29,13 +29,12 @@ function proposal(id: string, task = "Inspect") {
   );
 }
 
-function ui(overrides: Partial<ProposalUI> = {}): ProposalUI {
+function ui(): ProposalUI {
   return {
-    select: vi.fn(async () => "Approve"),
-    input: vi.fn(async () => undefined),
-    editor: vi.fn(async () => undefined),
-    confirm: vi.fn(async () => false),
-    ...overrides,
+    select: vi.fn(),
+    input: vi.fn(),
+    editor: vi.fn(),
+    confirm: vi.fn(),
   };
 }
 
@@ -51,7 +50,7 @@ describe("DispatchController", () => {
       });
 
       await expect(
-        controller.proposeAndConfirm(
+        controller.proposeAndDispatch(
           { target: "term_1", task: "Inspect", mode: "non-mutating" },
           { mode, ui: ui(), origin },
         ),
@@ -60,9 +59,9 @@ describe("DispatchController", () => {
     },
   );
 
-  it("shows exact bytes and requires explicit Approve before confirmation", async () => {
-    const current = proposal("hd_approve");
-    const select = vi.fn(async (_title: string, _options: string[]) => "Approve");
+  it("dispatches by default without opening any confirmation UI", async () => {
+    const current = proposal("hd_automatic");
+    const presentation = ui();
     const confirmProposal = vi.fn(async () => ({
       status: "active" as const,
       dispatchId: current.id,
@@ -75,77 +74,32 @@ describe("DispatchController", () => {
     const controller = new DispatchController({ application: () => application });
 
     await expect(
-      controller.proposeAndConfirm(
+      controller.proposeAndDispatch(
         { target: "term_1", task: "Inspect", mode: "non-mutating" },
-        { mode: "tui", ui: ui({ select }), origin },
+        { mode: "tui", ui: presentation, origin },
       ),
     ).resolves.toEqual({ status: "active", dispatchId: current.id, echoVerified: true });
-    expect(select).toHaveBeenCalledOnce();
-    expect(select.mock.calls[0]?.[0]).toContain(current.payload);
+
+    expect(presentation.select).not.toHaveBeenCalled();
+    expect(presentation.confirm).not.toHaveBeenCalled();
+    expect(presentation.editor).not.toHaveBeenCalled();
+    expect(application.createProposal).toHaveBeenCalledOnce();
     expect(confirmProposal).toHaveBeenCalledWith(current, origin);
   });
 
-  it("turns Edit into a new immutable proposal and requires a second preview", async () => {
-    const first = proposal("hd_first", "Old task");
-    const revised = proposal("hd_revised", "New task");
-    const selections = ["Edit", "write", "Approve"];
-    const select = vi.fn(async (_title: string, _options: string[]) => selections.shift());
-    const reviseProposal = vi.fn(async () => revised);
-    const confirmProposal = vi.fn(async () => ({
-      status: "active" as const,
-      dispatchId: revised.id,
-      echoVerified: true as const,
-    }));
-    const application = {
-      createProposal: vi.fn(async () => first),
-      reviseProposal,
-      confirmProposal,
-    } as unknown as DispatchApplication;
-    const controller = new DispatchController({ application: () => application });
-
-    await controller.proposeAndConfirm(
-      { target: "term_1", task: "Old task", mode: "non-mutating" },
-      {
-        mode: "tui",
-        origin,
-        ui: ui({
-          select,
-          editor: vi.fn(async () => "New task"),
-          input: vi.fn(async () => "45"),
-          confirm: vi.fn(async () => true),
-        }),
-      },
-    );
-
-    expect(reviseProposal).toHaveBeenCalledWith(first, {
-      task: "New task",
-      mode: "write",
-      deadlineMinutes: 45,
-      allowProjectDependencyInstall: true,
+  it("fails before proposal creation when mutations are unavailable", async () => {
+    const createProposal = vi.fn();
+    const controller = new DispatchController({
+      application: () => ({ createProposal }) as unknown as DispatchApplication,
+      mutationUnavailableReason: () => "Registry unavailable",
     });
-    expect(select.mock.calls[0]?.[0]).toContain(first.payload);
-    expect(select.mock.calls[2]?.[0]).toContain(revised.payload);
-    expect(confirmProposal).toHaveBeenCalledWith(revised, origin);
-  });
-
-  it("Cancel invalidates the proposal without confirmation", async () => {
-    const current = proposal("hd_cancel");
-    const cancelProposal = vi.fn();
-    const confirmProposal = vi.fn();
-    const application = {
-      createProposal: vi.fn(async () => current),
-      cancelProposal,
-      confirmProposal,
-    } as unknown as DispatchApplication;
-    const controller = new DispatchController({ application: () => application });
 
     await expect(
-      controller.proposeAndConfirm(
+      controller.proposeAndDispatch(
         { target: "term_1", task: "Inspect", mode: "non-mutating" },
-        { mode: "tui", ui: ui({ select: vi.fn(async () => "Cancel") }), origin },
+        { mode: "tui", ui: ui(), origin },
       ),
-    ).resolves.toEqual({ status: "cancelled" });
-    expect(cancelProposal).toHaveBeenCalledWith(current);
-    expect(confirmProposal).not.toHaveBeenCalled();
+    ).rejects.toThrow("Registry unavailable");
+    expect(createProposal).not.toHaveBeenCalled();
   });
 });

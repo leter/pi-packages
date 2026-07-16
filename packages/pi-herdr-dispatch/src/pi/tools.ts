@@ -50,7 +50,7 @@ export function registerDispatchTools(
           ? {}
           : { allowProjectDependencyInstall: params.allowProjectDependencyInstall }),
       };
-      const result = await controller.proposeAndConfirm(request, interactionContext(ctx));
+      const result = await controller.proposeAndDispatch(request, interactionContext(ctx));
       const details: ConfirmationResultDetails = {
         status: result.status,
         ...("dispatchId" in result && result.dispatchId ? { dispatchId: result.dispatchId } : {}),
@@ -72,7 +72,7 @@ function createAgentsTool(
     name: "herdr_agents_list",
     label: "List Herdr Agents",
     description: "List Eligible Agents in the captured current Herdr workspace.",
-    promptSnippet: "List current-workspace Herdr Agents eligible for confirmed dispatch",
+    promptSnippet: "List current-workspace Herdr Agents eligible for automatic dispatch",
     parameters: emptyParameters,
     async execute() {
       const targets = await application(runtime).listEligibleAgents();

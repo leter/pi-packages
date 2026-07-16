@@ -1,7 +1,12 @@
 import { chmodSync } from "node:fs";
 import { backup, type DatabaseSync } from "node:sqlite";
 
-import { REGISTRY_SCHEMA_V1, REGISTRY_SCHEMA_VERSION } from "./schema.js";
+import {
+  REGISTRY_SCHEMA_V1,
+  REGISTRY_SCHEMA_V2,
+  REGISTRY_SCHEMA_V3,
+  REGISTRY_SCHEMA_VERSION,
+} from "./schema.js";
 
 export interface MigrationOptions {
   databasePath: string;
@@ -43,6 +48,8 @@ export async function migrateRegistry(
     }
     if (lockedVersion < REGISTRY_SCHEMA_VERSION) {
       if (lockedVersion === 0) database.exec(REGISTRY_SCHEMA_V1);
+      if (lockedVersion < 2) database.exec(REGISTRY_SCHEMA_V2);
+      if (lockedVersion < 3) database.exec(REGISTRY_SCHEMA_V3);
       database.exec(`PRAGMA user_version = ${REGISTRY_SCHEMA_VERSION}`);
     }
     database.exec("COMMIT");

@@ -1,40 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  formatAgentData,
-  formatInspectionData,
-  formatProposalPreview,
-} from "../../src/pi/presentation.js";
-import { createDispatchProposal } from "../../src/dispatch/proposal.js";
-
-const proposal = createDispatchProposal(
-  {
-    target: {
-      terminalId: "term_1",
-      paneId: "p1",
-      workspaceId: "w1",
-      agentLabel: "pi",
-      cwd: "/repo",
-      status: "idle",
-      statusProvenance: "reported",
-    },
-    mode: "non-mutating",
-    task: "Inspect",
-    deadlineMinutes: 30,
-    allowProjectDependencyInstall: false,
-  },
-  { now: 1, correlationId: "hd_preview" },
-);
+import { formatAgentData, formatInspectionData } from "../../src/pi/presentation.js";
 
 describe("dispatch presentation", () => {
-  it("shows advisory identity evidence and the exact outbound bytes in confirmation", () => {
-    const preview = formatProposalPreview(proposal);
-    expect(preview).toContain("reported");
-    expect(preview).toContain(proposal.advisoryWarning);
-    expect(preview).toContain(proposal.payload);
-    expect(preview.endsWith(proposal.payload)).toBe(true);
-  });
-
   it("frames and JSON-escapes model-visible Agent metadata", () => {
     const output = formatAgentData([
       {

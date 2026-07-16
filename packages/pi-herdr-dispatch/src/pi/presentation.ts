@@ -1,33 +1,5 @@
-import type { ProposalTarget, DispatchProposal } from "../dispatch/proposal.js";
+import type { ProposalTarget } from "../dispatch/proposal.js";
 import type { AttentionRecord, StoredDispatch } from "../registry/types.js";
-
-export function formatProposalPreview(proposal: DispatchProposal): string {
-  const targetName = sanitizeText(proposal.target.displayName ?? proposal.target.agentLabel, 120);
-  const minutes = Math.max(1, Math.round((proposal.deadlineAt - proposal.createdAt) / 60_000));
-  const fields: readonly (readonly [string, string])[] = [
-    ["target", `${targetName} · ${proposal.target.status} (${proposal.target.statusProvenance})`],
-    ["terminal", proposal.target.terminalId],
-    ["directory", sanitizeText(proposal.target.cwd, 500)],
-    ...(proposal.target.worktreePath
-      ? ([["worktree", sanitizeText(proposal.target.worktreePath, 500)]] as const)
-      : []),
-    ["mode", proposal.mode],
-    ["deadline", `${new Date(proposal.deadlineAt).toISOString()} (in ${minutes}m)`],
-    ...(proposal.allowProjectDependencyInstall
-      ? ([["deps", "project-local dependency installation explicitly authorized"]] as const)
-      : []),
-  ];
-  const width = Math.max(...fields.map(([label]) => label.length));
-  const rows = fields.map(([label, value]) => `  ${label.padEnd(width)}  ${value}`);
-  return `DISPATCH PROPOSAL · ${proposal.id}
-
-${rows.join("\n")}
-
-  ⚠ ${proposal.advisoryWarning}
-
-──── exact outbound bytes ────
-${proposal.payload}`;
-}
 
 export function formatAgentData(targets: readonly ProposalTarget[]): string {
   return `BEGIN_HERDR_AGENT_METADATA_UNTRUSTED

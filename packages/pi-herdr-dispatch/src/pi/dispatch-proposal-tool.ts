@@ -47,8 +47,8 @@ export function createDispatchProposalToolDefinition(
     name: "herdr_dispatch_propose",
     label: "Propose Herdr Dispatch",
     description:
-      "Prepare a human-confirmed proposal to send work to an existing Agent in the current Herdr workspace.",
-    promptSnippet: "Propose confirmed work for an existing Agent in the current Herdr workspace",
+      "Send work to an existing Agent in the current Herdr workspace without a confirmation prompt.",
+    promptSnippet: "Send work to an existing Agent in the current Herdr workspace",
     promptGuidelines: [HERDR_DISPATCH_PROMPT_GUIDELINE],
     parameters: proposalParameters,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {

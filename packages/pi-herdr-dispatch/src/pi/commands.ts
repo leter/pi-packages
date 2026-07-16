@@ -42,10 +42,10 @@ export function registerDispatchCommands(
   });
 
   registerCommandWithAlias(pi, "herdr-dispatch", "hd-new", {
-    description: "Create, preview, and confirm a Herdr dispatch",
+    description: "Create and immediately send a Herdr dispatch",
     handler: async (_args, ctx) =>
       handle(ctx, async () => {
-        if (ctx.mode !== "tui") throw new Error("Dispatch confirmation is available only in TUI mode");
+        if (ctx.mode !== "tui") throw new Error("Dispatch delivery is available only in TUI mode");
         if (runtime.mutationUnavailableReason) throw new Error(runtime.mutationUnavailableReason);
         const app = application(runtime);
         const targets = await app.listEligibleAgents();
@@ -77,7 +77,7 @@ export function registerDispatchCommands(
                 )
               : false,
         };
-        const result = await controller.proposeAndConfirm(request, interactionContext(ctx));
+        const result = await controller.proposeAndDispatch(request, interactionContext(ctx));
         ctx.ui.notify(formatConfirmationResult(result), result.status === "active" ? "info" : "warning");
       }),
   });
