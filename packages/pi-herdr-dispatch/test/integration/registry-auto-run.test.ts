@@ -82,6 +82,19 @@ describe("Auto Run session state", () => {
     expect(audits).toEqual(["auto-run-armed", "auto-run-disarmed"]);
   });
 
+  it("reports the arm timestamp so results settled before arming can be ignored", async () => {
+    const registry = await openRegistry();
+
+    expect(registry.autoRunArmedAt("session_origin")).toBeUndefined();
+    registry.armAutoRun("session_origin", 1_700);
+    // Idempotent arm keeps the original timestamp.
+    registry.armAutoRun("session_origin", 9_999);
+    expect(registry.autoRunArmedAt("session_origin")).toBe(1_700);
+
+    registry.disarmAutoRun("session_origin", 2_000);
+    expect(registry.autoRunArmedAt("session_origin")).toBeUndefined();
+  });
+
   it("survives reopening the same database like a resumed Origin Session", async () => {
     const path = await temporaryDatabasePath();
     const first = await openDispatchRegistry(path, { busyTimeoutMs: 100 });

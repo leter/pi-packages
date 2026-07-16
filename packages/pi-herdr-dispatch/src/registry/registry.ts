@@ -753,12 +753,17 @@ export class DispatchRegistry {
   }
 
   isAutoRunArmed(originSessionId: string): boolean {
+    return this.autoRunArmedAt(originSessionId) !== undefined;
+  }
+
+  /** When Auto Run was armed for this session, or undefined if disarmed. */
+  autoRunArmedAt(originSessionId: string): number | undefined {
     if (!originSessionId) throw new TypeError("originSessionId must not be empty");
     return this.#read("read auto run state", () => {
       const row = this.#database
         .prepare("SELECT armed_at FROM auto_run_sessions WHERE origin_session_id = ?")
-        .get(originSessionId);
-      return row !== undefined;
+        .get(originSessionId) as { armed_at?: number } | undefined;
+      return row?.armed_at;
     });
   }
 
