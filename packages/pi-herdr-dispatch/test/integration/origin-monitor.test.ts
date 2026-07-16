@@ -137,8 +137,7 @@ async function harness(
     config: {
       ...DEFAULT_DISPATCH_CONFIG,
       startupWindowMs: 5_000,
-      cwdPollMs: 5_000,
-      cwdDriftSamples: 2,
+      livenessPollMs: 5_000,
     },
     originSessionId: "session-origin",
     clock,
@@ -378,7 +377,7 @@ describe("OriginMonitor", () => {
     monitor.stop();
   });
 
-  it("uses fake time for startup, deadline, and two-sample cwd drift attention", async () => {
+  it("uses fake time for startup and deadline attention while a drifted cwd stays quiet", async () => {
     const { registry, herdr, clock, monitor, onAttention } = await harness();
     herdr.resolved = {
       pane: { ...pane, agentStatus: "idle", cwd: "/somewhere/else" },
@@ -393,13 +392,10 @@ describe("OriginMonitor", () => {
     expect(registry.listAttention("hd_monitor").map((item) => item.condition)).toContain(
       "unacknowledged",
     );
-    expect(registry.listAttention("hd_monitor").map((item) => item.condition)).not.toContain(
-      "target-moved",
-    );
 
     await clock.advance(5_000);
     expect(new Set(registry.listAttention("hd_monitor").map((item) => item.condition))).toEqual(
-      new Set(["unacknowledged", "overdue", "target-moved"]),
+      new Set(["unacknowledged", "overdue"]),
     );
     expect(onAttention).toHaveBeenCalled();
     monitor.stop();

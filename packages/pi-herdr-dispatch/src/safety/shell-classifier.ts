@@ -1,7 +1,6 @@
 export interface ShellInvocation {
   executable: string;
   args: readonly string[];
-  assignments: ReadonlyMap<string, string>;
 }
 
 export type ShellClassification =
@@ -12,89 +11,39 @@ type Token =
   | { kind: "word"; value: string }
   | { kind: "separator"; value: string };
 
-const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s;
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/s;
 const REDIRECTION = /^\d*(?:>{1,2}|<{1,2}|<>|>&|<&)/;
-const WRAPPERS = new Set([
+const HERDR_WORD = /\bherdr\b/u;
+
+// Executables that run their arguments as a new command (wrappers, shells,
+// eval). Their option grammars are not modelled: any launcher invocation
+// that mentions herdr is reported as unparseable so the policy fails closed
+// and redirects to the typed dispatch path.
+const COMMAND_LAUNCHERS = new Set([
+  "bash",
   "command",
+  "dash",
   "env",
+  "eval",
   "exec",
   "ionice",
   "nice",
   "nohup",
   "parallel",
   "setsid",
+  "sh",
   "stdbuf",
   "sudo",
   "time",
   "timeout",
   "xargs",
-]);
-const ENV_OPTIONS_WITH_VALUE = new Set(["-C", "--chdir", "-S", "--split-string", "-u", "--unset"]);
-const IONICE_OPTIONS_WITH_VALUE = new Set(["-c", "--class", "-n", "--classdata", "-p", "--pid", "-P", "--pgid", "-u", "--uid"]);
-const NICE_OPTIONS_WITH_VALUE = new Set(["-n", "--adjustment"]);
-const PARALLEL_OPTIONS_WITH_VALUE = new Set([
-  "-j",
-  "--jobs",
-  "-S",
-  "--sshlogin",
-  "--sshloginfile",
-  "--workdir",
-  "--results",
-  "--joblog",
-  "--timeout",
-  "--delay",
-  "--retries",
-  "--tagstring",
-  "--colsep",
-]);
-const STDBUF_OPTIONS_WITH_VALUE = new Set(["-e", "--error", "-i", "--input", "-o", "--output"]);
-const TIME_OPTIONS_WITH_VALUE = new Set(["-f", "--format", "-o", "--output"]);
-const TIMEOUT_OPTIONS_WITH_VALUE = new Set(["-k", "--kill-after", "-s", "--signal"]);
-const XARGS_OPTIONS_WITH_VALUE = new Set([
-  "-a",
-  "--arg-file",
-  "-d",
-  "--delimiter",
-  "-E",
-  "--eof",
-  "-I",
-  "--replace",
-  "-L",
-  "--max-lines",
-  "-n",
-  "--max-args",
-  "-P",
-  "--max-procs",
-  "-s",
-  "--max-chars",
-  "--process-slot-var",
-]);
-const SUDO_OPTIONS_WITH_VALUE = new Set([
-  "-C",
-  "-D",
-  "-g",
-  "-h",
-  "-p",
-  "-r",
-  "-R",
-  "-T",
-  "-t",
-  "-u",
-  "--chdir",
-  "--close-from",
-  "--group",
-  "--host",
-  "--other-user",
-  "--prompt",
-  "--role",
-  "--type",
-  "--user",
+  "zsh",
 ]);
 
 export function classifyShellInvocations(command: string): ShellClassification {
   const tokens = lexShell(command);
   if (tokens === undefined) {
-    return { parsed: false, containsLiteralHerdr: /\bherdr\b/.test(command) };
+    return { parsed: false, containsLiteralHerdr: HERDR_WORD.test(command) };
   }
 
   const groups: string[][] = [[]];
@@ -106,111 +55,29 @@ export function classifyShellInvocations(command: string): ShellClassification {
     groups.at(-1)?.push(token.value);
   }
 
-  const invocations = groups
-    .filter((group) => group.length > 0)
-    .map(resolveInvocation)
-    .filter((invocation): invocation is ShellInvocation => invocation !== undefined);
+  const invocations: ShellInvocation[] = [];
+  for (const group of groups) {
+    const invocation = resolveInvocation(group);
+    if (invocation === undefined) continue;
+    if (
+      COMMAND_LAUNCHERS.has(invocation.executable) &&
+      invocation.args.some((arg) => HERDR_WORD.test(arg))
+    ) {
+      return { parsed: false, containsLiteralHerdr: true };
+    }
+    invocations.push(invocation);
+  }
 
   return { parsed: true, invocations };
 }
 
 function resolveInvocation(words: readonly string[]): ShellInvocation | undefined {
-  const assignments = new Map<string, string>();
   let index = 0;
-
-  while (index < words.length) {
-    const assignment = words[index]?.match(ASSIGNMENT);
-    if (!assignment) break;
-    assignments.set(assignment[1], assignment[2]);
-    index += 1;
-  }
-
+  while (index < words.length && ASSIGNMENT.test(words[index]!)) index += 1;
   index = skipRedirections(words, index);
-  let executable = words[index];
+  const executable = words[index];
   if (!executable) return undefined;
-
-  while (WRAPPERS.has(basename(executable))) {
-    const wrapper = basename(executable);
-    index += 1;
-
-    if (wrapper === "env") {
-      while (index < words.length) {
-        const word = words[index]!;
-        const assignment = word.match(ASSIGNMENT);
-        if (assignment) {
-          assignments.set(assignment[1], assignment[2]);
-          index += 1;
-          continue;
-        }
-        if (word.startsWith("-")) {
-          index = skipOption(words, index, ENV_OPTIONS_WITH_VALUE);
-          continue;
-        }
-        break;
-      }
-    } else if (wrapper === "timeout") {
-      index = skipOptions(words, index, TIMEOUT_OPTIONS_WITH_VALUE);
-      if (words[index] !== undefined) index += 1;
-    } else if (wrapper === "nice") {
-      index = skipOptions(words, index, NICE_OPTIONS_WITH_VALUE);
-    } else if (wrapper === "ionice") {
-      index = skipOptions(words, index, IONICE_OPTIONS_WITH_VALUE);
-    } else if (wrapper === "parallel") {
-      index = skipOptions(words, index, PARALLEL_OPTIONS_WITH_VALUE);
-    } else if (wrapper === "stdbuf") {
-      index = skipOptions(words, index, STDBUF_OPTIONS_WITH_VALUE);
-    } else if (wrapper === "time") {
-      index = skipOptions(words, index, TIME_OPTIONS_WITH_VALUE);
-    } else if (wrapper === "xargs") {
-      index = skipOptions(words, index, XARGS_OPTIONS_WITH_VALUE);
-    } else if (wrapper === "sudo") {
-      index = skipOptions(words, index, SUDO_OPTIONS_WITH_VALUE);
-    } else {
-      index = skipOptions(words, index, new Set());
-    }
-
-    index = skipRedirections(words, index);
-    executable = words[index];
-    if (!executable) return undefined;
-  }
-
-  return {
-    executable: basename(executable),
-    args: words.slice(index + 1),
-    assignments,
-  };
-}
-
-function skipOptions(
-  words: readonly string[],
-  start: number,
-  optionsWithValue: ReadonlySet<string>,
-): number {
-  let index = start;
-  while (index < words.length) {
-    const option = words[index]!;
-    if (option === "--") return index + 1;
-    if (!option.startsWith("-") || option === "-") return index;
-    index = skipOption(words, index, optionsWithValue);
-  }
-  return index;
-}
-
-function skipOption(
-  words: readonly string[],
-  index: number,
-  optionsWithValue: ReadonlySet<string>,
-): number {
-  const option = words[index]!;
-  if (optionsWithValue.has(option)) return Math.min(index + 2, words.length);
-
-  for (const valueOption of optionsWithValue) {
-    if (valueOption.startsWith("--") && option.startsWith(`${valueOption}=`)) return index + 1;
-    if (valueOption.startsWith("-") && !valueOption.startsWith("--") && option.startsWith(valueOption) && option !== valueOption) {
-      return index + 1;
-    }
-  }
-  return index + 1;
+  return { executable: basename(executable), args: words.slice(index + 1) };
 }
 
 function skipRedirections(words: readonly string[], start: number): number {

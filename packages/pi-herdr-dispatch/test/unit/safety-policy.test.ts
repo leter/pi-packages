@@ -140,12 +140,28 @@ describe("Herdr shell safety policy", () => {
   it.each([
     "git status --short",
     "grep herdr DESIGN.md",
-    "bash -c 'grep herdr DESIGN.md'",
-    'eval "grep herdr DESIGN.md"',
+    "xargs grep clean src/",
+    "bash -c 'npm test'",
   ])(
     "allows shell commands that do not invoke Herdr: %s",
     (command) => {
       expect(classifyHerdrShell(command, context)).toEqual({ action: "allow" });
+    },
+  );
+
+  it.each([
+    "bash -c 'grep herdr DESIGN.md'",
+    'eval "grep herdr DESIGN.md"',
+    "xargs grep herdr src/",
+  ])(
+    "fails closed when a command launcher mentions Herdr, even as data: %s",
+    (command) => {
+      const decision = classifyHerdrShell(command, context);
+
+      expect(decision.action).toBe("deny");
+      if (decision.action === "deny") {
+        expect(decision.code).toBe("unclassifiable-herdr-command");
+      }
     },
   );
 });

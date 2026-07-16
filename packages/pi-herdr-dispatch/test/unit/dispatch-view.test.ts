@@ -82,7 +82,6 @@ describe("dispatch view model", () => {
       "malformed-result",
       "result-missing",
       "target-lost",
-      "target-moved",
     ].map((condition) => [condition, attentionPriority(condition as AttentionRecord["condition"])]))
       .toEqual([
         ["delivery-unverified", 2],
@@ -93,14 +92,13 @@ describe("dispatch view model", () => {
         ["malformed-result", 3],
         ["result-missing", 4],
         ["target-lost", 1],
-        ["target-moved", 1],
       ]);
   });
 
   it("chooses the highest-priority attention with deterministic ties", () => {
     expect(primaryAttention([attention("overdue"), attention("delivery-unverified")])?.condition)
       .toBe("delivery-unverified");
-    expect(primaryAttention([attention("target-moved"), attention("target-lost")])?.condition)
+    expect(primaryAttention([attention("delivery-unverified"), attention("target-lost")])?.condition)
       .toBe("target-lost");
   });
 

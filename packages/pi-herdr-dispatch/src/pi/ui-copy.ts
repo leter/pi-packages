@@ -195,7 +195,6 @@ export interface HumanUiCopy {
 
 const attentionLabels: Readonly<Record<AttentionCondition, string>> = Object.freeze({
   "target-lost": "Target lost",
-  "target-moved": "Target moved",
   "delivery-unverified": "Delivery unverified",
   "malformed-result": "Malformed result",
   "result-missing": "Result missing",

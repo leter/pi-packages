@@ -88,7 +88,6 @@ describe("dispatch widget", () => {
     "malformed-result",
     "result-missing",
     "target-lost",
-    "target-moved",
   ] as const)("groups an active dispatch with %s under attention, not running", (condition) => {
     const presentation = ui();
     const registry = {
@@ -141,7 +140,6 @@ describe("notification sound policy", () => {
       "malformed-result": "Malformed result",
       "result-missing": "Result missing",
       "target-lost": "Target lost",
-      "target-moved": "Target moved",
     } as const;
     for (const [condition, label] of Object.entries(labels) as [
       keyof typeof labels,

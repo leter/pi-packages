@@ -66,27 +66,17 @@ const HELP_GROUPS = new Set([
 const HELP_FLAGS = new Set(["--help", "-h", "help"]);
 const VERSION_FLAGS = new Set(["--version", "-V"]);
 const TASKING_REDIRECT = "herdr_dispatch_propose or /hd-new";
-const RECURSIVE_SHELLS = new Set(["bash", "dash", "sh", "zsh"]);
-const MAX_CLASSIFICATION_DEPTH = 8;
 
 export function classifyHerdrShell(
   command: string,
   context: HerdrShellContext,
-): SafetyDecision {
-  return classifyHerdrShellAtDepth(command, context, 0);
-}
-
-function classifyHerdrShellAtDepth(
-  command: string,
-  context: HerdrShellContext,
-  depth: number,
 ): SafetyDecision {
   const shell = classifyShellInvocations(command);
   if (!shell.parsed) {
     return shell.containsLiteralHerdr
       ? deny(
           "unclassifiable-herdr-command",
-          "Blocked an unparseable command containing a literal Herdr invocation.",
+          "Blocked an unparseable or wrapped command containing a literal Herdr invocation.",
           TASKING_REDIRECT,
         )
       : { action: "allow" };
@@ -94,23 +84,6 @@ function classifyHerdrShellAtDepth(
 
   let frameHerdrOutput = false;
   for (const invocation of shell.invocations) {
-    const nestedCommand = recursivelyEvaluatedCommand(invocation);
-    if (nestedCommand !== undefined) {
-      if (depth >= MAX_CLASSIFICATION_DEPTH) {
-        if (/\bherdr\b/u.test(nestedCommand)) {
-          return deny(
-            "unclassifiable-herdr-command",
-            "Blocked a Herdr command nested beyond the classifier recursion limit.",
-            TASKING_REDIRECT,
-          );
-        }
-      } else {
-        const nestedDecision = classifyHerdrShellAtDepth(nestedCommand, context, depth + 1);
-        if (nestedDecision.action === "deny") return nestedDecision;
-        frameHerdrOutput ||= nestedDecision.frameHerdrOutput === true;
-      }
-    }
-
     if (invocation.executable !== "herdr") continue;
 
     const decision = classifyInvocation(invocation, context);
@@ -119,16 +92,6 @@ function classifyHerdrShellAtDepth(
   }
 
   return frameHerdrOutput ? { action: "allow", frameHerdrOutput: true } : { action: "allow" };
-}
-
-function recursivelyEvaluatedCommand(invocation: ShellInvocation): string | undefined {
-  if (invocation.executable === "eval") return invocation.args.join(" ");
-  if (!RECURSIVE_SHELLS.has(invocation.executable)) return undefined;
-
-  const commandOptionIndex = invocation.args.findIndex(
-    (arg) => arg === "-c" || (/^-[^-]*c[^-]*$/u.test(arg) && arg !== "-"),
-  );
-  return commandOptionIndex >= 0 ? invocation.args[commandOptionIndex + 1] : undefined;
 }
 
 export function guardWorktreeOperation(

@@ -60,7 +60,7 @@ export function actionIneligibility(
   }
   if (
     action !== "resolve" &&
-    attention.some((record) => record.condition === "target-lost" || record.condition === "target-moved")
+    attention.some((record) => record.condition === "target-lost")
   ) {
     return UI_COPY.command.lostOrMovedResolutionOnly();
   }

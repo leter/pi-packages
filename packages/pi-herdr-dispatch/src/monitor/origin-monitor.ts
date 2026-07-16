@@ -67,7 +67,6 @@ export class OriginMonitor {
   readonly #captureWorktreeSnapshot: (worktreePath: string) => Promise<WorktreeSnapshot>;
   readonly #onChanged: () => void;
   readonly #timers = new Set<ScheduledTask>();
-  readonly #cwdMismatches = new Map<string, number>();
   readonly #acknowledged = new Set<string>();
   readonly #resultRechecks = new Map<string, number>();
   #targets: HerdrMonitorTarget[] = [];
@@ -105,7 +104,7 @@ export class OriginMonitor {
     await this.#catchUpAll();
     await this.refresh();
     this.#initializing = false;
-    this.#scheduleCwdPoll();
+    this.#scheduleLivenessPoll();
   }
 
   async refresh(): Promise<void> {
@@ -143,7 +142,6 @@ export class OriginMonitor {
     this.#running = false;
     for (const timer of this.#timers) this.#clock.clearTimeout(timer);
     this.#timers.clear();
-    this.#cwdMismatches.clear();
     this.#acknowledged.clear();
     this.#resultRechecks.clear();
     this.#targets = [];
@@ -426,33 +424,18 @@ export class OriginMonitor {
     }
   }
 
-  #scheduleCwdPoll(): void {
+  #scheduleLivenessPoll(): void {
     if (!this.#running) return;
-    this.#schedule(this.#config.cwdPollMs, async () => {
-      for (const dispatch of this.#dispatches()) await this.#pollCwd(dispatch);
-      this.#scheduleCwdPoll();
+    this.#schedule(this.#config.livenessPollMs, async () => {
+      for (const dispatch of this.#dispatches()) await this.#pollLiveness(dispatch);
+      this.#scheduleLivenessPoll();
     });
   }
 
-  async #pollCwd(dispatch: StoredDispatch): Promise<void> {
+  async #pollLiveness(dispatch: StoredDispatch): Promise<void> {
     const resolved = await this.#resolve(dispatch);
     if (!resolved) {
       await this.#attention(dispatch.id, "target-lost", { terminalId: dispatch.targetTerminalId });
-      return;
-    }
-    const expectedRoot = dispatch.worktreePath ?? dispatch.targetCwd;
-    if (resolved.pane.cwd && isWithin(expectedRoot, resolved.pane.cwd)) {
-      this.#cwdMismatches.delete(dispatch.id);
-      return;
-    }
-    const samples = (this.#cwdMismatches.get(dispatch.id) ?? 0) + 1;
-    this.#cwdMismatches.set(dispatch.id, samples);
-    if (samples >= this.#config.cwdDriftSamples) {
-      await this.#attention(dispatch.id, "target-moved", {
-        expectedRoot,
-        observedCwd: resolved.pane.cwd,
-        samples,
-      });
     }
   }
 
@@ -504,7 +487,7 @@ export class OriginMonitor {
 
   #isSettlementPaused(dispatchId: string): boolean {
     const conditions = new Set(this.#registry.listAttention(dispatchId).map((item) => item.condition));
-    return conditions.has("target-lost") || conditions.has("target-moved");
+    return conditions.has("target-lost");
   }
 
   #dispatches(): StoredDispatch[] {

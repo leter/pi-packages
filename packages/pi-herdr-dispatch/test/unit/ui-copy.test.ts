@@ -29,7 +29,6 @@ describe("human UI copy catalog", () => {
     ]);
     expect([
       "target-lost",
-      "target-moved",
       "delivery-unverified",
       "malformed-result",
       "result-missing",
@@ -39,7 +38,6 @@ describe("human UI copy catalog", () => {
       "unacknowledged",
     ].map((condition) => UI_COPY.state.attention(condition as never))).toEqual([
       "Target lost",
-      "Target moved",
       "Delivery unverified",
       "Malformed result",
       "Result missing",

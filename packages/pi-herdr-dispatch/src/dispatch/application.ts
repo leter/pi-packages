@@ -1,4 +1,4 @@
-import type { DispatchConfig } from "../domain/config.js";
+import { MAX_INSPECTION_LINES, type DispatchConfig } from "../domain/config.js";
 import { resolveCanonicalWorktree } from "../domain/worktree.js";
 import {
   captureWorktreeSnapshot,
@@ -362,8 +362,8 @@ export class DispatchApplication {
   }
 
   async inspectAgent(target: string, requestedLines: number): Promise<{ target: ProposalTarget; text: string }> {
-    if (!Number.isSafeInteger(requestedLines) || requestedLines < 1 || requestedLines > this.#config.maxInspectionLines) {
-      throw new RangeError(`inspection lines must be from 1 to ${this.#config.maxInspectionLines}`);
+    if (!Number.isSafeInteger(requestedLines) || requestedLines < 1 || requestedLines > MAX_INSPECTION_LINES) {
+      throw new RangeError(`inspection lines must be from 1 to ${MAX_INSPECTION_LINES}`);
     }
     const snapshot = await this.#herdr.currentWorkspaceSnapshot();
     const candidates = snapshot.agents.filter(

@@ -53,7 +53,6 @@ export const SETTLED_DISPLAY_LIMIT = 2;
 
 const ATTENTION_PRIORITY: Readonly<Record<AttentionCondition, number>> = Object.freeze({
   "target-lost": 1,
-  "target-moved": 1,
   "delivery-unverified": 2,
   "malformed-result": 3,
   "result-missing": 4,
@@ -132,7 +131,7 @@ export function availableActions(
 ): readonly DispatchAction[] {
   if (dispatch.lifecycle === "settled") return [];
   if (dispatch.originSessionId !== originSessionId) return ["resolve"];
-  if (attention.some((record) => record.condition === "target-lost" || record.condition === "target-moved")) {
+  if (attention.some((record) => record.condition === "target-lost")) {
     return ["resolve"];
   }
   const actions: DispatchAction[] = [];

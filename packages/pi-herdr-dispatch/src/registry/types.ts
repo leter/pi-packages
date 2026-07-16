@@ -9,8 +9,7 @@ export type AttentionCondition =
   | "monitoring-paused"
   | "malformed-result"
   | "result-missing"
-  | "target-lost"
-  | "target-moved";
+  | "target-lost";
 
 export interface ConfirmDeliveryIntent {
   id: string;

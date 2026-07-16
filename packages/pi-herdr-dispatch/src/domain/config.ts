@@ -12,12 +12,11 @@ export interface DispatchConfig {
   maxActivePerTargetWorkspace: number;
   maxActiveGlobal: number;
   retentionDays: number;
-  inspectionLines: number;
-  maxInspectionLines: number;
-  catchUpLines: number;
-  cwdPollMs: number;
-  cwdDriftSamples: number;
+  livenessPollMs: number;
 }
+
+/** Adapter hard limit for bounded output reads (contract: 50 or 200 lines). */
+export const MAX_INSPECTION_LINES = 200;
 
 export type DispatchConfigState =
   | { status: "ready"; config: DispatchConfig }
@@ -33,11 +32,7 @@ export const DEFAULT_DISPATCH_CONFIG: DispatchConfig = Object.freeze({
   maxActivePerTargetWorkspace: 4,
   maxActiveGlobal: 8,
   retentionDays: 30,
-  inspectionLines: 50,
-  maxInspectionLines: 200,
-  catchUpLines: 200,
-  cwdPollMs: 5_000,
-  cwdDriftSamples: 2,
+  livenessPollMs: 5_000,
 });
 
 const CONFIG_KEYS = new Set(Object.keys(DEFAULT_DISPATCH_CONFIG));
@@ -83,11 +78,7 @@ export function parseDispatchConfig(value: unknown): DispatchConfig {
     throw new RangeError("maxActivePerTargetWorkspace must not exceed maxActiveGlobal");
   }
   range(config.retentionDays, 1, 365, "retentionDays");
-  if (config.inspectionLines !== 50) throw new RangeError("inspectionLines must be 50 in V1");
-  if (config.maxInspectionLines !== 200) throw new RangeError("maxInspectionLines must be 200 in V1");
-  if (config.catchUpLines !== 200) throw new RangeError("catchUpLines must be 200 in V1");
-  range(config.cwdPollMs, 1_000, 60_000, "cwdPollMs");
-  range(config.cwdDriftSamples, 2, 10, "cwdDriftSamples");
+  range(config.livenessPollMs, 1_000, 60_000, "livenessPollMs");
   return config;
 }
 

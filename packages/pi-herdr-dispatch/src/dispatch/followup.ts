@@ -245,9 +245,9 @@ export class DispatchFollowupService {
     if (
       this.#registry
         .listAttention(dispatchId)
-        .some((record) => record.condition === "target-lost" || record.condition === "target-moved")
+        .some((record) => record.condition === "target-lost")
     ) {
-      throw new Error("A lost or moved target can only be resolved manually");
+      throw new Error("A lost target can only be resolved manually");
     }
   }
 }
