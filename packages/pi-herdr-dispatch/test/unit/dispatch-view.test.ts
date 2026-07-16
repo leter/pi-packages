@@ -152,6 +152,32 @@ describe("dispatch view model", () => {
     expect(rendered).not.toContain("hd_");
   });
 
+  it("shows foreign-Origin unsettled dispatches with only emergency resolution", () => {
+    const foreign = dispatch({
+      id: "hd_foreign",
+      originSessionId: "session_earlier",
+      task: "Recover prior work",
+    });
+    const snapshot: DispatchViewSnapshot = {
+      originSessionId: "session_origin",
+      unsettled: [{ dispatch: foreign, attention: [] }],
+      settled: [],
+    };
+
+    const list = plainAll(buildListLines(snapshot, foreign.id, false, 1_000_000)).join("\n");
+    const detail = plainAll(
+      buildDetailLines(foreign, [], { status: "none" }, 1_000_000, snapshot.originSessionId),
+    ).join("\n");
+
+    expect(list).toContain("Recover prior work");
+    expect(list).toContain("Emergency resolution required");
+    expect(list).not.toContain("hd_foreign");
+    expect(detail).toContain("Emergency resolution required");
+    expect(detail).toContain("v resolve");
+    expect(detail).not.toContain("y reply");
+    expect(detail).not.toContain("c cancel");
+  });
+
   it("keeps settled dispatches folded until requested", () => {
     const snapshot: DispatchViewSnapshot = {
       originSessionId: "session_origin",
