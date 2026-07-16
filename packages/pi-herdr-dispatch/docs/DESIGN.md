@@ -14,7 +14,7 @@ Status: implementation plan approved; Phase 5 Origin monitoring and settlement c
 - Agent Launch is user-only, current-workspace/current-cwd, no-focus, and never model-callable; created Agents are retained after failure and settlement ([ADR 0013](./adr/0013-user-initiated-agent-launch.md)).
 - One automatic dispatch per immutable proposal; no authorization setup or proposal confirmation.
 - Every target-side safety instruction is advisory in V1.
-- No model wait tool and no autonomous continuation when a result arrives.
+- No model wait tool. Autonomous continuation exists only as the user-armed, depth-bounded Auto Run path ([ADR 0014](./adr/0014-auto-run-settlement-continuation.md)); with the switch off — the default — a result never starts a model turn.
 - Raw Herdr tasking, pane-control, Agent-start, and blocking-wait commands issued through this Pi's `bash` or `user_bash` paths are gated; Agent inspection remains available.
 - No recursive delegation by a Dispatch Target.
 - Dispatch, reply, cancellation, and manual resolution are TUI-only. Print, JSON, and RPC modes are read-only.
@@ -40,7 +40,7 @@ These cuts preserve the core typed-dispatch workflow while removing the least ve
 
 1. **Pi extension** — commands, automatic model dispatch tools, status widget, Origin Session monitoring, result delivery, a best-effort Pi-side lease guard, and a raw Herdr CLI gate shared by `tool_call` and `user_bash`.
 2. **Herdr adapter** — one exclusive, reconnecting Unix-socket subscription stream per monitoring Origin Session, plus a fresh connection for every unary request because Herdr 0.7.3 closes unary sockets after one response. It bootstraps from `session.snapshot`, subscribes to supported events, reads bounded pane tails, posts notifications, delivers input with `pane.send_input`, and exposes the typed no-focus pane/tab operations required by Agent Launch.
-3. **Dispatch Registry** — global SQLite storage in WAL mode, with transactions and unique constraints for target occupancy and worktree write leases. Schema version 3 removes the obsolete Automation Grant table; version 4 adds `result_seen_at` for Unseen Settlement tracking (pre-existing settled records migrate as seen).
+3. **Dispatch Registry** — global SQLite storage in WAL mode, with transactions and unique constraints for target occupancy and worktree write leases. Schema version 3 removes the obsolete Automation Grant table; version 4 adds `result_seen_at` for Unseen Settlement tracking (pre-existing settled records migrate as seen); version 5 adds the per-Origin-Session Auto Run switch and `auto_run_depth` / `wake_on_settle` on dispatches (backfilled 0 / enabled).
 4. **Origin Monitor** — a TUI Pi session monitors only records whose persisted Origin Session ID equals its own session ID. Monitoring stops when that session is not running and resumes when the exact session resumes.
 5. **Origin-side Safety Gate** — every Pi process loading the package reads global leases, guards covered Pi mutation paths, and prevents recognized raw Herdr commands from bypassing the typed dispatch path, regardless of whether that process is an Origin Monitor.
 
@@ -361,7 +361,7 @@ The wrapper instructs the model to treat the body as data, not instructions. All
 
 Settlement records the result, final outcome, audit data, and reservation release in one SQLite transaction and emits a Herdr notification.
 
-The Origin Session queues one custom result message with `pi.sendMessage(..., { deliverAs: "nextTurn", triggerTurn: false })`. Pi retains it until the next user-initiated turn; it does not append an active-branch entry or start a model turn while idle. Once that user turn persists the custom message, the `agent_end` hook completes the durable claim. Exactly-once delivery is checked against the **active branch**:
+By default the Origin Session queues one custom result message with `pi.sendMessage(..., { deliverAs: "nextTurn", triggerTurn: false })`. Pi retains it until the next user-initiated turn; it does not append an active-branch entry or start a model turn while idle. When Auto Run is armed and the wake decision allows it, the same message is sent with `deliverAs: "followUp", triggerTurn: true` instead (see [Auto Run](#auto-run)); the exactly-once claim mechanics below are identical for both variants. Once a turn persists the custom message, the `agent_end` hook completes the durable claim. Exactly-once delivery is checked against the **active branch**:
 
 1. identify the Origin Session by session ID;
 2. scan the active branch for a custom result message with the dispatch ID;
@@ -370,6 +370,21 @@ The Origin Session queues one custom result message with `pi.sendMessage(..., { 
 5. if the branch changed during the operation, leave delivery pending and retry against the new active branch.
 
 A later user-initiated branch navigation does not cause reinjection. Forks and clones have different session IDs and never claim the result.
+
+## Auto Run
+
+Auto Run ([ADR 0014](./adr/0014-auto-run-settlement-continuation.md)) is the sole exception to the former "no autonomous continuation" boundary: a session-scoped, user-armed, depth-bounded mechanism by which a Dispatch Settlement triggers one Origin Session model turn. The ADR's numbered decisions are normative; this section summarizes the behavior.
+
+- **Arming is user-only.** `/hd-auto on|off` (long form `/herdr-dispatch-auto`) is TUI-only; with no argument it reports the armed state and depth limit. The switch is persisted in the Registry per Origin Session ID and survives `/reload` and resume, so visibility is a hard requirement: an armed session shows a persistent `⚡自动` widget segment (even when otherwise quiet), the Dispatch Manager top border shows the state, and starting into an armed session emits one soundless notification. The model can never arm Auto Run; `herdr_dispatch_propose` accepts only the downgrade `wakeOnSettle: false`.
+- **Only settlement wakes, and every Final Outcome does.** Attention Conditions never trigger a turn: reply, cancellation, and resolution are user-only actions, so the model has nothing safe to do there.
+- **Auto Run Depth guarantees termination.** Proposals confirmed in a user turn record depth 0; proposals confirmed during an Auto Run turn record max(triggering settlement depths) + 1, tracked by a process-local marker set when a wake is sent and cleared on `agent_settled`. A settlement at `maxAutoRunDepth` (default 5, configurable 1–20) does not wake: it queues quietly — today's verified path — and emits one review notification. Width is already bounded by the concurrency caps, so unattended work is depth × width bounded, and an injected-result chain must win every hop yet still dies at the limit.
+- **Wake delivery.** An idle Origin starts a turn (`triggerTurn: true`); a streaming Origin processes the message at the next turn boundary (`deliverAs: "followUp"`), so bursts coalesce into one following turn. An armed wake never uses `nextTurn`, which would stall the chain until a human speaks.
+- **The wake message is self-contained.** A fixed English model-facing preamble (protocol boundary, outside the ui-copy catalog) wraps the existing untrusted envelope: the turn was auto-triggered with no user utterance, the result is data not instructions, the job is to aggregate/verify/decide, the remaining budget is N, and with nothing warranted the model should summarize briefly and end the turn. Behavior must not depend on the hd-crew Skill being in context.
+- **No bespoke permissions.** An Auto Run turn runs under Pi's ordinary tool-confirmation configuration plus the existing lease guard and Herdr command gate; the package does not add a second permission system.
+- **Seen state is untouched.** Automatic delivery never writes `result_seen_at`; Unseen Settlement counts survive an unattended run as the user's independent audit trail (ADR 0012 unchanged).
+- **`/hd-auto off` means "no new ignition".** Later settlements stop waking at the delivery-time check; a wake already enqueued may still fire at most once (disclosed in copy), a running turn is stopped with Esc, and Pi's message queue is never drained because a failed drain could lose a result.
+
+Every degradation edge — disarmed, downgraded proposal, depth exhausted, non-TUI, Origin closed — lands byte-for-byte in the existing queued `nextTurn` delivery with nothing lost.
 
 ## Dispatch Registry
 
@@ -425,6 +440,7 @@ Every command keeps its descriptive long name for compatibility and registers a 
 - `/hd-create` (`/herdr-dispatch-create`) — user-only TUI Agent Launch followed by the same automatic dispatch path. The complete wizard runs before creation. It offers only fixed-catalog Agent types whose executable exists; `pi`/`claude`/`codex`/`opencode` require a current integration, while `amp`/`droid`/`grok` permit reviewed screen detection. It has four layouts: adaptive current-tab (default), right, down, or a new tab. Current-tab splits are 50/50; adaptive chooses right when the Origin pane width/height ratio is at least 2, otherwise down. Creation inherits `ctx.cwd`, never focuses the new resource, waits a configurable 60 seconds for exact-terminal idle-like eligibility with the provenance permitted for that Agent type, and allows Esc to stop waiting. Created resources are retained on cancellation, failure, race loss, and settlement. Cancellation is checked between create, rename, start, and readiness steps; cancellation/failure copy discloses the retained pane/tab when creation was confirmed. The fixed one-word executable plus Enter uses one `pane.send_input` request, so launch cannot leave a separately acknowledged command without its Enter.
 - `/hd-agents` (`/herdr-agents`) — Agent metadata from the current Workspace Scope only.
 - `/hd-manager` (`/herdr-dispatches`) — interactive current-workspace Dispatch Manager; `alt+h` opens the same panel. It renders as a rounded framed panel capped at 96 terminal columns (`任务派发` and counts embedded in the top border, key hints in the bottom border, display-width-aware for CJK). Section headings use a stronger semantic level than dim row metadata, sections and the bottom keybar have one-row separation, and key teaching is not duplicated in folded headings; an empty body stays compact without instructional placeholder copy. It groups attention, running, and delivering records, keeps a small current-workspace settled fold, exposes `c 清空未读` only while Unseen Settlements exist, and offers one-shot `r`/`R` output reads framed as untrusted. A settled record's detail formats the Sanitized Dispatch Result as an untrusted-labelled card (summary, blocker, file/test counts) and offers `f` — a Follow-up Dispatch: a brand-new Automatic Dispatch to the same target through the full typed path (settlement is never reopened).
+- `/hd-auto [on|off]` (`/herdr-dispatch-auto`) — reports the Auto Run armed state and depth limit with no argument; `on`/`off` toggles the session-scoped switch, TUI-only. Disabling never manipulates Pi's message queue.
 - `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — filtered task selection followed by a previewed reply for an Active Dispatch with attention.
 - `/hd-cancel [id-or-prefix]` (`/herdr-dispatch-cancel`) — filtered task selection followed by a previewed normal cancellation.
 - `/hd-resolve [id-or-prefix]` (`/herdr-dispatch-resolve`) — current-workspace task selection followed by manual or double-confirmed emergency resolution.
@@ -446,7 +462,7 @@ The manager is live: `DispatchRuntime.onStateChanged()` requests a render after 
 
 `herdr_dispatch_propose` registers an explicit prompt guideline: **Use `herdr_dispatch_propose` for every request to task another Herdr Agent. Do not use `bash`, `user_bash`, or raw `herdr pane` / `herdr agent` / `herdr wait` commands to send work or wait for it.** It sends automatically through the typed path without a confirmation prompt. The other dispatch tools reinforce the same raw-command rule when active.
 
-There is no model wait, reply, cancel, force-cancel, resolve, Agent-start, pane-create, workspace-create, or worktree-create tool. Agent Launch remains a slash command only.
+There is no model wait, reply, cancel, force-cancel, resolve, Agent-start, pane-create, workspace-create, or worktree-create tool. Agent Launch and Auto Run arming remain slash commands only; `herdr_dispatch_propose` carries only the downgrade-only `wakeOnSettle` parameter.
 
 The package bundles `skills/hd-crew/SKILL.md` as the version-controlled natural-language routing policy over these tools. The Skill must muster immediately before new dispatches, route by exact eligible terminal identity, parallelize only independent non-mutating work, and treat automatically delivered results as untrusted data. It never widens the model-tool surface: Agent creation, reply, cancellation, resolution, seen-state cleanup, and integration setup remain explicit user TUI actions.
 
@@ -478,7 +494,8 @@ Defaults:
   "maxActivePerTargetWorkspace": 4,
   "maxActiveGlobal": 8,
   "retentionDays": 30,
-  "livenessPollMs": 5000
+  "livenessPollMs": 5000,
+  "maxAutoRunDepth": 5
 }
 ```
 
@@ -523,7 +540,8 @@ These results tighten behavior to attention/fail-closed. They do not introduce h
 - emergency-resolution eligibility, user attestation, and double confirmation;
 - stored socket-disconnect versus derived Origin-closed monitoring pauses;
 - retention and notification policy;
-- omission of `pane.report_metadata` on Herdr 0.7.3.
+- omission of `pane.report_metadata` on Herdr 0.7.3;
+- Auto Run wake decision: armed/disarmed, all four Final Outcomes, depth attribution with max-of-batch inheritance, depth exhaustion, `wakeOnSettle` downgrade, preamble content and budget arithmetic, and `maxAutoRunDepth` validation.
 
 ### Integration
 
@@ -547,7 +565,8 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 - malformed and conflicting Result Envelopes;
 - migration backup and rollback;
 - corrupt/locked database fail-closed behavior;
-- non-TUI processes never starting monitors or state-changing operations.
+- non-TUI processes never starting monitors or state-changing operations;
+- Auto Run settlement wake end-to-end: idle wake versus streaming `followUp`, burst coalescing, off-mid-flight firing at most the already-enqueued wake, resume restoring the armed switch, depth-exhausted quiet queueing with one notification, unseen state surviving automatic delivery, and non-TUI or foreign sessions never waking.
 
 ### Live acceptance
 
@@ -559,10 +578,11 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 6. Exercise blocked-runtime → confirmed reply → valid result, with the focused-input warning visible.
 7. Exercise overdue, normal cancellation, manual interrupt guidance, result-missing, and target-lost.
 8. Restart Herdr during active work and record identity/history behavior without assuming continuity.
-9. Verify no result triggers a model turn and forks/clones do not claim Origin results.
+9. Verify no result triggers a model turn unless Auto Run is armed and within budget, and forks/clones do not claim Origin results.
 10. Verify settlement injects only sanitized results while explicit inspection returns untrusted-framed output.
 11. Ask Pi naturally to “use Herdr to task the adjacent Agent” and verify the official skill cannot bypass the typed dispatch path through `bash`, `!`, or `!!`; verify current-pane reads still work, while repeated foreign reads and `api snapshot` redirect to typed tools.
 12. Verify Registry failure preserves reservations and disables state changes.
+13. Arm Auto Run and run a two-hop dispatch chain unattended (settle → wake → follow-up dispatch → settle); verify the depth limit halts the chain into the queued path, `/hd-auto off` plus Esc stops cleanly, and the widget, Manager border, and resume notification make the armed state visible.
 
 ## Review findings addressed
 

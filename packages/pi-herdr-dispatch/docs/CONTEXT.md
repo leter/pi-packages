@@ -168,6 +168,14 @@ _Avoid_: reopened dispatch, settlement rollback, implicit target trust
 A settled dispatch whose result has not been marked seen in the Dispatch Manager. It stays ambiently visible (widget count, above-the-fold Manager group) until its detail is opened or the user explicitly clears all unread completions with `c`; either path records seen presentation metadata without deleting retained history or changing lifecycle and safety state ([ADR 0012](./adr/0012-unseen-settlement.md)).
 _Avoid_: lifecycle state, reservation holder, automatic expiry
 
+**Auto Run**:
+The session-scoped, user-armed, depth-bounded mechanism by which a Dispatch Settlement triggers one Origin Session model turn ([ADR 0014](./adr/0014-auto-run-settlement-continuation.md)). The user arms it with `/hd-auto`; the model may only downgrade a single proposal, never arm. Every non-wake edge degrades to the quiet queued delivery.
+_Avoid_: autonomous coordinator, model wait tool, unattended mode
+
+**Auto Run Depth**:
+The per-dispatch relay counter that guarantees every Auto Run chain terminates: 0 for user-turn proposals, parent depth + 1 inside an Auto Run turn. At the configured limit a settlement queues quietly and asks for human review instead of waking the model.
+_Avoid_: retry count, turn budget
+
 **Dispatch Reply**:
 A separately confirmed follow-up sent to an unsettled dispatch with attention, retaining the same correlation ID and reservations.
 _Avoid_: new dispatch, autonomous reply
@@ -242,3 +250,5 @@ Product copy (UI strings, notifications) is Simplified Chinese ([ADR 0011](./adr
 | deadline | 截止 |
 | Unseen Settlement | 已完成 · 未读 |
 | Follow-up Dispatch | 追加派发 |
+| Auto Run | 自动运行 |
+| Auto Run Depth | 自动运行深度 |

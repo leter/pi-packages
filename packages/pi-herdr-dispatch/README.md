@@ -2,7 +2,7 @@
 
 A Pi extension under staged development for automatically dispatching work through a typed, Registry-backed path to coding Agents in one local Herdr workspace, including an explicit TUI path that can create one new Agent before dispatch.
 
-> **Status:** Experimental, with Phase 6 acceptance restored. The delivery, result, and widget fixes passed a fresh real Pi/Claude Code/Codex/OpenCode/Droid/Amp/Grok matrix, and automatic-default dispatch passed a post-schema-v3 no-prompt live probe. The package remains `private` at `0.0.0-development`; no package has been published.
+> **Status:** Experimental, with Phase 6 acceptance restored. The delivery, result, and widget fixes passed a fresh real Pi/Claude Code/Codex/OpenCode/Droid/Amp/Grok matrix, and automatic-default dispatch passed a post-schema-v3 no-prompt live probe. Auto Run (Phase 8, [ADR 0014](./docs/adr/0014-auto-run-settlement-continuation.md)) is implemented with unit and integration coverage; its live acceptance item has not yet been run. The package remains `private` at `0.0.0-development`; no package has been published.
 
 ## Requirements
 
@@ -54,6 +54,7 @@ The readable `hd-*` aliases are the recommended interactive commands; the origin
 - `/hd-create` (`/herdr-dispatch-create`) — complete the wizard, create a supported integrated Agent in the current cwd, wait until it is eligible, then send through the same automatic dispatch path.
 - `/hd-agents` (`/herdr-agents`) — list current-workspace Eligible Agents.
 - `/hd-manager` (`/herdr-dispatches`, or `alt+h`) — open the current-workspace Dispatch Manager, browse human-readable tasks, and perform explicit bounded output reads (`r` for 50 lines, `R` for 200).
+- `/hd-auto [on|off]` (`/herdr-dispatch-auto`) — report or toggle Auto Run (自动运行): when armed, settled results wake the model automatically instead of waiting for your next message. TUI-only for `on`/`off`.
 - `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — choose, preview, and confirm a reply when an Active Dispatch has attention.
 - `/hd-cancel [id-or-prefix]` (`/herdr-dispatch-cancel`) — choose and confirm a normal cancellation request; this never sends `Ctrl+C`.
 - `/hd-resolve [id-or-prefix]` (`/herdr-dispatch-resolve`) — choose and manually or emergently settle as `blocked`, `failed`, or `cancelled` after evidence and confirmation; manual resolution never claims `done`.
@@ -104,6 +105,16 @@ The shared `/hd-new` and `/hd-create` deadline prompt shows the configured defau
 
 Dispatch is automatic by default in TUI mode. `herdr_dispatch_propose` and a completed `/hd-new` wizard build one immutable outbound message and send it without a proposal confirmation, grant setup, count limit, expiry, or renewal. The typed path still revalidates current-workspace target identity, status provenance, cwd/canonical worktree, occupancy, leases, and concurrency before durable intent and delivery. Non-TUI modes cannot reserve, send, reply, cancel, resolve, or monitor.
 
+## Auto Run (自动运行)
+
+By default a settled result only queues quietly and enters the model's context on your next message. `/hd-auto on` arms **Auto Run** for the current session: every settlement (done, blocked, failed, or cancelled) then wakes the model automatically — while it is busy, the result is processed right after the current turn ends, so bursts coalesce. The woken model receives the sanitized result in its usual untrusted framing plus a fixed preamble stating the remaining chain budget and its job: aggregate, verify, and decide whether one follow-up dispatch is warranted.
+
+The chain always terminates: dispatches created during an automatic turn carry an **Auto Run Depth** one deeper than the settlement that triggered the turn, and at `maxAutoRunDepth` (default 5) the settlement queues quietly with one review notification instead of waking the model. Speaking to Pi yourself resets the chain — your own proposals are always depth 0.
+
+The switch is per-session, persisted, and restored on resume, so an armed session is kept loudly visible: a persistent `⚡自动` widget segment, the Dispatch Manager top border, a soundless notification on start/resume, and `/hd-auto` for the exact state. Automatic delivery never marks a result as read — the `已完成 · 未读` audit trail works exactly as before.
+
+`/hd-auto off` guarantees no new ignition; one already-enqueued wake may still fire, and a turn already running is stopped with Esc. Disarming never touches Pi's message queue, so no result can be lost. The model cannot arm Auto Run through any tool; it may only downgrade a single dispatch with `wakeOnSettle: false` so a fire-and-forget task stays quiet.
+
 ## Configuration
 
 Optional file: `~/.config/pi-herdr-dispatch/config.json`
@@ -120,7 +131,8 @@ Optional file: `~/.config/pi-herdr-dispatch/config.json`
   "maxActivePerTargetWorkspace": 4,
   "maxActiveGlobal": 8,
   "retentionDays": 30,
-  "livenessPollMs": 5000
+  "livenessPollMs": 5000,
+  "maxAutoRunDepth": 5
 }
 ```
 
@@ -159,7 +171,11 @@ Do **not** resend automatically. The target may have accepted input even when th
 
 ### Origin Session closed or Pi reloaded
 
-Reservations remain durable. Resume the exact Origin Session. It resolves stored target identity and performs a bounded catch-up read before installing target-specific subscriptions; missing targets become `target-lost` and remain available for manual resolution instead of disabling the Adapter. When a Target Agent's pane route changes while monitoring is live, the monitor performs the same catch-up before re-anchoring target-specific subscriptions. Monitoring never transfers to another session. A queued sanitized result uses `nextTurn` and does not start a model turn.
+Reservations remain durable. Resume the exact Origin Session. It resolves stored target identity and performs a bounded catch-up read before installing target-specific subscriptions; missing targets become `target-lost` and remain available for manual resolution instead of disabling the Adapter. When a Target Agent's pane route changes while monitoring is live, the monitor performs the same catch-up before re-anchoring target-specific subscriptions. Monitoring never transfers to another session. A queued sanitized result uses `nextTurn` and does not start a model turn — unless the resumed session has Auto Run armed, which the resume notification and the `⚡自动` widget segment announce before any wake fires.
+
+### Auto Run needs to stop now
+
+`/hd-auto off` stops all future ignition; at most one already-enqueued wake can still fire. Esc interrupts the turn that is currently running. Neither loses a result: everything falls back to the quiet queue, readable on your next message and still counted as unread until you open it.
 
 ### Herdr restarted
 
@@ -179,7 +195,7 @@ State-changing behavior fails closed and never falls back to an empty or in-memo
 
 ## UI and notifications
 
-The extension adds one compact widget below the editor and never replaces Pi's footer. `/hd-manager` (long form `/herdr-dispatches`; shortcut `alt+h`, TUI only) opens the Dispatch Manager: a current-workspace, attention-first list with recently settled current-workspace records folded away. Dispatch IDs are internal correlation details and appear only in explicit technical details. Human-facing tables align and truncate by terminal display columns, including double-width CJK text. The widget and manager re-read current-workspace Registry state on every render instead of caching status. The widget requests a lightweight repaint once per second, so changes written by another Pi process appear without `/reload`. `running` excludes dispatches grouped under attention, and the attention count is the number of affected dispatches—not the number of concurrent conditions. Every foreign-Origin unsettled record counts as attention so reservations left by an earlier Origin Session remain visible in the ambient UI. The manager also refreshes relative times, and performs output reads only as explicit one-shot bounded tails (`r` 50 lines, `R` 200 lines, timestamped and framed as untrusted). Reply, cancellation, and resolution selections still pass through their existing preview, eligibility revalidation, and confirmation gates.
+The extension adds one compact widget below the editor and never replaces Pi's footer. `/hd-manager` (long form `/herdr-dispatches`; shortcut `alt+h`, TUI only) opens the Dispatch Manager: a current-workspace, attention-first list with recently settled current-workspace records folded away. Dispatch IDs are internal correlation details and appear only in explicit technical details. Human-facing tables align and truncate by terminal display columns, including double-width CJK text. The widget and manager re-read current-workspace Registry state on every render instead of caching status. The widget requests a lightweight repaint once per second, so changes written by another Pi process appear without `/reload`. `running` excludes dispatches grouped under attention, and the attention count is the number of affected dispatches—not the number of concurrent conditions. Every foreign-Origin unsettled record counts as attention so reservations left by an earlier Origin Session remain visible in the ambient UI. An armed Auto Run adds a persistent `⚡自动` segment next to the widget label and to the Manager top border — it never disappears while armed, even when nothing is running. The manager also refreshes relative times, and performs output reads only as explicit one-shot bounded tails (`r` 50 lines, `R` 200 lines, timestamped and framed as untrusted). Reply, cancellation, and resolution selections still pass through their existing preview, eligibility revalidation, and confirmation gates.
 
 The optional command selector supports exact IDs and unambiguous prefixes for advanced use, with full-ID argument completion. Ambiguous prefixes open a human-readable picker and are never guessed. A foreign-Origin record is discoverable only within the current Workspace Scope and exposes emergency resolution, not reply or cancellation. Herdr notification sounds are restricted to:
 
