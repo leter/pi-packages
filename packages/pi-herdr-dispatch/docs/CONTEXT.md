@@ -1,12 +1,16 @@
 # Agent Workspace Orchestration
 
-This context coordinates automatically dispatched work sent to existing coding agents in one local Herdr workspace. It does not create agents, panes, workspaces, or worktrees.
+This context coordinates automatically dispatched work sent to coding agents in one local Herdr workspace. A user may launch one new Agent as part of a typed TUI dispatch; the context does not create workspaces or worktrees.
 
 ## Actors and scope
 
 **Existing Agent**:
-A coding agent already running in a Herdr pane.
+A coding agent already running in a Herdr pane, whether it predated the Origin Session or became available through a completed Agent Launch.
 _Avoid_: worker, subagent
+
+**Agent Launch**:
+A user-initiated TUI operation that creates one Agent pane or tab in the Workspace Scope and Origin Session directory, starts one supported Agent with either current Herdr integration provenance or an explicitly reviewed screen-detection fallback, waits until it is eligible, and then submits a fresh Automatic Dispatch. The created Agent remains an Existing Agent after failure or settlement; launch never implies automatic cleanup or ownership.
+_Avoid_: model-created Agent, temporary worker, autonomous scaling, worktree creation
 
 **Workspace Scope**:
 The local Herdr workspace containing the Origin Session and every Agent eligible for its dispatches.
@@ -127,7 +131,7 @@ Any path that tasks or waits on another Agent outside a typed Registry-backed di
 _Avoid_: manual shell only, harmless command
 
 **Herdr Command Gate**:
-The best-effort Origin-side rule that allows scoped metadata inspection and reads of the current Pi pane while denying foreign output reads, cross-workspace snapshots, tasking, Agent creation, foreign-pane control, and blocking waits that would bypass typed policies.
+The best-effort Origin-side rule that allows scoped metadata inspection and reads of the current Pi pane while denying foreign output reads, cross-workspace snapshots, raw tasking, raw Agent creation, foreign-pane control, and blocking waits that would bypass typed policies. It does not block the typed, user-initiated Agent Launch path.
 _Avoid_: shell sandbox, target-side enforcement
 
 ## Results and resolution
@@ -161,7 +165,7 @@ A fresh Automatic Dispatch to the same Dispatch Target, seeded from a settled re
 _Avoid_: reopened dispatch, settlement rollback, implicit target trust
 
 **Unseen Settlement**:
-A settled dispatch whose result the user has not opened in the Dispatch Manager. It stays ambiently visible (widget count, above-the-fold Manager group) until its detail is opened, which records the seen timestamp — presentation metadata, never lifecycle state ([ADR 0012](./adr/0012-unseen-settlement.md)).
+A settled dispatch whose result has not been marked seen in the Dispatch Manager. It stays ambiently visible (widget count, above-the-fold Manager group) until its detail is opened or the user explicitly clears all unread completions with `c`; either path records seen presentation metadata without deleting retained history or changing lifecycle and safety state ([ADR 0012](./adr/0012-unseen-settlement.md)).
 _Avoid_: lifecycle state, reservation holder, automatic expiry
 
 **Dispatch Reply**:
@@ -200,6 +204,7 @@ Product copy (UI strings, notifications) is Simplified Chinese ([ADR 0011](./adr
 | Dispatch Proposal | 派发提议 |
 | Origin Session | 源会话 |
 | Agent | Agent(不译) |
+| Agent Launch | Agent 创建 |
 | Eligible Agent | 可用 Agent |
 | Dispatch Target | 目标 Agent |
 | Target Occupancy | 目标占用 |

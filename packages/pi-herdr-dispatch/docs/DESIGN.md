@@ -4,13 +4,14 @@ Status: implementation plan approved; Phase 5 Origin monitoring and settlement c
 
 ## Purpose
 
-`pi-herdr-dispatch` is a global Pi package for automatically dispatching work through a typed, Registry-backed path to coding agents that already exist in the Origin Pi's current workspace on one local Herdr server. It may inspect Agent metadata, dispatch work to an idle-like Agent, and monitor work from its Origin Session. It cannot create panes, Agents, workspaces, or worktrees.
+`pi-herdr-dispatch` is a global Pi package for automatically dispatching work through a typed, Registry-backed path to coding agents in the Origin Pi's current workspace on one local Herdr server. It may inspect Agent metadata, dispatch work to an idle-like Existing Agent, or perform one user-initiated Agent Launch before dispatch. It cannot create workspaces or worktrees.
 
 ## V1 boundaries
 
 - Local Herdr server/socket only; no SSH remote sessions.
 - Current Herdr workspace only; no cross-workspace dispatch.
-- Existing Agents only; the Origin Pi cannot dispatch to itself.
+- Existing Agents plus explicit TUI Agent Launch; the Origin Pi cannot dispatch to itself.
+- Agent Launch is user-only, current-workspace/current-cwd, no-focus, and never model-callable; created Agents are retained after failure and settlement ([ADR 0013](./adr/0013-user-initiated-agent-launch.md)).
 - One automatic dispatch per immutable proposal; no authorization setup or proposal confirmation.
 - Every target-side safety instruction is advisory in V1.
 - No model wait tool and no autonomous continuation when a result arrives.
@@ -38,7 +39,7 @@ These cuts preserve the core typed-dispatch workflow while removing the least ve
 ## Components
 
 1. **Pi extension** — commands, automatic model dispatch tools, status widget, Origin Session monitoring, result delivery, a best-effort Pi-side lease guard, and a raw Herdr CLI gate shared by `tool_call` and `user_bash`.
-2. **Herdr adapter** — one exclusive, reconnecting Unix-socket subscription stream per monitoring Origin Session, plus a fresh connection for every unary request because Herdr 0.7.3 closes unary sockets after one response. It bootstraps from `session.snapshot`, subscribes to supported events, reads bounded pane tails, posts notifications, and delivers input with `pane.send_input`.
+2. **Herdr adapter** — one exclusive, reconnecting Unix-socket subscription stream per monitoring Origin Session, plus a fresh connection for every unary request because Herdr 0.7.3 closes unary sockets after one response. It bootstraps from `session.snapshot`, subscribes to supported events, reads bounded pane tails, posts notifications, delivers input with `pane.send_input`, and exposes the typed no-focus pane/tab operations required by Agent Launch.
 3. **Dispatch Registry** — global SQLite storage in WAL mode, with transactions and unique constraints for target occupancy and worktree write leases. Schema version 3 removes the obsolete Automation Grant table; version 4 adds `result_seen_at` for Unseen Settlement tracking (pre-existing settled records migrate as seen).
 4. **Origin Monitor** — a TUI Pi session monitors only records whose persisted Origin Session ID equals its own session ID. Monitoring stops when that session is not running and resumes when the exact session resumes.
 5. **Origin-side Safety Gate** — every Pi process loading the package reads global leases, guards covered Pi mutation paths, and prevents recognized raw Herdr commands from bypassing the typed dispatch path, regardless of whether that process is an Origin Monitor.
@@ -74,8 +75,8 @@ A proposal is an immutable complete outbound message containing:
 - mode: `non-mutating` or `write`;
 - an explicit advisory-safety warning;
 - confirmed directory/worktree;
-- deadline (default 30 minutes, allowed 1 minute–24 hours);
-- exact task and constraints;
+- deadline (default 30 minutes via `defaultDeadlineMinutes`, allowed 1 minute–24 hours);
+- exact task and constraints (including the required result language: Result Envelope summary and blocker text in Simplified Chinese, code and identifiers verbatim);
 - project dependency-install permission, if any;
 - correlation ID;
 - exact Result Envelope contract.
@@ -218,7 +219,7 @@ The globally installed official Herdr skill teaches Pi to use Herdr through ordi
 - `tool_call` events for the built-in `bash` tool;
 - `user_bash` events for `!` and `!!` commands.
 
-The extension's own typed Herdr socket adapter does not pass through this shell gate.
+The extension's own typed Herdr socket adapter does not pass through this shell gate. Its Agent Launch methods are reachable only from `/hd-create`; they bind the captured workspace and Origin pane, request no focus, validate returned workspace/cwd/terminal identity, and accept only the fixed supported executable catalog.
 
 Commands proven read-only and not capable of bypassing typed inspection scope are allowed, including:
 
@@ -231,7 +232,7 @@ Commands proven read-only and not capable of bypassing typed inspection scope ar
 
 Allowed Herdr output is still untrusted. When it will enter model context, the corresponding tool result is wrapped in `<untrusted-herdr-cli-output>` framing.
 
-Commands that task, create, control, close, or block on another pane are denied and direct the user/model to `/hd-new` (long form `/herdr-dispatch`) or `herdr_dispatch_propose`. The deny set includes at minimum:
+Commands that task, create, control, close, or block on another pane are denied and direct ordinary tasking to `/hd-new` (long form `/herdr-dispatch`) or `herdr_dispatch_propose`. Raw creation remains denied even though a user may explicitly use `/hd-create`; the deny set includes at minimum:
 
 - `herdr pane run|send-text|send-keys|close` when the target resolves to another pane;
 - `herdr pane split` (it creates another pane) and `herdr agent start`;
@@ -410,7 +411,7 @@ Herdr notifications occur only for Final Outcomes and Attention Conditions:
 - blocked, failed, overdue, malformed, result-missing, target-lost, monitoring-paused, unacknowledged, delivery-unverified: sound `request`;
 - cancelled: sound `none`.
 
-Pi shows a one-line widget below the editor, for example `派发  ● 2 运行中 · ▲ 1 待处理 · ✓ 1 已完成 · alt+h`. Copy is restrained: zero-count segments are never rendered, and with nothing unsettled and no Unseen Settlements the widget collapses to the quiet `派发 · alt+h`. An Unseen Settlement keeps the `✓` segment (and its own above-the-fold Manager group) alive until the user opens the record's detail, which stamps `result_seen_at`. The one-shot outcome notification remains the transient signal; the seen state is the persistent one. Marking seen is the sole view-triggered write and is presentation metadata only — it never touches reservations, lifecycle, or safety decisions ([ADR 0012](./adr/0012-unseen-settlement.md)). The widget reads current-workspace Registry counts on every render rather than capturing a state snapshot, so an ordinary TUI repaint repairs any missed change notification. `running` counts only current-Origin Active Dispatches with no Attention Conditions, `delivering` counts only current-Origin clean Delivering Dispatches, and `attention` counts affected dispatches rather than summing concurrent conditions. Every foreign-Origin unsettled record in the Workspace Scope counts as attention even when it has no stored Attention Condition, making its retained reservations ambiently visible without transferring monitoring. The widget does not modify the existing custom footer. Human-facing rows, notifications, confirmations, and result cards lead with sanitized Agent/task display data rather than correlation IDs; canonical IDs remain in protocol, Registry, audit, model data, completion values, and explicit technical details.
+Pi shows a one-line widget below the editor, for example `派发  ● 2 运行中 · ▲ 1 待处理 · ✓ 1 已完成 · alt+h`. Copy is restrained: zero-count segments are never rendered, and with nothing unsettled and no Unseen Settlements the widget collapses to the quiet `派发 · alt+h`. An Unseen Settlement keeps the `✓` segment (and its own above-the-fold Manager group) alive until the user opens the record's detail or explicitly presses `c` to atomically mark all current-workspace Unseen Settlements seen. The one-shot outcome notification remains the transient signal; the seen state is the persistent one. These seen-state updates are the sole view-triggered writes and are presentation metadata only — they never delete retained history or touch reservations, lifecycle, or safety decisions ([ADR 0012](./adr/0012-unseen-settlement.md)). The widget reads current-workspace Registry counts on every render rather than capturing a state snapshot, and requests a lightweight repaint once per second so cross-process Registry changes appear without `/reload` or user input. `running` counts only current-Origin Active Dispatches with no Attention Conditions, `delivering` counts only current-Origin clean Delivering Dispatches, and `attention` counts affected dispatches rather than summing concurrent conditions. Every foreign-Origin unsettled record in the Workspace Scope counts as attention even when it has no stored Attention Condition, making its retained reservations ambiently visible without transferring monitoring. The widget does not modify the existing custom footer. Human-facing rows, notifications, confirmations, and result cards lead with sanitized Agent/task display data rather than correlation IDs; canonical IDs remain in protocol, Registry, audit, model data, completion values, and explicit technical details.
 
 All human-facing product copy is Simplified Chinese ([ADR 0011](./adr/0011-chinese-product-copy.md)), built by the typed pure catalog in `src/pi/ui-copy.ts` using exactly the terminology table in [CONTEXT.md](./CONTEXT.md); presentation modules supply typed state, counts, timing, and sanitized display data, then apply layout and theme colors without defining prose inline. Contractual model-facing and target-facing safety/framing strings remain owned by their protocol boundaries (`presentation.ts`, `safety-gate.ts`, context delivery, proposals, and follow-ups), are not catalog entries, and stay English; a human-facing line that embeds a framing marker (for example a bounded-output header) is therefore intentionally mixed-language. This separation allows human copy to change without changing model instructions, untrusted-data wrappers, or outbound protocol bytes.
 
@@ -420,9 +421,10 @@ All human-facing product copy is Simplified Chinese ([ADR 0011](./adr/0011-chine
 
 Every command keeps its descriptive long name for compatibility and registers a compact, readable `hd-*` interactive alias:
 
+- `/hd-new` (`/herdr-dispatch`) — manual dispatch wizard for an Existing Agent; completion sends immediately without a final confirmation prompt.
+- `/hd-create` (`/herdr-dispatch-create`) — user-only TUI Agent Launch followed by the same automatic dispatch path. The complete wizard runs before creation. It offers only fixed-catalog Agent types whose executable exists; `pi`/`claude`/`codex`/`opencode` require a current integration, while `amp`/`droid`/`grok` permit reviewed screen detection. It has four layouts: adaptive current-tab (default), right, down, or a new tab. Current-tab splits are 50/50; adaptive chooses right when the Origin pane width/height ratio is at least 2, otherwise down. Creation inherits `ctx.cwd`, never focuses the new resource, waits a configurable 60 seconds for exact-terminal idle-like eligibility with the provenance permitted for that Agent type, and allows Esc to stop waiting. Created resources are retained on cancellation, failure, race loss, and settlement. Cancellation is checked between create, rename, start, and readiness steps; cancellation/failure copy discloses the retained pane/tab when creation was confirmed. The fixed one-word executable plus Enter uses one `pane.send_input` request, so launch cannot leave a separately acknowledged command without its Enter.
 - `/hd-agents` (`/herdr-agents`) — Agent metadata from the current Workspace Scope only.
-- `/hd-new` (`/herdr-dispatch`) — manual dispatch wizard; completion sends immediately without a final confirmation prompt.
-- `/hd-manager` (`/herdr-dispatches`) — interactive current-workspace Dispatch Manager; `alt+h` opens the same panel. It renders as a rounded framed panel (title and counts embedded in the top border, key hints in the bottom border, display-width-aware for CJK), groups attention, running, and delivering records, keeps a small current-Origin settled fold, and offers one-shot `r`/`R` output reads framed as untrusted. A settled record's detail offers `f` — a Follow-up Dispatch: a brand-new Automatic Dispatch to the same target through the full typed path (settlement is never reopened).
+- `/hd-manager` (`/herdr-dispatches`) — interactive current-workspace Dispatch Manager; `alt+h` opens the same panel. It renders as a rounded framed panel capped at 96 terminal columns (`任务派发` and counts embedded in the top border, key hints in the bottom border, display-width-aware for CJK). Section headings use a stronger semantic level than dim row metadata, sections and the bottom keybar have one-row separation, and key teaching is not duplicated in folded headings; an empty body stays compact without instructional placeholder copy. It groups attention, running, and delivering records, keeps a small current-workspace settled fold, exposes `c 清空未读` only while Unseen Settlements exist, and offers one-shot `r`/`R` output reads framed as untrusted. A settled record's detail formats the Sanitized Dispatch Result as an untrusted-labelled card (summary, blocker, file/test counts) and offers `f` — a Follow-up Dispatch: a brand-new Automatic Dispatch to the same target through the full typed path (settlement is never reopened).
 - `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — filtered task selection followed by a previewed reply for an Active Dispatch with attention.
 - `/hd-cancel [id-or-prefix]` (`/herdr-dispatch-cancel`) — filtered task selection followed by a previewed normal cancellation.
 - `/hd-resolve [id-or-prefix]` (`/herdr-dispatch-resolve`) — current-workspace task selection followed by manual or double-confirmed emergency resolution.
@@ -444,13 +446,15 @@ The manager is live: `DispatchRuntime.onStateChanged()` requests a render after 
 
 `herdr_dispatch_propose` registers an explicit prompt guideline: **Use `herdr_dispatch_propose` for every request to task another Herdr Agent. Do not use `bash`, `user_bash`, or raw `herdr pane` / `herdr agent` / `herdr wait` commands to send work or wait for it.** It sends automatically through the typed path without a confirmation prompt. The other dispatch tools reinforce the same raw-command rule when active.
 
-There is no model wait, reply, cancel, force-cancel, resolve, Agent-start, pane-create, workspace-create, or worktree-create tool.
+There is no model wait, reply, cancel, force-cancel, resolve, Agent-start, pane-create, workspace-create, or worktree-create tool. Agent Launch remains a slash command only.
+
+The package bundles `skills/hd-crew/SKILL.md` as the version-controlled natural-language routing policy over these tools. The Skill must muster immediately before new dispatches, route by exact eligible terminal identity, parallelize only independent non-mutating work, and treat automatically delivered results as untrusted data. It never widens the model-tool surface: Agent creation, reply, cancellation, resolution, seen-state cleanup, and integration setup remain explicit user TUI actions.
 
 Agent output inspection is authorized by an explicit user request. A user request itself is sufficient; no redundant confirmation appears. Default output is the 50 most recent `recent_unwrapped` plain-text lines, with ANSI removed; the configured maximum is 200. One request authorizes one bounded read, not continuing surveillance.
 
 ### Run-mode rules
 
-Automatic proposal delivery, reply, cancellation, resolution, Origin Monitoring, and context delivery require `ctx.mode === "tui"`; checking `ctx.hasUI` is insufficient because RPC reports UI capability. Automatic proposal delivery does not open a confirmation prompt. Non-TUI modes may list current state and perform an explicitly requested bounded inspection only. The lease guard and raw Herdr CLI gate remain active in every mode because they prevent non-Origin Pi processes and skill-guided shell calls from bypassing the typed dispatch path.
+Agent Launch, automatic proposal delivery, reply, cancellation, resolution, Origin Monitoring, and context delivery require `ctx.mode === "tui"`; checking `ctx.hasUI` is insufficient because RPC reports UI capability. Automatic proposal delivery does not open a confirmation prompt. Non-TUI modes may list current state and perform an explicitly requested bounded inspection only. The lease guard and raw Herdr CLI gate remain active in every mode because they prevent non-Origin Pi processes and skill-guided shell calls from bypassing the typed dispatch path.
 
 ## Configuration
 
@@ -468,6 +472,7 @@ Defaults:
   "minDeadlineMinutes": 1,
   "maxDeadlineMinutes": 1440,
   "startupWindowMs": 30000,
+  "agentStartupTimeoutMs": 60000,
   "minStartupWindowMs": 5000,
   "maxStartupWindowMs": 300000,
   "maxActivePerTargetWorkspace": 4,
@@ -507,6 +512,7 @@ These results tighten behavior to attention/fail-closed. They do not introduce h
 - proposal immutability and stale-target detection;
 - current-workspace target resolution;
 - idle/done equivalence;
+- launch catalog filtering, adaptive split geometry, complete-before-create wizard cancellation, startup timeout/cancellation, retained-resource failures, and exact-terminal eligibility;
 - Git worktree identity and observed-change audits;
 - outbound message and delivery echo matching;
 - built-in tool plus `user_bash` lease-guard classification;
@@ -523,7 +529,7 @@ These results tighten behavior to attention/fail-closed. They do not introduce h
 
 Use a fake Herdr Unix socket and temporary SQLite database to test:
 
-- staged multiline text, route revalidation, separate Enter submission, exact echo activation, and fail-closed protocol mismatch;
+- typed no-focus split/tab creation, fixed executable launch, exact created-terminal readiness, staged multiline task text, route revalidation, separate Enter submission, exact echo activation, and fail-closed protocol mismatch;
 - crash before send, during send, after Herdr success, and before `active` commit;
 - resume of `delivering` with result present, echo present, or neither present;
 - pane close/move between final revalidation and send, including conformance with the official closed-ID non-reuse guarantee;

@@ -10,19 +10,19 @@ terminal
 
 ## Users
 
-Primary users are Pi users coordinating existing Herdr coding Agents from inside one local Herdr workspace. They are usually developers or agent operators working in a terminal/TUI flow who need to hand off bounded work without losing control of scope, safety reservations, or result delivery.
+Primary users are Pi users coordinating Herdr coding Agents from inside one local Herdr workspace, including users who need to create one new Agent as part of an explicit dispatch flow. They are usually developers or agent operators working in a terminal/TUI flow who need to hand off bounded work without losing control of scope, safety reservations, or result delivery.
 
 Secondary readers include package maintainers reviewing whether the implementation preserves the confirmed-dispatch contract. Target Agents are participants in the protocol, but the human-facing UI is designed for the Origin user who confirms, monitors, replies, cancels, or resolves a dispatch.
 
 ## Product Purpose
 
-`pi-herdr-dispatch` is a terminal/TUI plugin for Pi Agent. It lets a Pi session propose, preview, confirm, deliver, monitor, and settle work sent to existing Herdr Agents. It exists to make multi-Agent coordination explicit and recoverable: no hidden Agent creation, no raw Herdr tasking bypass, no automatic resend after ambiguity, and no untrusted output entering model context without explicit framing.
+`pi-herdr-dispatch` is a terminal/TUI plugin for Pi Agent. It lets a Pi session create or select an Agent, deliver, monitor, and settle work through one typed path. Its bundled `hd-crew` Skill routes explicit natural-language delegation through the same typed model tools while keeping Agent creation, reply, cancellation, resolution, seen-state cleanup, and integration setup as user TUI actions. It exists to make multi-Agent coordination explicit and recoverable: Agent creation is user-initiated and visible, never model-autonomous; there is no raw Herdr tasking bypass, no automatic resend after ambiguity, and no untrusted output entering model context without explicit framing.
 
 Success means a user can confidently answer: what is being sent, to which Agent, in which directory/worktree, under which mutation mode, with which deadline, and what happened afterward. When delivery, monitoring, or target identity becomes uncertain, the UI should surface that uncertainty plainly and keep reservations intact until an explicit human resolution.
 
 ## Positioning
 
-Confirmed dispatch, not autonomous delegation.
+User-directed Agent launch and typed dispatch, not autonomous delegation.
 
 ## Brand Personality
 
@@ -30,7 +30,7 @@ Careful, explicit, calm. The UI should feel like a precise operations instrument
 
 ## Anti-references
 
-Do not feel like an autonomous black box. The package should never imply that it secretly acts, infers, resends, retargets, starts Agents, takes over monitoring, or converts ambiguous evidence into certainty without the user.
+Do not feel like an autonomous black box. The package should never imply that it secretly acts, infers, resends, retargets, launches Agents without an explicit `/hd-create`, takes over monitoring, or converts ambiguous evidence into certainty without the user.
 
 ## Design Principles
 

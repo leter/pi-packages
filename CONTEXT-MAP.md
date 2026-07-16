@@ -2,7 +2,7 @@
 
 ## Contexts
 
-- [Agent Workspace Orchestration](./packages/pi-herdr-dispatch/docs/CONTEXT.md) — coordinates existing coding agents on one local Herdr server through confirmed dispatches.
+- [Agent Workspace Orchestration](./packages/pi-herdr-dispatch/docs/CONTEXT.md) — coordinates existing or explicitly user-launched coding agents in one local Herdr workspace through typed dispatches.
 
 ## Relationships
 

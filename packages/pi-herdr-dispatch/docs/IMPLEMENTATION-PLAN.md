@@ -4,7 +4,7 @@ Status: approved; Phase 5 complete and awaiting phase review before Phase 6.
 
 ## Inputs and non-negotiable constraints
 
-This plan implements [DESIGN.md](./DESIGN.md), uses the domain language in [CONTEXT.md](./CONTEXT.md), follows ADRs 0001–0005, and incorporates the live [Herdr 0.7.3 compatibility spike](./SPIKE-RESULTS.md).
+This plan implements [DESIGN.md](./DESIGN.md), uses the domain language in [CONTEXT.md](./CONTEXT.md), follows ADRs 0001–0013, and incorporates the live [Herdr 0.7.3 compatibility spike](./SPIKE-RESULTS.md).
 
 The spike fixes these implementation rules:
 
@@ -15,7 +15,7 @@ The spike fixes these implementation rules:
 - only explicit `screen_detection_skipped: true` is reported integration authority;
 - V1 never calls `pane.report_metadata`; the widget and notifications are the only status display paths.
 
-No phase may add coordinator takeover, revision cursors, automatic resend, cross-workspace targeting, Agent/pane creation, model wait tools, or autonomous continuation.
+No phase may add coordinator takeover, revision cursors, automatic resend, cross-workspace targeting, model-callable or raw Agent/pane creation, model wait tools, or autonomous continuation. ADR 0013 permits only the typed, user-initiated TUI Agent Launch path in the captured workspace and cwd.
 
 ## Proposed module seams and test surfaces
 
@@ -23,8 +23,9 @@ These are the seams to approve before TDD begins. Tests exercise behavior throug
 
 1. **Safety Policy module** — accepts a Pi operation plus current-pane/worktree/lease context and returns `allow` or a structured denial with redirect guidance. Shell tokenization and command tables remain hidden implementation details.
 2. **Dispatch Registry module** — opens one configured database and exposes transactional domain operations for proposals, durable delivery intent, reservations, attention, first-wins settlement, context claims, audit, and retention. SQL is not exposed to callers or tests.
-3. **Herdr Adapter module** — validates protocol 16 responses and exposes current-workspace discovery, terminal-to-pane resolution, staged-and-revalidated delivery, bounded tail reads, subscriptions, and notifications. Tests swap the real Unix socket for a protocol-faithful fake.
-4. **Dispatch Application module** — creates immutable proposals and executes confirmed commands against the Registry and Herdr Adapter. Pi dialogs/tools are adapters at this seam rather than domain logic.
+3. **Herdr Adapter module** — validates protocol 16 responses and exposes current-workspace discovery, terminal-to-pane resolution, staged-and-revalidated delivery, bounded tail reads, subscriptions, notifications, and the no-focus split/tab operations used by Agent Launch. Tests swap the real Unix socket for a protocol-faithful fake.
+4. **Dispatch Application module** — creates immutable proposals, preflights creation against capacity and leases, and executes confirmed commands against the Registry and Herdr Adapter. Pi dialogs/tools are adapters at this seam rather than domain logic.
+4a. **Agent Launch module** — resolves adaptive geometry, creates one labelled current-cwd resource, starts one fixed supported executable, and waits for exact-terminal idle-like eligibility with bounded cancellation. It never closes created resources.
 5. **Origin Monitor module** — starts for one exact Origin Session ID, consumes events/polls/catch-up reads, and requests domain transitions/settlement. Clock and timers are injected.
 6. **Pi Extension adapter** — registers tools, commands, lifecycle hooks, `tool_call`, `tool_result`, `user_bash`, context delivery, widget, and notifications. It contains minimal policy.
 
@@ -98,6 +99,7 @@ The identifiers below name the existing `DESIGN.md` checklist entries.
 - **U14** stored disconnect versus derived Origin-closed monitoring pause
 - **U15** retention and notification policy
 - **U16** omission of `pane.report_metadata`
+- **U17** launch catalog filtering, adaptive geometry, wizard cancellation, startup timeout/cancellation, and retained-resource evidence
 
 ### Integration checklist
 
@@ -120,6 +122,7 @@ The identifiers below name the existing `DESIGN.md` checklist entries.
 - **I17** migration backup and rollback
 - **I18** corrupt/locked database fails closed
 - **I19** non-TUI modes never monitor or mutate
+- **I20** typed no-focus split/tab creation, fixed executable start, exact-terminal readiness, and pre-create capacity/lease checks
 
 ### Live acceptance checklist
 
@@ -135,6 +138,7 @@ The identifiers below name the existing `DESIGN.md` checklist entries.
 - **L10** settlement is sanitized; explicit inspection is untrusted-framed
 - **L11** natural-language Herdr task request cannot bypass through `bash`, `!`, `!!`
 - **L12** Registry failure preserves reservations and disables state changes
+- **L13** `/hd-create` launches each available integrated Agent in adaptive/current-tab and new-tab layouts, retains focus, then dispatches through the ordinary lifecycle
 
 ## Phase 1 — Safety layer first
 
@@ -381,6 +385,27 @@ U15–U16; verifies I19 and all L1–L12 end to end.
 3. `feat(setup): add explicit per-integration setup prompts`
 4. `docs(pi-herdr-dispatch): document install, safety, and recovery`
 5. `test(pi-herdr-dispatch): complete package and live acceptance coverage`
+
+## Phase 7 — User-initiated Agent Launch
+
+### Scope
+
+- register `/hd-create` immediately after `/hd-new`, with long alias `/herdr-dispatch-create`;
+- list only fixed supported Agent executables; require current integration for `pi`/`claude`/`codex`/`opencode`, and permit reviewed screen detection for `amp`/`droid`/`grok`;
+- collect the full dispatch wizard before side effects and preflight capacity/worktree leases;
+- create one labelled 50/50 split or one labelled tab in the captured workspace and `ctx.cwd`, always without focus;
+- resolve adaptive splits from the Origin pane width/height ratio (`>= 2` means right, otherwise down);
+- start only the catalog executable, wait up to `agentStartupTimeoutMs` for exact-terminal idle-like eligibility with per-type permitted provenance, and support Esc cancellation;
+- check cancellation between create/rename/start/wait, retain created resources on cancellation, timeout, launch failure, dispatch race loss, and settlement, and disclose confirmed pane/tab identity on cancellation/failure;
+- submit the fixed executable plus Enter in one typed input request, preserve the existing raw Herdr creation denial, and expose no model creation tool.
+
+### Acceptance criteria
+
+- U17, I20, and L13 pass;
+- `/hd-new` remains the most prominent existing-Agent path and `/hd-create` appears directly beneath it;
+- cancelling any wizard step before submission creates nothing;
+- every post-creation failure names the failure and never closes the created resource;
+- full default verification and the Herdr live contract suite pass.
 
 ## Cross-phase quality gates
 

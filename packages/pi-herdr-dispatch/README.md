@@ -1,6 +1,6 @@
 # pi-herdr-dispatch
 
-A Pi extension under staged development for automatically dispatching work through a typed, Registry-backed path to coding Agents that already exist in one local Herdr workspace.
+A Pi extension under staged development for automatically dispatching work through a typed, Registry-backed path to coding Agents in one local Herdr workspace, including an explicit TUI path that can create one new Agent before dispatch.
 
 > **Status:** Experimental, with Phase 6 acceptance restored. The delivery, result, and widget fixes passed a fresh real Pi/Claude Code/Codex/OpenCode/Droid/Amp/Grok matrix, and automatic-default dispatch passed a post-schema-v3 no-prompt live probe. The package remains `private` at `0.0.0-development`; no package has been published.
 
@@ -11,7 +11,7 @@ A Pi extension under staged development for automatically dispatching work throu
 - Herdr `0.7.3`, socket protocol `16`
 - Pi running inside Herdr with `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID`, and `HERDR_PANE_ID`
 
-The extension never creates Agents, panes, workspaces, worktrees, or coordinators during normal operation. It dispatches only to existing Agents in the captured current workspace.
+The extension normally dispatches to Existing Agents in the captured current workspace. `/hd-create` is the sole exception: a user may explicitly create one Agent pane or tab in the current workspace and cwd before dispatch. The extension never creates workspaces, worktrees, or coordinators, and models cannot invoke Agent creation.
 
 ## Language
 
@@ -28,7 +28,7 @@ npm test
 pi install "$PWD/packages/pi-herdr-dispatch"
 ```
 
-Restart Pi or run `/reload`, then verify `/hd-agents` and `/hd-manager`. Remove the development installation with:
+Restart Pi or run `/reload`, then verify `/hd-agents` and `/hd-manager`. The same package also loads the version-controlled `hd-crew` Skill from `skills/hd-crew/SKILL.md`; ask naturally to delegate work, check progress, or summarize delivered results, or invoke `/skill:hd-crew` explicitly. Remove the development installation with:
 
 ```bash
 pi remove /absolute/path/to/pi-packages/packages/pi-herdr-dispatch
@@ -48,10 +48,11 @@ Reinstalling is only needed when the checkout moves, on another machine, or to r
 
 ## Dispatch workflow
 
-The readable `hd-*` aliases are the recommended interactive commands; the original names remain available for compatibility.
+The readable `hd-*` aliases are the recommended interactive commands; the original names remain available for compatibility. They are registered in workflow-priority order, with the most frequently used `/hd-new` first in slash-command completion.
 
+- `/hd-new` (`/herdr-dispatch`) — select an Existing Agent, complete the dispatch wizard, and send immediately without a final confirmation prompt.
+- `/hd-create` (`/herdr-dispatch-create`) — complete the wizard, create a supported integrated Agent in the current cwd, wait until it is eligible, then send through the same automatic dispatch path.
 - `/hd-agents` (`/herdr-agents`) — list current-workspace Eligible Agents.
-- `/hd-new` (`/herdr-dispatch`) — complete a manual dispatch wizard and send immediately without a final confirmation prompt.
 - `/hd-manager` (`/herdr-dispatches`, or `alt+h`) — open the current-workspace Dispatch Manager, browse human-readable tasks, and perform explicit bounded output reads (`r` for 50 lines, `R` for 200).
 - `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — choose, preview, and confirm a reply when an Active Dispatch has attention.
 - `/hd-cancel [id-or-prefix]` (`/herdr-dispatch-cancel`) — choose and confirm a normal cancellation request; this never sends `Ctrl+C`.
@@ -59,11 +60,13 @@ The readable `hd-*` aliases are the recommended interactive commands; the origin
 - `/hd-output <target> [lines]` (`/herdr-agent-output`) — perform one explicitly requested bounded output read.
 - `/hd-setup` (`/herdr-dispatch-setup`) — explicitly install one selected Herdr status integration.
 
-Model tools expose scoped listing, proposal, status, and one-shot inspection. Reply, cancellation, resolution, Agent creation, waits, and force interruption are never model tools.
+`/hd-create` supports `pi`, `claude`, `codex`, `opencode`, `amp`, `droid`, and `grok`. Every type requires its standard executable; `pi`/`claude`/`codex`/`opencode` also require a current Herdr integration, while `amp`/`droid`/`grok` may use Herdr screen detection. Its layout menu is ordered as current-tab adaptive, current-tab left/right, current-tab top/bottom, then a separate tab. Splits are 50/50; adaptive chooses left/right when the Origin pane width/height ratio is at least 2, otherwise top/bottom. The command inherits the current cwd, never steals focus, waits up to `agentStartupTimeoutMs` for the permitted reported or screen-detected provenance, and allows Esc to stop waiting. Created windows are deliberately retained after cancellation, failure, dispatch races, and settlement; cancellation/failure notifications disclose the retained pane and tab when creation was confirmed. The fixed one-word Agent executable and Enter are submitted in one typed Herdr request, avoiding a half-staged launch command.
+
+Model tools expose scoped listing, proposal, status, and one-shot inspection. Reply, cancellation, resolution, Agent Launch, waits, and force interruption are never model tools.
 
 ## Using the Dispatch Manager
 
-`/hd-manager` (or `alt+h`; long form `/herdr-dispatches`) opens the Dispatch Manager as a rounded framed panel: the title and live counts sit in the top border, the key hints in the bottom border, and `→` marks the selection. Rows are grouped in action order — `待处理` (needs attention), then `运行中` (running), then `投递中` (delivering) — and show the target Agent, task summary, principal attention reason, and relative deadline. When there are no unsettled dispatches, one centered line points to `/hd-new`. Dispatch IDs never appear in default rows; press `D` on a detail screen when you need the full identifiers.
+`/hd-manager` (or `alt+h`; long form `/herdr-dispatches`) opens the Dispatch Manager as a rounded framed panel: `任务派发` and live counts sit in the top border, the key hints in the bottom border, and `→` marks the selection. Rows are grouped in action order — `待处理` (needs attention), then `运行中` (running), then `投递中` (delivering) — and show the target Agent, task summary, principal attention reason, and relative deadline. The panel is capped at 96 terminal columns, uses one blank row between sections and before the bottom keybar, promotes section headings above dim metadata, and keeps the `S` teaching only in the keybar. The empty body stays compact and carries no instructional placeholder. Dispatch IDs never appear in default rows; press `D` on a detail screen when you need the full identifiers.
 
 State glyphs pair a symbol, a theme color, and a label, so no state relies on color alone: `●` active, `◌` delivering, `▲` needs attention, `✓` done, `◼` blocked, `✗` failed, `○` cancelled.
 
@@ -75,7 +78,8 @@ State glyphs pair a symbol, a theme color, and a label, so no state relies on co
 | `PageUp`/`PageDown` | Move by page (10-row window) |
 | `Home`/`End` | Jump to first/last record |
 | `Enter` or `→` | Open the selected dispatch |
-| `s` | Show or hide recently settled records |
+| `c` | Clear all unread completions from the workspace view by marking them seen; retained history is not deleted |
+| `s` | Show or hide recently settled workspace records |
 | `Esc`, `←`, or `Ctrl+C` | Close without changing anything |
 
 ### Detail screen
@@ -92,9 +96,11 @@ State glyphs pair a symbol, a theme color, and a label, so no state relies on co
 
 Action keys only appear when the record's lifecycle, attention state, and Origin relationship allow them, and every action re-validates the record and passes through the existing preview and confirmation gates before anything is sent. Closing the manager with `Esc` or `Ctrl+C` can never mutate dispatch state.
 
-Typical flow: dispatch work with `/hd-new`, watch the widget counts below the editor, press `alt+h` when something needs attention, open the record, read its recent output with `r`, then choose reply, cancel, or resolve from the detail screen.
+Typical flow: dispatch work to an Existing Agent with `/hd-new`, or use `/hd-create` when a new Agent window is needed. Watch the widget counts below the editor, press `alt+h` when something needs attention, open the record, read its recent output with `r`, then choose reply, cancel, or resolve from the detail screen.
 
-A settled result is not silently done: besides the one-shot notification, it counts as `✓ N 已完成` in the widget and sits in the `已完成 · 未读` Manager group until you open its detail, which marks it seen and folds it into the settled history. From that detail, `f` seeds a follow-up dispatch to the same Agent — a brand-new dispatch (settlement is never reopened) that rides on the target pane's surviving conversation context, re-validated for eligibility, occupancy, and leases like any other.
+A settled result is not silently done: besides the one-shot notification, it counts as `✓ N 已完成` in the widget and sits in the `已完成 · 未读` Manager group until you open its detail, which marks it seen and folds it into the workspace settled history. When unread completions accumulate, press `c` on the list screen to atomically mark all of them seen; this only clears the unread presentation state, never deletes Registry history, and `s` can still reveal the retained records. The detail formats the sanitized result as a card — summary, blocker, and file/test counts, always labelled untrusted — instead of raw envelope JSON, and every outbound dispatch instructs the target to write its summary and blocker text in Simplified Chinese. From that detail, `f` seeds a follow-up dispatch to the same Agent — a brand-new dispatch (settlement is never reopened) that rides on the target pane's surviving conversation context, re-validated for eligibility, occupancy, and leases like any other.
+
+The shared `/hd-new` and `/hd-create` deadline prompt shows the configured default (30 minutes by default); submitting an empty value uses that default.
 
 Dispatch is automatic by default in TUI mode. `herdr_dispatch_propose` and a completed `/hd-new` wizard build one immutable outbound message and send it without a proposal confirmation, grant setup, count limit, expiry, or renewal. The typed path still revalidates current-workspace target identity, status provenance, cwd/canonical worktree, occupancy, leases, and concurrency before durable intent and delivery. Non-TUI modes cannot reserve, send, reply, cancel, resolve, or monitor.
 
@@ -108,6 +114,7 @@ Optional file: `~/.config/pi-herdr-dispatch/config.json`
   "minDeadlineMinutes": 1,
   "maxDeadlineMinutes": 1440,
   "startupWindowMs": 30000,
+  "agentStartupTimeoutMs": 60000,
   "minStartupWindowMs": 5000,
   "maxStartupWindowMs": 300000,
   "maxActivePerTargetWorkspace": 4,
@@ -172,7 +179,7 @@ State-changing behavior fails closed and never falls back to an empty or in-memo
 
 ## UI and notifications
 
-The extension adds one compact widget below the editor and never replaces Pi's footer. `/hd-manager` (long form `/herdr-dispatches`; shortcut `alt+h`, TUI only) opens the Dispatch Manager: a current-workspace, attention-first list with recently settled current-Origin records folded away. Dispatch IDs are internal correlation details and appear only in explicit technical details. Human-facing tables align and truncate by terminal display columns, including double-width CJK text. The widget and manager re-read current-workspace Registry state on every render instead of caching status. `running` excludes dispatches grouped under attention, and the attention count is the number of affected dispatches—not the number of concurrent conditions. Every foreign-Origin unsettled record counts as attention so reservations left by an earlier Origin Session remain visible in the ambient UI. The manager also refreshes relative times, and performs output reads only as explicit one-shot bounded tails (`r` 50 lines, `R` 200 lines, timestamped and framed as untrusted). Reply, cancellation, and resolution selections still pass through their existing preview, eligibility revalidation, and confirmation gates.
+The extension adds one compact widget below the editor and never replaces Pi's footer. `/hd-manager` (long form `/herdr-dispatches`; shortcut `alt+h`, TUI only) opens the Dispatch Manager: a current-workspace, attention-first list with recently settled current-workspace records folded away. Dispatch IDs are internal correlation details and appear only in explicit technical details. Human-facing tables align and truncate by terminal display columns, including double-width CJK text. The widget and manager re-read current-workspace Registry state on every render instead of caching status. The widget requests a lightweight repaint once per second, so changes written by another Pi process appear without `/reload`. `running` excludes dispatches grouped under attention, and the attention count is the number of affected dispatches—not the number of concurrent conditions. Every foreign-Origin unsettled record counts as attention so reservations left by an earlier Origin Session remain visible in the ambient UI. The manager also refreshes relative times, and performs output reads only as explicit one-shot bounded tails (`r` 50 lines, `R` 200 lines, timestamped and framed as untrusted). Reply, cancellation, and resolution selections still pass through their existing preview, eligibility revalidation, and confirmation gates.
 
 The optional command selector supports exact IDs and unambiguous prefixes for advanced use, with full-ID argument completion. Ambiguous prefixes open a human-readable picker and are never guessed. A foreign-Origin record is discoverable only within the current Workspace Scope and exposes emergency resolution, not reply or cancellation. Herdr notification sounds are restricted to:
 
