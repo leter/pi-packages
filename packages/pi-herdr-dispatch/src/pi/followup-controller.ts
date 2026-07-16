@@ -51,8 +51,14 @@ Attest that you have personally judged the Origin Session unavailable. No proces
       );
       if (!attested) return "Emergency resolution cancelled before attestation.";
     }
-    const outcome = await context.ui.select("Manual Final Outcome", ["failed", "cancelled"]);
-    if (outcome !== "failed" && outcome !== "cancelled") return "Resolution cancelled.";
+    const outcome = await context.ui.select("Manual Final Outcome", [
+      "blocked",
+      "failed",
+      "cancelled",
+    ]);
+    if (outcome !== "blocked" && outcome !== "failed" && outcome !== "cancelled") {
+      return "Resolution cancelled.";
+    }
     const summary = await context.ui.editor("Bounded resolution summary");
     if (summary === undefined) return "Resolution cancelled.";
     const confirmed = await context.ui.confirm(

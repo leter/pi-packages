@@ -200,6 +200,36 @@ describe("confirmed reply and cancellation", () => {
 });
 
 describe("manual and emergency resolution", () => {
+  it("offers blocked as a Manual Final Outcome and settles the dispatch", async () => {
+    const { registry, service } = await harness();
+    const controller = new FollowupController(() => service);
+    const tui = ui({
+      selections: ["blocked"],
+      editors: ["Target could not continue in its current environment."],
+      confirmations: [true],
+    });
+
+    await expect(
+      controller.resolve("hd_followup", {
+        mode: "tui",
+        ui: tui,
+        sessionId: "session-origin",
+      }),
+    ).resolves.toBe("pi dispatch settled blocked.");
+
+    expect(tui.select).toHaveBeenCalledWith("Manual Final Outcome", [
+      "blocked",
+      "failed",
+      "cancelled",
+    ]);
+    expect(registry.getDispatch("hd_followup")).toMatchObject({
+      lifecycle: "settled",
+      finalOutcome: "blocked",
+    });
+    expect(registry.listTargetOccupancy()).toEqual([]);
+    expect(registry.listWriteLeases()).toEqual([]);
+  });
+
   it("requires explicit emergency attestation plus final confirmation without liveness inference", async () => {
     const { registry, service } = await harness();
     const controller = new FollowupController(() => service);

@@ -156,7 +156,7 @@ export class DispatchFollowupService {
     dispatchId: string;
     actorSessionId: string;
     emergency: boolean;
-    outcome: "failed" | "cancelled";
+    outcome: "blocked" | "failed" | "cancelled";
     summary: string;
   }): { status: "settled" | "already-settled"; outcome: FinalOutcome } {
     const dispatch = this.#registry.getDispatch(input.dispatchId);
