@@ -63,7 +63,7 @@ Model tools expose scoped listing, proposal, status, and one-shot inspection. Re
 
 ## Using the Dispatch Manager
 
-`/hd-manager` (or `alt+h`; long form `/herdr-dispatches`) opens the Dispatch Manager. Rows are grouped in action order — `待处理` (needs attention), then `运行中` (running), then `投递中` (delivering) — and show the target Agent, task summary, principal attention reason, and relative deadline. Dispatch IDs never appear in default rows; press `D` on a detail screen when you need the full identifiers.
+`/hd-manager` (or `alt+h`; long form `/herdr-dispatches`) opens the Dispatch Manager as a rounded framed panel: the title and live counts sit in the top border, the key hints in the bottom border, and `→` marks the selection. Rows are grouped in action order — `待处理` (needs attention), then `运行中` (running), then `投递中` (delivering) — and show the target Agent, task summary, principal attention reason, and relative deadline. Dispatch IDs never appear in default rows; press `D` on a detail screen when you need the full identifiers.
 
 State glyphs pair a symbol, a theme color, and a label, so no state relies on color alone: `●` active, `◌` delivering, `▲` needs attention, `✓` done, `◼` blocked, `✗` failed, `○` cancelled.
 
