@@ -12,10 +12,13 @@ import {
 
 import {
   classifyHerdrShell,
+  guardDispatchRegistryAccess,
   guardWorktreeOperation,
+  type CoveredPiOperation,
   type LeaseGuardContext,
   type SafetyDecision,
 } from "../safety/policy.js";
+import { defaultRegistryPath } from "./registry-runtime.js";
 
 export interface SafetyGateDependencies {
   currentPaneId(): string | undefined;
@@ -23,6 +26,8 @@ export interface SafetyGateDependencies {
     cwd: string;
     currentPaneId?: string;
   }): Promise<LeaseGuardContext> | LeaseGuardContext;
+  /** Actual Registry database path; defaults to the standard state location. */
+  registryDatabasePath?(): string;
   createLocalBashOperations?(): BashOperations;
 }
 
@@ -51,6 +56,11 @@ export const UNTRUSTED_HERDR_OUTPUT_CLOSE = "</untrusted-herdr-cli-output>";
 export function createSafetyGate(dependencies: SafetyGateDependencies): SafetyGate {
   const currentPaneId = () => dependencies.currentPaneId();
   const framedToolCalls = new Set<string>();
+  const registryGuard = (operation: CoveredPiOperation): SafetyDecision =>
+    guardDispatchRegistryAccess(
+      operation,
+      dependencies.registryDatabasePath?.() ?? defaultRegistryPath(),
+    );
 
   const leaseContext = async (cwd: string): Promise<LeaseGuardContext> => {
     try {
@@ -73,28 +83,40 @@ export function createSafetyGate(dependencies: SafetyGateDependencies): SafetyGa
         });
         if (herdrDecision.action === "deny") return blockTool(herdrDecision);
 
-        const leaseDecision = guardWorktreeOperation(
-          { kind: "bash", cwd: context.cwd, command: event.input.command },
-          await leaseContext(context.cwd),
-        );
+        const operation: CoveredPiOperation = {
+          kind: "bash",
+          cwd: context.cwd,
+          command: event.input.command,
+        };
+        const registryDecision = registryGuard(operation);
+        if (registryDecision.action === "deny") return blockTool(registryDecision);
+        const leaseDecision = guardWorktreeOperation(operation, await leaseContext(context.cwd));
         if (leaseDecision.action === "deny") return blockTool(leaseDecision);
         if (herdrDecision.frameHerdrOutput) framedToolCalls.add(event.toolCallId);
         return undefined;
       }
 
       if (isToolCallEventType("edit", event)) {
-        const leaseDecision = guardWorktreeOperation(
-          { kind: "edit", cwd: context.cwd, path: event.input.path },
-          await leaseContext(context.cwd),
-        );
+        const operation: CoveredPiOperation = {
+          kind: "edit",
+          cwd: context.cwd,
+          path: event.input.path,
+        };
+        const registryDecision = registryGuard(operation);
+        if (registryDecision.action === "deny") return blockTool(registryDecision);
+        const leaseDecision = guardWorktreeOperation(operation, await leaseContext(context.cwd));
         if (leaseDecision.action === "deny") return blockTool(leaseDecision);
       }
 
       if (isToolCallEventType("write", event)) {
-        const leaseDecision = guardWorktreeOperation(
-          { kind: "write", cwd: context.cwd, path: event.input.path },
-          await leaseContext(context.cwd),
-        );
+        const operation: CoveredPiOperation = {
+          kind: "write",
+          cwd: context.cwd,
+          path: event.input.path,
+        };
+        const registryDecision = registryGuard(operation);
+        if (registryDecision.action === "deny") return blockTool(registryDecision);
+        const leaseDecision = guardWorktreeOperation(operation, await leaseContext(context.cwd));
         if (leaseDecision.action === "deny") return blockTool(leaseDecision);
       }
 
@@ -121,10 +143,10 @@ export function createSafetyGate(dependencies: SafetyGateDependencies): SafetyGa
       });
       if (herdrDecision.action === "deny") return replaceUserBash(herdrDecision);
 
-      const leaseDecision = guardWorktreeOperation(
-        { kind: "bash", cwd: event.cwd, command: event.command },
-        await leaseContext(event.cwd),
-      );
+      const operation: CoveredPiOperation = { kind: "bash", cwd: event.cwd, command: event.command };
+      const registryDecision = registryGuard(operation);
+      if (registryDecision.action === "deny") return replaceUserBash(registryDecision);
+      const leaseDecision = guardWorktreeOperation(operation, await leaseContext(event.cwd));
       if (leaseDecision.action === "deny") return replaceUserBash(leaseDecision);
       if (!herdrDecision.frameHerdrOutput || event.excludeFromContext) return undefined;
 

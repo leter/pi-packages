@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  guardDispatchRegistryAccess,
   guardWorktreeOperation,
   type LeaseGuardContext,
   type WorktreeLease,
@@ -143,6 +144,51 @@ describe("Worktree Write Lease guard", () => {
       guardWorktreeOperation(
         { kind: "bash", cwd: "/repo/worktree", command: "git status --short" },
         context({ leaseSnapshot: { status: "unavailable", reason: "database is locked" } }),
+      ),
+    ).toEqual({ action: "allow" });
+  });
+});
+
+describe("Dispatch Registry access guard", () => {
+  const registryPath = "/home/jack/.local/state/pi-herdr-dispatch/registry.sqlite";
+
+  it.each([
+    "sqlite3 /home/jack/.local/state/pi-herdr-dispatch/registry.sqlite \"INSERT INTO auto_run_sessions VALUES ('s', 1)\"",
+    "sqlite3 ~/.local/state/pi-herdr-dispatch/registry.sqlite 'UPDATE dispatches SET auto_run_depth = 0'",
+    "cat ~/.local/state/pi-herdr-dispatch/registry.sqlite",
+    "rm ~/.local/state/pi-herdr-dispatch/registry.sqlite-wal",
+  ])("denies a bash command that touches the Registry: %s", (command) => {
+    const decision = guardDispatchRegistryAccess(
+      { kind: "bash", cwd: "/repo", command },
+      registryPath,
+    );
+    expect(decision.action).toBe("deny");
+    if (decision.action === "deny") expect(decision.code).toBe("dispatch-registry-access");
+  });
+
+  it("denies an edit or write into the Registry directory", () => {
+    const decision = guardDispatchRegistryAccess(
+      {
+        kind: "write",
+        cwd: "/home/jack/.local/state/pi-herdr-dispatch",
+        path: "registry.sqlite",
+      },
+      registryPath,
+    );
+    expect(decision.action).toBe("deny");
+  });
+
+  it("allows unrelated commands and edits", () => {
+    expect(
+      guardDispatchRegistryAccess(
+        { kind: "bash", cwd: "/repo", command: "git status" },
+        registryPath,
+      ),
+    ).toEqual({ action: "allow" });
+    expect(
+      guardDispatchRegistryAccess(
+        { kind: "edit", cwd: "/repo", path: "src/index.ts" },
+        registryPath,
       ),
     ).toEqual({ action: "allow" });
   });

@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import { classifyShellInvocations, type ShellInvocation } from "./shell-classifier.js";
 import { classifyBashEffect } from "./worktree-effects.js";
@@ -17,7 +17,8 @@ export type SafetyDecision =
         | "raw-herdr-control"
         | "unclassifiable-herdr-command"
         | "worktree-write-lease"
-        | "lease-registry-unavailable";
+        | "lease-registry-unavailable"
+        | "dispatch-registry-access";
       reason: string;
       redirect?: string;
     };
@@ -92,6 +93,40 @@ export function classifyHerdrShell(
   }
 
   return frameHerdrOutput ? { action: "allow", frameHerdrOutput: true } : { action: "allow" };
+}
+
+/** Distinctive path segment of the default Registry location, matched even when written with ~ or $HOME. */
+const REGISTRY_STATE_SEGMENT = ".local/state/pi-herdr-dispatch";
+
+/**
+ * Denies covered Pi operations that touch the Dispatch Registry database.
+ * Auto Run state, reservations, and depth counters live there; a shell that
+ * edits them directly would let the model arm Auto Run or reset its own depth
+ * (ADR 0014 residual bypass, narrowed here for the covered paths). Reads are
+ * denied too: fail closed rather than distinguish sqlite invocation flavors.
+ */
+export function guardDispatchRegistryAccess(
+  operation: CoveredPiOperation,
+  registryDatabasePath: string,
+): SafetyDecision {
+  const directory = dirname(resolve(registryDatabasePath));
+  if (operation.kind !== "bash") {
+    return pathIsInside(directory, resolve(operation.cwd, operation.path))
+      ? denyRegistryAccess()
+      : { action: "allow" };
+  }
+  if (operation.command.includes(directory) || operation.command.includes(REGISTRY_STATE_SEGMENT)) {
+    return denyRegistryAccess();
+  }
+  return { action: "allow" };
+}
+
+function denyRegistryAccess(): SafetyDecision {
+  return deny(
+    "dispatch-registry-access",
+    "The Dispatch Registry database is written only through the typed dispatch path.",
+    "/hd-auto, /hd-manager, or the herdr_dispatch_* tools",
+  );
 }
 
 export function guardWorktreeOperation(
