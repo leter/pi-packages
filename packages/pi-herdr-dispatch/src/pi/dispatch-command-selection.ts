@@ -8,6 +8,7 @@ import {
   taskSummary,
   type DispatchAction,
 } from "./dispatch-view-model.js";
+import { UI_COPY } from "./ui-copy.js";
 
 export interface DispatchSelectorLookup {
   getDispatch(id: string): StoredDispatch | undefined;
@@ -23,7 +24,9 @@ export function resolveDispatchSelector(
   lookup: DispatchSelectorLookup,
   selector: string,
 ): DispatchSelectorResolution {
-  if (!/^hd_[A-Za-z0-9_-]+$/u.test(selector)) throw new Error("Invalid dispatch ID or prefix");
+  if (!/^hd_[A-Za-z0-9_-]+$/u.test(selector)) {
+    throw new Error(UI_COPY.command.invalidDispatchSelector());
+  }
   const exact = lookup.getDispatch(selector);
   if (exact) return { status: "matched", dispatch: exact };
   const matches = lookup.listByIdPrefix(selector);
@@ -50,28 +53,30 @@ export function actionIneligibility(
   attention: readonly AttentionRecord[],
 ): string | undefined {
   if (dispatch.lifecycle === "settled") {
-    return `This dispatch already settled ${dispatch.finalOutcome ?? "with a final outcome"}.`;
+    return UI_COPY.command.alreadySettled(dispatch.finalOutcome);
   }
   if (dispatch.originSessionId !== originSessionId && action !== "resolve") {
-    return "Only the exact Origin Session may reply or request cancellation.";
+    return UI_COPY.command.originOnlyFollowup();
   }
   if (
     action !== "resolve" &&
     attention.some((record) => record.condition === "target-lost" || record.condition === "target-moved")
   ) {
-    return "A lost or moved target can only be resolved manually.";
+    return UI_COPY.command.lostOrMovedResolutionOnly();
   }
   if (action === "reply" && dispatch.lifecycle !== "active") {
-    return "Replies require an Active Dispatch.";
+    return UI_COPY.command.replyRequiresActive();
   }
   if (action === "reply" && attention.length === 0) {
-    return "Replies require an Active Dispatch with an Attention Condition.";
+    return UI_COPY.command.replyRequiresAttention();
   }
   return undefined;
 }
 
 export function dispatchChoiceLabel(dispatch: StoredDispatch): string {
-  const state = dispatch.lifecycle === "settled" ? (dispatch.finalOutcome ?? "settled") : dispatch.lifecycle;
+  const state = dispatch.lifecycle === "settled"
+    ? UI_COPY.state.outcome(dispatch.finalOutcome ?? "settled")
+    : UI_COPY.state.lifecycle(dispatch.lifecycle);
   return `${agentDisplayName(dispatch)} · ${taskSummary(dispatch.task, 56)} · ${state} · ${new Date(
     dispatch.createdAt,
   ).toISOString()}`;

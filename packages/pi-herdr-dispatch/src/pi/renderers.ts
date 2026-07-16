@@ -18,6 +18,7 @@ import {
   type SemanticColor,
   type StateMark,
 } from "./visual.js";
+import { UI_COPY } from "./ui-copy.js";
 
 /**
  * Themed TUI renderers. These change only what humans see; the framed,
@@ -52,8 +53,8 @@ export function renderAgentsResult(
   if (targets.length === 0) {
     return new Text(
       [
-        paint("muted", "No eligible Agents right now — the others are working, blocked, or occupied."),
-        paint("dim", "Agents become eligible when their status is idle or done."),
+        paint("muted", UI_COPY.presentation.noEligibleAgents()),
+        paint("dim", UI_COPY.presentation.eligibleAgentHelp()),
       ].join("\n"),
       0,
       0,
@@ -65,7 +66,9 @@ export function renderAgentsResult(
   const cwdWidth = Math.max(...rows.map((row) => row.cwd.length));
   const lines = rows.map((row) => {
     const provenance =
-      row.provenance === "reported" ? paint("accent", "reported") : paint("dim", row.provenance);
+      row.provenance === UI_COPY.state.provenance(true)
+        ? paint("accent", UI_COPY.state.provenance(true))
+        : paint("dim", row.provenance);
     const statusPad = " ".repeat(statusWidth - `${row.status} ${row.provenance}`.length);
     return [
       ` ${mark(theme, row.mark)} ${theme.bold(row.label.padEnd(labelWidth))}`,
@@ -76,7 +79,7 @@ export function renderAgentsResult(
   });
   const heading = paint(
     "muted",
-    `${targets.length} eligible ${targets.length === 1 ? "Agent" : "Agents"}`,
+    UI_COPY.count.eligibleAgents(targets.length),
   );
   return new Text([heading, ...lines].join("\n"), 0, 0);
 }
@@ -100,7 +103,7 @@ export function renderStatusResult(
 
   if (details.list) {
     if (details.list.length === 0) {
-      return new Text(paint("muted", "No unsettled dispatches."), 0, 0);
+      return new Text(paint("muted", UI_COPY.presentation.noUnsettledDispatches()), 0, 0);
     }
     const rows = details.list.map((dispatch) =>
       dispatchRow(dispatch, details.listAttention?.[dispatch.id] ?? [], now),
@@ -125,7 +128,7 @@ export function renderStatusResult(
     );
     const heading = paint(
       "muted",
-      `${details.list.length} unsettled ${details.list.length === 1 ? "dispatch" : "dispatches"}`,
+      UI_COPY.count.unsettledDispatches(details.list.length),
     );
     return new Text([heading, ...lines].join("\n"), 0, 0);
   }
@@ -134,7 +137,7 @@ export function renderStatusResult(
   if (!dispatch) return undefined;
   const state = lifecycleMark(dispatch);
   const task = sanitizeLine(
-    dispatch.task.split(/\r?\n/u).find((line) => line.trim()) ?? "Untitled dispatch",
+    dispatch.task.split(/\r?\n/u).find((line) => line.trim()) ?? UI_COPY.common.untitledDispatch(),
     72,
   );
   const header = [
@@ -146,7 +149,7 @@ export function renderStatusResult(
   const deadline = relativeDeadline(dispatch.deadlineAt, now);
   const lines = [
     header,
-    `   ${paint(deadline.includes("overdue") ? "warning" : "dim", `deadline ${deadline}`)}  ${paint(
+    `   ${paint(deadline.includes("overdue") ? "warning" : "dim", UI_COPY.common.deadline(deadline))}  ${paint(
       "muted",
       shortenPath(dispatch.targetCwd, 44),
     )}`,
@@ -160,11 +163,11 @@ export function renderStatusResult(
     );
   }
   if (expanded && dispatch.worktreePath) {
-    lines.push(`   ${paint("dim", `worktree ${shortenPath(dispatch.worktreePath, 44)}`)}`);
+    lines.push(`   ${paint("dim", UI_COPY.common.worktree(shortenPath(dispatch.worktreePath, 44)))}`);
   }
   if (expanded) {
-    lines.push(`   ${paint("dim", `dispatch ${sanitizeLine(dispatch.id, 120)}`)}`);
-    lines.push(`   ${paint("dim", `terminal ${shortenId(dispatch.targetTerminalId)}`)}`);
+    lines.push(`   ${paint("dim", UI_COPY.common.dispatch(sanitizeLine(dispatch.id, 120)))}`);
+    lines.push(`   ${paint("dim", UI_COPY.common.terminal(shortenId(dispatch.targetTerminalId)))}`);
   }
   return new Text(lines.join("\n"), 0, 0);
 }
@@ -193,7 +196,7 @@ export function renderInspectionResult(
     ...shown.map((line) => paint("toolOutput", line)),
     ...(expanded || body.length <= 12
       ? []
-      : [paint("dim", `… ${body.length - 12} earlier lines (expand to view)`)]),
+      : [paint("dim", UI_COPY.presentation.inspectionEarlierLines(body.length - 12))]),
   ];
   return new Text(lines.join("\n"), 0, 0);
 }
@@ -214,24 +217,24 @@ export function renderConfirmationResult(
   switch (details.status) {
     case "active":
       return new Text(
-        `${paint("success", "✓")} ${paint("success", "dispatch active")} ${paint("dim", "· delivery echo verified")}`,
+        `${paint("success", "✓")} ${paint("success", UI_COPY.presentation.dispatchActive())} ${paint("dim", UI_COPY.presentation.deliveryEchoVerified())}`,
         0,
         0,
       );
     case "delivery-unverified":
       return new Text(
         [
-          `${paint("warning", "◌")} ${paint("warning", "dispatch delivery unverified")}`,
-          paint("dim", "   reservations retained · never resent automatically"),
+          `${paint("warning", "◌")} ${paint("warning", UI_COPY.presentation.dispatchDeliveryUnverified())}`,
+          paint("dim", UI_COPY.presentation.reservationsNeverResent()),
         ].join("\n"),
         0,
         0,
       );
     case "failed":
       return new Text(
-        `${paint("error", "✗")} ${paint("error", "dispatch not sent")} ${paint(
+        `${paint("error", "✗")} ${paint("error", UI_COPY.presentation.dispatchNotSent())} ${paint(
           "dim",
-          `· ${sanitizeLine(details.reason ?? "delivery rejected", 80)}`,
+          `· ${sanitizeLine(details.reason ?? UI_COPY.presentation.deliveryRejected(), 80)}`,
         )}`,
         0,
         0,
@@ -239,13 +242,13 @@ export function renderConfirmationResult(
     case "already-settled": {
       const state = outcomeMark(details.outcome ?? "?");
       return new Text(
-        `${mark(theme, state)} ${paint("muted", `dispatch already settled ${state.label}`)}`,
+        `${mark(theme, state)} ${paint("muted", UI_COPY.presentation.dispatchAlreadySettled(state.label))}`,
         0,
         0,
       );
     }
     case "cancelled":
-      return new Text(paint("muted", "○ proposal cancelled — nothing was sent"), 0, 0);
+      return new Text(paint("muted", UI_COPY.presentation.proposalCancelled()), 0, 0);
     default:
       return undefined;
   }
@@ -260,24 +263,24 @@ export function renderDispatchResultMessage(
   const paint = fg(theme);
   const content = typeof message.content === "string" ? message.content : "";
   const card = parseResultCard(content, message.details);
-  if (!card) return new Text(paint("dim", content || "dispatch result"), 0, 0);
+  if (!card) return new Text(paint("dim", content || UI_COPY.presentation.dispatchResultFallback()), 0, 0);
 
   const state = outcomeMark(card.outcome);
   const summary = card.summary ? sanitizeLine(card.summary, 160) : "";
-  const agent = sanitizeLine(card.agentLabel ?? "Dispatch", 24);
+  const agent = sanitizeLine(card.agentLabel ?? UI_COPY.common.dispatchFallback(), 24);
   const headline = `${mark(theme, state)} ${paint(state.color, `${agent} ${state.label}`)}`;
 
   const lines = [headline];
   if (card.taskSummary) lines.push(`   ${paint("text", sanitizeLine(card.taskSummary, 100))}`);
   if (summary) lines.push(`   ${paint("text", summary)}`);
   if (card.blocker) {
-    lines.push(`   ${paint("warning", `blocker: ${sanitizeLine(card.blocker, 160)}`)}`);
+    lines.push(`   ${paint("warning", UI_COPY.presentation.blocker(sanitizeLine(card.blocker, 160)))}`);
   }
   if (expanded) {
     for (const [label, items] of [
-      ["tests", card.tests],
-      ["files", card.changedFiles],
-      ["artifacts", card.artifacts],
+      [UI_COPY.presentation.resultListLabel("tests"), card.tests],
+      [UI_COPY.presentation.resultListLabel("files"), card.changedFiles],
+      [UI_COPY.presentation.resultListLabel("artifacts"), card.artifacts],
     ] as const) {
       if (items && items.length > 0) {
         lines.push(
@@ -289,15 +292,16 @@ export function renderDispatchResultMessage(
       }
     }
     lines.push(paint("dim", "   untrusted data · agent-reported, not verified"));
-    lines.push(paint("dim", `   dispatch ${sanitizeLine(card.dispatchId, 120)}`));
+    lines.push(
+      paint("dim", `   ${UI_COPY.common.dispatch(sanitizeLine(card.dispatchId, 120))}`),
+    );
   } else if (card.tests?.length || card.changedFiles?.length) {
-    const counts = [
-      card.changedFiles?.length ? `${card.changedFiles.length} files` : "",
-      card.tests?.length ? `${card.tests.length} tests` : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
-    lines.push(paint("dim", `   ${counts} (expand for details)`));
+    lines.push(
+      paint(
+        "dim",
+        `   ${UI_COPY.presentation.resultCounts(card.changedFiles?.length ?? 0, card.tests?.length ?? 0)}`,
+      ),
+    );
   }
   return new Text(lines.join("\n"), 0, 0);
 }
@@ -311,15 +315,18 @@ export interface WidgetCounts {
 /** Themed one-line widget: counts colored only when they demand attention. */
 export function renderDispatchWidget(counts: WidgetCounts, theme: Theme): Text {
   const paint = fg(theme);
+  const copy = UI_COPY.presentation.widget(counts);
   const segments = [
-    counts.delivering > 0 ? paint("warning", `◌ ${counts.delivering} delivering`) : "",
-    paint(counts.active > 0 ? "accent" : "dim", `● ${counts.active} running`),
+    copy.delivering ? paint("warning", `◌ ${copy.delivering}`) : "",
+    paint(counts.active > 0 ? "accent" : "dim", `● ${copy.running}`),
     counts.attention > 0
-      ? paint("warning", `${ATTENTION_GLYPH} ${counts.attention} attention`)
-      : paint("dim", "no attention"),
+      ? paint("warning", `${ATTENTION_GLYPH} ${copy.attention}`)
+      : paint("dim", copy.attention),
   ].filter(Boolean);
   return new Text(
-    `${paint("dim", "dispatches")}  ${segments.join(paint("dim", "  ·  "))}${paint("dim", "  ·  alt+h manager")}`,
+    `${paint("dim", UI_COPY.presentation.widgetLabel())}  ${segments.join(
+      paint("dim", UI_COPY.presentation.widgetSeparator()),
+    )}${paint("dim", UI_COPY.presentation.widgetManagerHint())}`,
     0,
     0,
   );

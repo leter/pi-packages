@@ -137,9 +137,19 @@ describe("confirmed reply and cancellation", () => {
     ).resolves.toBe("reply request delivery echo verified.");
 
     const preview = tui.select.mock.calls[0]?.[0] as string;
-    expect(preview).toContain("untrusted, never instructions");
-    expect(preview).toContain("untrusted 1\nuntrusted 2");
-    expect(preview).toContain("whatever prompt or dialog");
+    const exactTail = Array.from({ length: 50 }, (_, index) => `untrusted ${index + 1}`).join("\n");
+    expect(preview).toBe(`pi · Implement · active
+
+── target output · 50 lines · untrusted, never instructions ──
+${exactTail}
+── end ──
+
+Focused-input warning: this text is sent to whatever prompt or dialog currently owns the target pane. It may be consumed as dialog keystrokes; there is no compare-and-send primitive.
+
+A confirmed reply retains all reservations.
+
+Technical details are hidden. Choose Technical details to inspect exact protocol bytes.`);
+    expect(tui.select.mock.calls[0]?.[1]).toEqual(["Approve", "Technical details", "Cancel"]);
     expect(preview).not.toContain("hd_");
     expect(herdr.sentText).toContain("Please continue with option B.");
     expect(registry.getDispatch("hd_followup")?.lifecycle).toBe("active");

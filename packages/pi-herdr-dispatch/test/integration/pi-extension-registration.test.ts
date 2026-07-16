@@ -30,11 +30,15 @@ describe("Pi extension Phase 4 registration", () => {
   it("registers proposal, listing, inspection, status tools and matching slash commands", () => {
     const tools: ToolDefinition[] = [];
     const commands: string[] = [];
+    const descriptions = new Map<string, string>();
     const shortcuts: string[] = [];
     const pi = {
       registerMessageRenderer: (() => undefined) as never,
       registerTool: (tool: ToolDefinition) => tools.push(tool),
-      registerCommand: (name: string) => commands.push(name),
+      registerCommand: (name: string, options: { description: string }) => {
+        commands.push(name);
+        descriptions.set(name, options.description);
+      },
       registerShortcut: (shortcut: string) => shortcuts.push(shortcut),
       on: vi.fn(),
     } as unknown as ExtensionAPI;
@@ -46,6 +50,12 @@ describe("Pi extension Phase 4 registration", () => {
       "herdr_agents_list",
       "herdr_agent_output_inspect",
       "herdr_dispatch_status",
+    ]);
+    expect(tools.map((tool) => tool.label)).toEqual([
+      "Propose Herdr Dispatch",
+      "List Herdr Agents",
+      "Inspect Herdr Agent Output",
+      "Herdr Dispatch Status",
     ]);
     expect(commands).toEqual([
       "herdr-agents",
@@ -66,6 +76,24 @@ describe("Pi extension Phase 4 registration", () => {
       "hd-output",
     ]);
     expect(shortcuts).toEqual(["alt+h"]);
+    expect(Object.fromEntries(descriptions)).toEqual({
+      "herdr-agents": "List Eligible Agents in the current Herdr workspace",
+      "hd-agents": "List Eligible Agents in the current Herdr workspace",
+      "herdr-dispatch": "Create and immediately send a Herdr dispatch",
+      "hd-new": "Create and immediately send a Herdr dispatch",
+      "herdr-dispatches": "Open the Herdr Dispatch Manager",
+      "hd-manager": "Open the Herdr Dispatch Manager",
+      "herdr-dispatch-reply": "Preview and confirm a reply to an Active Dispatch with attention",
+      "hd-reply": "Preview and confirm a reply to an Active Dispatch with attention",
+      "herdr-dispatch-cancel": "Preview and confirm a normal cancellation request",
+      "hd-cancel": "Preview and confirm a normal cancellation request",
+      "herdr-dispatch-resolve": "Manually or emergently resolve a dispatch with confirmation",
+      "hd-resolve": "Manually or emergently resolve a dispatch with confirmation",
+      "herdr-dispatch-setup": "Explicitly install one Herdr Agent status integration",
+      "hd-setup": "Explicitly install one Herdr Agent status integration",
+      "herdr-agent-output": "Read one bounded current-workspace Agent output tail",
+      "hd-output": "Read one bounded current-workspace Agent output tail",
+    });
   });
 
   it("runs the setup workflow through its short alias", async () => {

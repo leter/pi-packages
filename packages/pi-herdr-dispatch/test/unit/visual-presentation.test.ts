@@ -75,18 +75,33 @@ describe("visual vocabulary", () => {
   });
 
   it("renders human agent and dispatch tables with teaching empty states", () => {
-    expect(formatAgentTable([])).toContain("Agents become eligible");
-    expect(formatDispatchTable([], () => [], 0)).toContain("/hd-new");
+    expect(formatAgentTable([])).toBe(
+      "No eligible Agents right now — the others are working, blocked, or occupied.\n" +
+        "Agents become eligible when their status is idle or done.",
+    );
+    expect(formatAgentTable([
+      {
+        terminalId: "term_6569653c7869324",
+        paneId: "w1:p2",
+        workspaceId: "w1",
+        agentLabel: "claude",
+        cwd: "/repo",
+        status: "idle",
+        statusProvenance: "screen-detected",
+      },
+    ])).toBe("1 eligible Agent\n  ○ claude  idle ~screen  /repo  term_6569…9324");
+    expect(formatDispatchTable([], () => [], 0)).toBe(
+      "No unsettled dispatches.\n" +
+        "Start one with /hd-new, or just ask for work to be dispatched.",
+    );
     const table = formatDispatchTable(
       [dispatch],
       () => [{ condition: "overdue", details: undefined, addedAt: 0 }],
       1_000_000,
     );
-    expect(table).toContain("● claude");
-    expect(table).toContain("Do work");
-    expect(table).not.toContain("hd_view");
-    expect(table).toContain("▲ overdue");
-    expect(table).toContain("in 22m");
+    expect(table).toBe(
+      "1 unsettled dispatch\n  ● claude  Do work  active  write  in 22m  ▲ overdue",
+    );
   });
 
   it("labels human inspection output as untrusted", () => {

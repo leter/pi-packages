@@ -123,27 +123,36 @@ describe("notification sound policy", () => {
     expect(outcomeNotification(dispatch, "blocked").sound).toBe("request");
     expect(outcomeNotification(dispatch, "failed").sound).toBe("request");
     expect(outcomeNotification(dispatch, "cancelled").sound).toBe("none");
-    expect(outcomeNotification(dispatch, "done")).toMatchObject({
+    expect(outcomeNotification(dispatch, "done")).toEqual({
       title: "claude�[31m done",
       body: "Fix login state",
+      sound: "done",
     });
     expect(JSON.stringify(outcomeNotification(dispatch, "done"))).not.toContain("hd_private");
   });
 
   it("maps every Attention Condition to request", () => {
-    for (const condition of [
-      "delivery-unverified",
-      "unacknowledged",
-      "overdue",
-      "blocked-runtime",
-      "monitoring-paused",
-      "malformed-result",
-      "result-missing",
-      "target-lost",
-      "target-moved",
-    ] as const) {
+    const labels = {
+      "delivery-unverified": "Delivery unverified",
+      unacknowledged: "Unacknowledged",
+      overdue: "Overdue",
+      "blocked-runtime": "Runtime blocked",
+      "monitoring-paused": "Monitoring paused",
+      "malformed-result": "Malformed result",
+      "result-missing": "Result missing",
+      "target-lost": "Target lost",
+      "target-moved": "Target moved",
+    } as const;
+    for (const [condition, label] of Object.entries(labels) as [
+      keyof typeof labels,
+      (typeof labels)[keyof typeof labels],
+    ][]) {
       const notification = attentionNotification(dispatch, condition);
-      expect(notification.sound).toBe("request");
+      expect(notification).toEqual({
+        title: "claude�[31m needs attention",
+        body: `Fix login state · ${label}`,
+        sound: "request",
+      });
       expect(`${notification.title} ${notification.body}`).not.toContain("hd_private");
     }
   });

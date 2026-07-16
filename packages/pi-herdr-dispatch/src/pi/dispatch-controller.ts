@@ -4,6 +4,7 @@ import type {
   DispatchApplication,
   OriginIdentity,
 } from "../dispatch/application.js";
+import { UI_COPY } from "./ui-copy.js";
 export interface ProposalUI {
   select(title: string, options: string[]): Promise<string | undefined>;
   input(title: string, placeholder?: string): Promise<string | undefined>;
@@ -51,13 +52,13 @@ export class DispatchController {
   #assertMutationAllowed(context: ProposalInteractionContext): void {
     if (context.mode !== "tui") {
       throw new DispatchMutationUnavailableError(
-        "Herdr dispatch delivery is available only in TUI mode",
+        UI_COPY.command.proposalTuiOnly(),
       );
     }
     const reason = this.#mutationUnavailableReason();
     if (reason) throw new DispatchMutationUnavailableError(reason);
     if (!this.#application()) {
-      throw new DispatchMutationUnavailableError("Herdr dispatch runtime is unavailable");
+      throw new DispatchMutationUnavailableError(UI_COPY.command.runtimeUnavailable());
     }
   }
 }

@@ -20,6 +20,7 @@ import {
   type ViewLine,
 } from "./dispatch-view-model.js";
 import { sanitizeLine } from "./visual.js";
+import { UI_COPY } from "./ui-copy.js";
 
 /**
  * Interactive dispatch view panel (list ⇄ detail).
@@ -105,8 +106,8 @@ export class DispatchViewComponent implements Component {
       lines = this.#screen.kind === "list" ? this.#listLines() : this.#detailLines();
     } catch (error) {
       lines = [
-        { spans: [{ text: ` dispatch view unavailable: ${errorText(error)}`, color: "warning" }] },
-        { spans: [{ text: " esc close", color: "dim" }] },
+        { spans: [{ text: UI_COPY.manager.viewUnavailable(errorText(error)), color: "warning" }] },
+        { spans: [{ text: UI_COPY.manager.closeKeybar(), color: "dim" }] },
       ];
     }
     return lines.map((line) => this.#paint(line, width));
@@ -202,8 +203,8 @@ export class DispatchViewComponent implements Component {
     const dispatch = this.#currentDispatch();
     if (!dispatch) {
       return [
-        { spans: [{ text: " dispatch is no longer in the Registry", color: "warning" }] },
-        { spans: [{ text: " esc back", color: "dim" }] },
+        { spans: [{ text: UI_COPY.manager.missingRegistryDispatch(), color: "warning" }] },
+        { spans: [{ text: UI_COPY.manager.backKeybar(), color: "dim" }] },
       ];
     }
     const snapshot = this.#ports.snapshot();

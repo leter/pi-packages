@@ -18,7 +18,6 @@ import { DispatchController } from "./dispatch-controller.js";
 import { SETTLED_DISPLAY_LIMIT, type DispatchAction } from "./dispatch-view-model.js";
 import { openDispatchView, type DispatchViewPorts } from "./dispatch-view.js";
 import { FollowupController } from "./followup-controller.js";
-import { formatConfirmationResult } from "./presentation.js";
 import {
   agentRow,
   formatAgentTable,
@@ -26,6 +25,7 @@ import {
   formatInspectionText,
 } from "./visual.js";
 import type { DispatchRuntime } from "./dispatch-runtime.js";
+import { UI_COPY } from "./ui-copy.js";
 
 export function registerDispatchCommands(
   pi: ExtensionAPI,
@@ -34,7 +34,7 @@ export function registerDispatchCommands(
   followup: FollowupController,
 ): void {
   registerCommandWithAlias(pi, "herdr-agents", "hd-agents", {
-    description: "List Eligible Agents in the current Herdr workspace",
+    description: UI_COPY.command.description("agents"),
     handler: async (_args, ctx) =>
       handle(ctx, async () => {
         ctx.ui.notify(formatAgentTable(await application(runtime).listEligibleAgents()), "info");
@@ -42,27 +42,30 @@ export function registerDispatchCommands(
   });
 
   registerCommandWithAlias(pi, "herdr-dispatch", "hd-new", {
-    description: "Create and immediately send a Herdr dispatch",
+    description: UI_COPY.command.description("new"),
     handler: async (_args, ctx) =>
       handle(ctx, async () => {
-        if (ctx.mode !== "tui") throw new Error("Dispatch delivery is available only in TUI mode");
+        if (ctx.mode !== "tui") throw new Error(UI_COPY.command.dispatchTuiOnly());
         if (runtime.mutationUnavailableReason) throw new Error(runtime.mutationUnavailableReason);
         const app = application(runtime);
         const targets = await app.listEligibleAgents();
-        if (targets.length === 0) throw new Error("No Eligible Agents are available");
+        if (targets.length === 0) throw new Error(UI_COPY.command.noEligibleAgents());
         const options = targets.map((target) => {
           const row = agentRow(target);
           return `${row.mark.glyph} ${row.label} · ${row.status} ${row.provenance} · ${row.cwd} · ${row.terminalId}`;
         });
-        const selected = await ctx.ui.select("Choose an Eligible Agent", options);
+        const selected = await ctx.ui.select(UI_COPY.command.chooseEligibleAgent(), options);
         if (!selected) return;
         const target = targets[options.indexOf(selected)];
-        if (!target) throw new Error("Selected Agent is no longer available");
-        const task = await ctx.ui.editor("Complete dispatch task");
+        if (!target) throw new Error(UI_COPY.command.selectedAgentUnavailable());
+        const task = await ctx.ui.editor(UI_COPY.command.completeTask());
         if (task === undefined) return;
-        const mode = await ctx.ui.select("Dispatch mutation mode", ["non-mutating", "write"]);
+        const mode = await ctx.ui.select(UI_COPY.command.mutationMode(), [
+          UI_COPY.state.mode("non-mutating"),
+          UI_COPY.state.mode("write"),
+        ]);
         if (mode !== "non-mutating" && mode !== "write") return;
-        const deadlineInput = await ctx.ui.input("Deadline in minutes", "30");
+        const deadlineInput = await ctx.ui.input(UI_COPY.command.deadlineMinutes(), "30");
         if (deadlineInput === undefined) return;
         const request: CreateProposalRequest = {
           target: target.terminalId,
@@ -72,13 +75,19 @@ export function registerDispatchCommands(
           allowProjectDependencyInstall:
             mode === "write"
               ? await ctx.ui.confirm(
-                  "Project dependency installation",
-                  "Explicitly allow project-local dependency installation?",
+                  UI_COPY.command.dependencyInstallTitle(),
+                  UI_COPY.command.dependencyInstallQuestion(),
                 )
               : false,
         };
         const result = await controller.proposeAndDispatch(request, interactionContext(ctx));
-        ctx.ui.notify(formatConfirmationResult(result), result.status === "active" ? "info" : "warning");
+        ctx.ui.notify(
+          UI_COPY.presentation.confirmationResult(
+            result.status,
+            "outcome" in result ? String(result.outcome) : undefined,
+          ),
+          result.status === "active" ? "info" : "warning",
+        );
       }),
   });
 
@@ -104,7 +113,7 @@ export function registerDispatchCommands(
   };
 
   const openPanel = async (ctx: ExtensionContext, action?: DispatchAction): Promise<void> => {
-    if (ctx.mode !== "tui") throw new Error("The Dispatch Manager is available only in TUI mode");
+    if (ctx.mode !== "tui") throw new Error(UI_COPY.command.managerTuiOnly());
     if (dispatchViewOpen) return;
     const app = application(runtime);
     const originSessionId = ctx.sessionManager.getSessionId();
@@ -146,17 +155,17 @@ export function registerDispatchCommands(
     }
     if (!result) return;
     const dispatch = app.getDispatch(result.dispatchId);
-    if (!dispatch) throw new Error("The selected dispatch is no longer available in this workspace");
+    if (!dispatch) throw new Error(UI_COPY.command.selectedDispatchUnavailable());
     await executeFollowup(result.action, dispatch, ctx);
   };
 
   pi.registerShortcut("alt+h", {
-    description: "Open the Herdr Dispatch Manager",
+    description: UI_COPY.command.description("manager"),
     handler: async (ctx) => handle(ctx, () => openPanel(ctx)),
   });
 
   registerCommandWithAlias(pi, "herdr-dispatches", "hd-manager", {
-    description: "Open the Herdr Dispatch Manager",
+    description: UI_COPY.command.description("manager"),
     handler: async (_args, ctx) =>
       handle(ctx, async () => {
         if (ctx.mode === "tui") return openPanel(ctx);
@@ -173,7 +182,7 @@ export function registerDispatchCommands(
   });
 
   registerCommandWithAlias(pi, "herdr-dispatch-reply", "hd-reply", {
-    description: "Preview and confirm a reply to an Active Dispatch with attention",
+    description: UI_COPY.command.description("reply"),
     getArgumentCompletions: completionFor("reply", runtime),
     handler: async (args, ctx) =>
       handle(ctx, async () => {
@@ -184,7 +193,7 @@ export function registerDispatchCommands(
   });
 
   registerCommandWithAlias(pi, "herdr-dispatch-cancel", "hd-cancel", {
-    description: "Preview and confirm a normal cancellation request",
+    description: UI_COPY.command.description("cancel"),
     getArgumentCompletions: completionFor("cancel", runtime),
     handler: async (args, ctx) =>
       handle(ctx, async () => {
@@ -195,7 +204,7 @@ export function registerDispatchCommands(
   });
 
   registerCommandWithAlias(pi, "herdr-dispatch-resolve", "hd-resolve", {
-    description: "Manually or emergently resolve a dispatch with confirmation",
+    description: UI_COPY.command.description("resolve"),
     getArgumentCompletions: completionFor("resolve", runtime),
     handler: async (args, ctx) =>
       handle(ctx, async () => {
@@ -206,39 +215,41 @@ export function registerDispatchCommands(
   });
 
   registerCommandWithAlias(pi, "herdr-dispatch-setup", "hd-setup", {
-    description: "Explicitly install one Herdr Agent status integration",
+    description: UI_COPY.command.description("setup"),
     handler: async (_args, ctx) =>
       handle(ctx, async () => {
-        if (ctx.mode !== "tui") throw new Error("Integration setup is available only in TUI mode");
+        if (ctx.mode !== "tui") throw new Error(UI_COPY.command.setupTuiOnly());
         const status = await pi.exec("herdr", ["integration", "status"], { cwd: ctx.cwd });
-        ctx.ui.notify(status.stdout || "No integration status output.", "info");
-        const integration = await ctx.ui.select("Install one Herdr integration", [
+        ctx.ui.notify(status.stdout || UI_COPY.command.setupNoStatusOutput(), "info");
+        const integration = await ctx.ui.select(UI_COPY.command.setupChooseIntegration(), [
           "pi",
           "claude",
           "codex",
           "opencode",
-          "Cancel",
+          UI_COPY.command.setupCancel(),
         ]);
-        if (!integration || integration === "Cancel") return;
+        if (!integration || integration === UI_COPY.command.setupCancel()) return;
         const confirmed = await ctx.ui.confirm(
-          `Install Herdr ${integration} integration?`,
-          "This explicitly modifies that Agent's local integration configuration. Nothing is installed automatically and only this one selected integration will be changed.",
+          UI_COPY.command.setupConfirmTitle(integration),
+          UI_COPY.command.setupConfirmBody(),
         );
         if (!confirmed) return;
         const result = await pi.exec("herdr", ["integration", "install", integration], {
           cwd: ctx.cwd,
         });
-        if (result.code !== 0) throw new Error(result.stderr || `Herdr integration install exited ${result.code}`);
-        ctx.ui.notify(result.stdout || `Installed Herdr ${integration} integration.`, "info");
+        if (result.code !== 0) {
+          throw new Error(result.stderr || UI_COPY.command.setupInstallFailed(result.code));
+        }
+        ctx.ui.notify(result.stdout || UI_COPY.command.setupInstalled(integration), "info");
       }),
   });
 
   registerCommandWithAlias(pi, "herdr-agent-output", "hd-output", {
-    description: "Read one bounded current-workspace Agent output tail",
+    description: UI_COPY.command.description("output"),
     handler: async (args, ctx) =>
       handle(ctx, async () => {
         const [target, linesText] = args.trim().split(/\s+/u);
-        if (!target) throw new Error("Usage: /hd-output <target> [lines]");
+        if (!target) throw new Error(UI_COPY.command.outputUsage());
         const inspected = await application(runtime).inspectAgent(
           target,
           linesText === undefined ? 50 : Number(linesText),
@@ -262,7 +273,7 @@ function registerCommandWithAlias(
 
 function application(runtime: DispatchRuntime): DispatchApplication {
   if (!runtime.application) {
-    throw new Error(runtime.mutationUnavailableReason ?? "Dispatch runtime unavailable");
+    throw new Error(runtime.mutationUnavailableReason ?? UI_COPY.command.runtimeUnavailable());
   }
   return runtime.application;
 }
@@ -298,7 +309,7 @@ async function resolveCommandDispatch(
   const selector = args.trim();
   const result = resolveDispatchSelector(app, selector);
   if (result.status === "not-found") {
-    throw new Error(`No current-workspace dispatch matches ${selector}. Open /hd-manager.`);
+    throw new Error(UI_COPY.command.dispatchNotFound(selector));
   }
   if (result.status === "matched") return result.dispatch;
   const baseOptions = result.matches.map(dispatchChoiceLabel);
@@ -307,20 +318,13 @@ async function resolveCommandDispatch(
       ? label
       : `${label} · ${result.matches[index]!.id}`,
   );
-  const selected = await ctx.ui.select("Choose the matching dispatch", options);
+  const selected = await ctx.ui.select(UI_COPY.command.chooseMatchingDispatch(), options);
   if (!selected) return undefined;
   return result.matches[options.indexOf(selected)];
 }
 
 function emptyActionMessage(action: DispatchAction): string {
-  switch (action) {
-    case "reply":
-      return "No dispatch currently needs a reply.";
-    case "cancel":
-      return "No unsettled dispatch from this session can be cancelled.";
-    case "resolve":
-      return "No dispatch currently requires manual resolution.";
-  }
+  return UI_COPY.command.noDispatchForAction(action);
 }
 
 function interactionContext(ctx: ExtensionCommandContext) {

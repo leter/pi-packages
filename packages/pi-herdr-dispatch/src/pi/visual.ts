@@ -7,6 +7,7 @@ import type {
   FinalOutcome,
   StoredDispatch,
 } from "../registry/types.js";
+import { UI_COPY } from "./ui-copy.js";
 
 /**
  * Shared visual vocabulary for every human-facing surface.
@@ -36,13 +37,13 @@ export interface StateMark {
 export function outcomeMark(outcome: FinalOutcome | string): StateMark {
   switch (outcome) {
     case "done":
-      return { glyph: "✓", color: "success", label: "done" };
+      return { glyph: "✓", color: "success", label: UI_COPY.state.outcome(outcome) };
     case "blocked":
-      return { glyph: "◼", color: "warning", label: "blocked" };
+      return { glyph: "◼", color: "warning", label: UI_COPY.state.outcome(outcome) };
     case "failed":
-      return { glyph: "✗", color: "error", label: "failed" };
+      return { glyph: "✗", color: "error", label: UI_COPY.state.outcome(outcome) };
     case "cancelled":
-      return { glyph: "○", color: "muted", label: "cancelled" };
+      return { glyph: "○", color: "muted", label: UI_COPY.state.outcome(outcome) };
     default:
       return { glyph: "?", color: "dim", label: String(outcome) };
   }
@@ -54,21 +55,21 @@ export function lifecycleMark(dispatch: {
 }): StateMark {
   if (dispatch.lifecycle === "settled") return outcomeMark(dispatch.finalOutcome ?? "?");
   if (dispatch.lifecycle === "delivering") {
-    return { glyph: "◌", color: "warning", label: "delivering" };
+    return { glyph: "◌", color: "warning", label: UI_COPY.state.lifecycle("delivering") };
   }
-  return { glyph: "●", color: "accent", label: "active" };
+  return { glyph: "●", color: "accent", label: UI_COPY.state.lifecycle("active") };
 }
 
 export function agentStatusMark(status: string): StateMark {
   switch (status) {
     case "idle":
-      return { glyph: "○", color: "success", label: "idle" };
+      return { glyph: "○", color: "success", label: UI_COPY.state.agentStatus(status) };
     case "done":
-      return { glyph: "◍", color: "success", label: "done" };
+      return { glyph: "◍", color: "success", label: UI_COPY.state.agentStatus(status) };
     case "working":
-      return { glyph: "●", color: "accent", label: "working" };
+      return { glyph: "●", color: "accent", label: UI_COPY.state.agentStatus(status) };
     case "blocked":
-      return { glyph: "◼", color: "warning", label: "blocked" };
+      return { glyph: "◼", color: "warning", label: UI_COPY.state.agentStatus(status) };
     default:
       return { glyph: "?", color: "dim", label: status };
   }
@@ -78,25 +79,12 @@ export const ATTENTION_GLYPH = "▲";
 
 /** `in 25m`, `in 2h 05m`, `8m overdue`, `just now`. */
 export function relativeDeadline(deadlineAt: number, now: number): string {
-  const delta = deadlineAt - now;
-  const magnitude = Math.abs(delta);
-  if (magnitude < 60_000) return delta >= 0 ? "in <1m" : "just overdue";
-  const minutes = Math.round(magnitude / 60_000);
-  const text =
-    minutes < 60
-      ? `${minutes}m`
-      : `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
-  return delta >= 0 ? `in ${text}` : `${text} overdue`;
+  return UI_COPY.time.relativeDeadline(deadlineAt, now);
 }
 
 /** `3m ago`, `2h 05m ago`, `just now`. */
 export function relativeAge(timestamp: number, now: number): string {
-  const magnitude = Math.max(0, now - timestamp);
-  if (magnitude < 60_000) return "just now";
-  const minutes = Math.round(magnitude / 60_000);
-  return minutes < 60
-    ? `${minutes}m ago`
-    : `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m ago`;
+  return UI_COPY.time.relativeAge(timestamp, now);
 }
 
 /** Home → `~`; long paths keep head + tail: `~/projects/…/deep/dir`. */
@@ -157,8 +145,8 @@ export function agentRow(target: ProposalTarget): AgentRow {
   return {
     mark: agentStatusMark(target.status),
     label: sanitizeLine(target.displayName ?? target.agentLabel, 24),
-    status: target.status,
-    provenance: target.statusProvenance === "reported" ? "reported" : "~screen",
+    status: UI_COPY.state.agentStatus(target.status),
+    provenance: UI_COPY.state.provenance(target.statusProvenance === "reported"),
     cwd: shortenPath(target.cwd, 36),
     terminalId: shortenId(target.terminalId),
   };
@@ -167,7 +155,7 @@ export function agentRow(target: ProposalTarget): AgentRow {
 /** Human notify table for /herdr-agents (plain text; notifications carry no color). */
 export function formatAgentTable(targets: readonly ProposalTarget[]): string {
   if (targets.length === 0) {
-    return "No eligible Agents right now — the others are working, blocked, or occupied.\nAgents become eligible when their status is idle or done.";
+    return `${UI_COPY.presentation.noEligibleAgents()}\n${UI_COPY.presentation.eligibleAgentHelp()}`;
   }
   const rows = targets.map(agentRow);
   const lines = alignColumns(
@@ -178,8 +166,7 @@ export function formatAgentTable(targets: readonly ProposalTarget[]): string {
       row.terminalId,
     ]),
   );
-  const plural = targets.length === 1 ? "Agent" : "Agents";
-  return [`${targets.length} eligible ${plural}`, ...lines.map((line) => `  ${line}`)].join("\n");
+  return [UI_COPY.count.eligibleAgents(targets.length), ...lines.map((line) => `  ${line}`)].join("\n");
 }
 
 export interface DispatchRow {
@@ -199,10 +186,12 @@ export function dispatchRow(
 ): DispatchRow {
   return {
     mark: lifecycleMark(dispatch),
-    state: dispatch.lifecycle === "settled" ? (dispatch.finalOutcome ?? "settled") : dispatch.lifecycle,
+    state: dispatch.lifecycle === "settled"
+      ? UI_COPY.state.outcome(dispatch.finalOutcome ?? "settled")
+      : UI_COPY.state.lifecycle(dispatch.lifecycle),
     target: sanitizeLine(dispatch.targetAgentLabel, 20),
     task: taskDisplaySummary(dispatch.task, 48),
-    mode: dispatch.mode,
+    mode: UI_COPY.state.mode(dispatch.mode),
     deadline: relativeDeadline(dispatch.deadlineAt, now),
     attention: attention.map((record) => record.condition),
   };
@@ -215,7 +204,7 @@ export function formatDispatchTable(
   now: number,
 ): string {
   if (dispatches.length === 0) {
-    return "No unsettled dispatches.\nStart one with /hd-new, or just ask for work to be dispatched.";
+    return `${UI_COPY.presentation.noUnsettledDispatches()}\n${UI_COPY.presentation.noUnsettledDispatchesHelp()}`;
   }
   const rows = dispatches.map((dispatch) => dispatchRow(dispatch, attentionFor(dispatch.id), now));
   const lines = alignColumns(
@@ -228,8 +217,7 @@ export function formatDispatchTable(
       row.attention.length > 0 ? `${ATTENTION_GLYPH} ${row.attention.join(", ")}` : "",
     ]),
   );
-  const plural = dispatches.length === 1 ? "dispatch" : "dispatches";
-  return [`${dispatches.length} unsettled ${plural}`, ...lines.map((line) => `  ${line}`)].join("\n");
+  return [UI_COPY.count.unsettledDispatches(dispatches.length), ...lines.map((line) => `  ${line}`)].join("\n");
 }
 
 /** Human notify format for /herdr-agent-output (still labelled untrusted). */
@@ -314,5 +302,5 @@ function taskDisplaySummary(task: string, maximum: number): string {
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .find(Boolean);
-  return sanitizeLine(first ?? "Untitled dispatch", maximum);
+  return sanitizeLine(first ?? UI_COPY.common.untitledDispatch(), maximum);
 }

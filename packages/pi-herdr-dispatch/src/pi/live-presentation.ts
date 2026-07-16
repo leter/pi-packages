@@ -6,6 +6,7 @@ import type { AttentionCondition, FinalOutcome } from "../registry/types.js";
 import { renderDispatchWidget } from "./renderers.js";
 import { agentDisplayName, attentionLabel, taskSummary } from "./dispatch-view-model.js";
 import type { StoredDispatch } from "../registry/types.js";
+import { UI_COPY } from "./ui-copy.js";
 
 export const DISPATCH_WIDGET_KEY = "pi-herdr-dispatch";
 
@@ -15,12 +16,7 @@ export function updateDispatchWidget(
   originSessionId: string,
 ): string {
   const counts = readWidgetCounts(registry, originSessionId);
-  const segments = [
-    counts.delivering > 0 ? `${counts.delivering} delivering` : undefined,
-    `${counts.active} running`,
-    `${counts.attention} attention`,
-  ].filter((segment): segment is string => segment !== undefined);
-  const text = `dispatches: ${segments.join(" · ")}`;
+  const text = UI_COPY.presentation.widget(counts).plain;
   ui.setWidget(
     DISPATCH_WIDGET_KEY,
     (_tui, theme) => ({
@@ -60,7 +56,7 @@ export function outcomeNotification(
   outcome: FinalOutcome,
 ): HerdrNotification {
   return {
-    title: `${agentDisplayName(dispatch)} ${outcome}`,
+    title: UI_COPY.notification.outcomeTitle(agentDisplayName(dispatch), outcome),
     body: taskSummary(dispatch.task, 100),
     sound: outcome === "done" ? "done" : outcome === "cancelled" ? "none" : "request",
   };
@@ -71,8 +67,11 @@ export function attentionNotification(
   condition: AttentionCondition,
 ): HerdrNotification {
   return {
-    title: `${agentDisplayName(dispatch)} needs attention`,
-    body: `${taskSummary(dispatch.task, 80)} · ${attentionLabel(condition)}`,
+    title: UI_COPY.notification.attentionTitle(agentDisplayName(dispatch)),
+    body: UI_COPY.notification.attentionBody(
+      taskSummary(dispatch.task, 80),
+      attentionLabel(condition),
+    ),
     sound: "request",
   };
 }

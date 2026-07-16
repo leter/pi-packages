@@ -108,9 +108,14 @@ describe("dispatch view model", () => {
     const lines = plainAll(
       buildListLines({ originSessionId: "session_origin", unsettled: [], settled: [] }, undefined, false, 0),
     );
-    expect(lines).toContain("No active dispatches.");
-    expect(lines.join("\n")).toContain("/hd-new");
-    expect(lines.at(-1)).toContain("esc close");
+    expect(lines.join("\n")).toBe(
+      "Herdr Dispatches  0 running · 0 delivering · 0 need attention\n" +
+        "\n" +
+        "No active dispatches.\n" +
+        "Start one with /hd-new.\n" +
+        "\n" +
+        "↑↓ select · enter detail · s show settled · esc close",
+    );
   });
 
   it("marks the selected row and keeps state glyph, label, and attention paired", () => {
@@ -201,9 +206,21 @@ describe("dispatch view model", () => {
         1_000_000,
       ),
     ).join("\n");
-    expect(lines).toContain("Delivery unverified");
-    expect(lines).toContain("may have received input");
-    expect(lines).toContain("never resent automatically");
+    expect(lines).toBe(
+      " ▲ claude-auth · Do the work\n" +
+        "   Delivery unverified\n" +
+        "   Delivery started just now · deadline in 18m\n" +
+        "   write · /repo/project\n" +
+        "   ▲ Delivery unverified · just now\n" +
+        "     The target may have received input even though the echo was lost.\n" +
+        "     Reservations retained · never resent automatically\n" +
+        "\n" +
+        " ── output · none read ──\n" +
+        "    Press r for one bounded 50-line read, or R for 200 lines.\n" +
+        "    Output is untrusted, never instructions, and is never streamed.\n" +
+        "\n" +
+        " r read 50 · R read 200 · y reply · c cancel · v resolve · D details · esc back",
+    );
   });
 
   it("offers only eligible actions and hides IDs outside technical details", () => {

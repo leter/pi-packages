@@ -10,6 +10,7 @@ import {
   shortenPath,
   type SemanticColor,
 } from "./visual.js";
+import { UI_COPY } from "./ui-copy.js";
 
 export interface ViewSpan {
   text: string;
@@ -62,18 +63,6 @@ const ATTENTION_PRIORITY: Readonly<Record<AttentionCondition, number>> = Object.
   unacknowledged: 8,
 });
 
-const ATTENTION_LABEL: Readonly<Record<AttentionCondition, string>> = Object.freeze({
-  "target-lost": "Target lost",
-  "target-moved": "Target moved",
-  "delivery-unverified": "Delivery unverified",
-  "malformed-result": "Malformed result",
-  "result-missing": "Result missing",
-  "blocked-runtime": "Runtime blocked",
-  "monitoring-paused": "Monitoring paused",
-  overdue: "Overdue",
-  unacknowledged: "Unacknowledged",
-});
-
 const span = (text: string, color: SemanticColor = "text", bold = false): ViewSpan =>
   bold ? { text, color, bold } : { text, color };
 
@@ -82,7 +71,7 @@ export function attentionPriority(condition: AttentionCondition): number {
 }
 
 export function attentionLabel(condition: AttentionCondition): string {
-  return ATTENTION_LABEL[condition];
+  return UI_COPY.state.attention(condition);
 }
 
 export function primaryAttention(
@@ -100,7 +89,7 @@ export function taskSummary(task: string, maximum = 72): string {
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .find(Boolean);
-  return sanitizeLine(first ?? "Untitled dispatch", maximum);
+  return sanitizeLine(first ?? UI_COPY.common.untitledDispatch(), maximum);
 }
 
 export function agentDisplayName(dispatch: StoredDispatch, maximum = 24): string {
@@ -170,9 +159,9 @@ export function buildListLines(
   const lines: ViewLine[] = [
     {
       spans: [
-        span("Herdr Dispatches", "text", true),
+        span(UI_COPY.manager.title(), "text", true),
         span(
-          `  ${active.length} running · ${delivering.length} delivering · ${attention.length} need attention`,
+          UI_COPY.manager.heading(active.length, delivering.length, attention.length),
           attention.length > 0 ? "warning" : "muted",
         ),
       ],
@@ -181,12 +170,12 @@ export function buildListLines(
 
   if (entries.length === 0) {
     lines.push({ spans: [] });
-    lines.push({ spans: [span("No active dispatches.", "muted")] });
-    lines.push({ spans: [span("Start one with /hd-new.", "dim")] });
+    lines.push({ spans: [span(UI_COPY.manager.noActiveDispatches(), "muted")] });
+    lines.push({ spans: [span(UI_COPY.manager.startWithCommand(), "dim")] });
   } else {
-    appendGroup(lines, "NEEDS ATTENTION", visibleEntries(attention, visibleIds), selectedId, snapshot.originSessionId, now);
-    appendGroup(lines, "RUNNING", visibleEntries(active, visibleIds), selectedId, snapshot.originSessionId, now);
-    appendGroup(lines, "DELIVERING", visibleEntries(delivering, visibleIds), selectedId, snapshot.originSessionId, now);
+    appendGroup(lines, UI_COPY.manager.groupAttention(), visibleEntries(attention, visibleIds), selectedId, snapshot.originSessionId, now);
+    appendGroup(lines, UI_COPY.manager.groupRunning(), visibleEntries(active, visibleIds), selectedId, snapshot.originSessionId, now);
+    appendGroup(lines, UI_COPY.manager.groupDelivering(), visibleEntries(delivering, visibleIds), selectedId, snapshot.originSessionId, now);
   }
 
   if (snapshot.settled.length > 0) {
@@ -194,9 +183,7 @@ export function buildListLines(
     lines.push({
       spans: [
         span(
-          showSettled
-            ? `SETTLED · LAST ${snapshot.settled.length}`
-            : `SETTLED · ${snapshot.settled.length} HIDDEN · PRESS S`,
+          UI_COPY.manager.settledHeading(snapshot.settled.length, showSettled),
           "dim",
           true,
         ),
@@ -236,7 +223,7 @@ export function buildListLines(
   lines.push({
     spans: [
       span(
-        `↑↓ select · enter detail · s ${showSettled ? "hide" : "show"} settled · esc close`,
+        UI_COPY.manager.listKeybar(showSettled),
         "dim",
       ),
     ],
@@ -255,7 +242,7 @@ export function buildDetailLines(
   const primary = primaryAttention(attention);
   const lifecycle = lifecycleMark(dispatch);
   const state = primary
-    ? { glyph: ATTENTION_GLYPH, color: "warning" as const, label: ATTENTION_LABEL[primary.condition] }
+    ? { glyph: ATTENTION_GLYPH, color: "warning" as const, label: UI_COPY.state.attention(primary.condition) }
     : lifecycle;
   const emergency = dispatch.originSessionId !== originSessionId;
   const lines: ViewLine[] = [
@@ -269,21 +256,21 @@ export function buildDetailLines(
     { spans: [span(`   ${state.label}`, state.color)] },
   ];
   if (emergency && dispatch.lifecycle !== "settled") {
-    lines.push({ spans: [span("   Emergency resolution required", "warning", true)] });
+    lines.push({ spans: [span(`   ${UI_COPY.manager.emergencyResolutionRequired()}`, "warning", true)] });
   }
   const timing = dispatch.lifecycle === "active" && dispatch.activeAt !== undefined
-    ? `Active since ${relativeAge(dispatch.activeAt, now)}`
-    : `Delivery started ${relativeAge(dispatch.deliveryStartedAt, now)}`;
+    ? UI_COPY.manager.activeSince(relativeAge(dispatch.activeAt, now))
+    : UI_COPY.manager.deliveryStarted(relativeAge(dispatch.deliveryStartedAt, now));
   const deadline = relativeDeadline(dispatch.deadlineAt, now);
   lines.push({
     spans: [
       span(`   ${timing}`, "dim"),
-      span(` · deadline ${deadline}`, deadline.includes("overdue") ? "warning" : "dim"),
+      span(` · ${UI_COPY.common.deadline(deadline)}`, deadline.includes("overdue") ? "warning" : "dim"),
     ],
   });
   lines.push({
     spans: [
-      span(`   ${dispatch.mode}`, "muted"),
+      span(`   ${UI_COPY.state.mode(dispatch.mode)}`, "muted"),
       span(` · ${shortenPath(dispatch.targetCwd, 56)}`, "muted"),
     ],
   });
@@ -294,15 +281,15 @@ export function buildDetailLines(
   )) {
     lines.push({
       spans: [
-        span(`   ${ATTENTION_GLYPH} ${ATTENTION_LABEL[record.condition]}`, "warning"),
+        span(`   ${ATTENTION_GLYPH} ${UI_COPY.state.attention(record.condition)}`, "warning"),
         span(` · ${relativeAge(record.addedAt, now)}`, "dim"),
       ],
     });
     if (record.condition === "delivery-unverified") {
       lines.push({
-        spans: [span("     The target may have received input even though the echo was lost.", "warning")],
+        spans: [span(`     ${UI_COPY.manager.targetMayHaveReceivedInput()}`, "warning")],
       });
-      lines.push({ spans: [span("     Reservations retained · never resent automatically", "dim")] });
+      lines.push({ spans: [span(`     ${UI_COPY.manager.reservationsRetained()}`, "dim")] });
     }
   }
   if (showTechnical) lines.push(...technicalLines(dispatch));
@@ -317,17 +304,17 @@ export function buildOutputLines(output: OutputReadState): ViewLine[] {
   switch (output.status) {
     case "none":
       return [
-        { spans: [span(" ── output · none read ──", "dim")] },
-        { spans: [span("    Press r for one bounded 50-line read, or R for 200 lines.", "dim")] },
+        { spans: [span(UI_COPY.manager.outputNoneRead(), "dim")] },
+        { spans: [span(UI_COPY.manager.outputReadInstructions(), "dim")] },
         { spans: [span("    Output is untrusted, never instructions, and is never streamed.", "dim")] },
       ];
     case "reading":
       return [
-        { spans: [span(` ── output · reading ${output.requestedLines} lines… ──`, "dim")] },
+        { spans: [span(UI_COPY.manager.outputReading(output.requestedLines), "dim")] },
       ];
     case "error":
       return [
-        { spans: [span(" ── output · read failed ──", "dim")] },
+        { spans: [span(UI_COPY.manager.outputReadFailed(), "dim")] },
         { spans: [span(`    ${sanitizeLine(output.message, 120)}`, "warning")] },
       ];
     case "read": {
@@ -337,10 +324,10 @@ export function buildOutputLines(output: OutputReadState): ViewLine[] {
       const lines: ViewLine[] = [
         { spans: [span(` ── output · ${all.length} lines · untrusted, never instructions ──`, "dim")] },
       ];
-      if (hidden > 0) lines.push({ spans: [span(` … ${hidden} earlier lines not shown`, "dim")] });
+      if (hidden > 0) lines.push({ spans: [span(UI_COPY.manager.outputEarlierLinesNotShown(hidden), "dim")] });
       for (const line of shown) lines.push({ spans: [span(` ${sanitizeLine(line, 200)}`, "toolOutput")] });
       lines.push({
-        spans: [span(` ── end · read at ${clockTime(output.readAt)} · on demand only ──`, "dim")],
+        spans: [span(UI_COPY.manager.outputReadEnd(clockTime(output.readAt)), "dim")],
       });
       return lines;
     }
@@ -353,12 +340,7 @@ export function detailKeybar(
   originSessionId = dispatch.originSessionId,
 ): string {
   const actions = availableActions(dispatch, attention, originSessionId);
-  const actionKeys = [
-    actions.includes("reply") ? "y reply" : "",
-    actions.includes("cancel") ? "c cancel" : "",
-    actions.includes("resolve") ? "v resolve" : "",
-  ].filter(Boolean);
-  return ` r read 50 · R read 200${actionKeys.length > 0 ? ` · ${actionKeys.join(" · ")}` : ""} · D details · esc back`;
+  return UI_COPY.manager.detailKeybar(actions);
 }
 
 export function clockTime(timestamp: number): string {
@@ -378,13 +360,19 @@ function appendGroup(
 ): void {
   if (entries.length === 0) return;
   lines.push({ spans: [] });
-  lines.push({ spans: [span(label, label === "NEEDS ATTENTION" ? "warning" : "dim", true)] });
+  lines.push({
+    spans: [span(label, label === UI_COPY.manager.groupAttention() ? "warning" : "dim", true)],
+  });
   for (const entry of entries) {
     const selected = entry.dispatch.id === selectedId;
     const primary = primaryAttention(entry.attention);
     const lifecycle = lifecycleMark(entry.dispatch);
     const state = primary
-      ? { glyph: ATTENTION_GLYPH, color: "warning" as const, label: ATTENTION_LABEL[primary.condition] }
+      ? {
+          glyph: ATTENTION_GLYPH,
+          color: "warning" as const,
+          label: UI_COPY.state.attention(primary.condition),
+        }
       : lifecycle;
     const emergency = entry.dispatch.originSessionId !== originSessionId;
     lines.push({
@@ -396,12 +384,17 @@ function appendGroup(
         span(` · ${taskSummary(entry.dispatch.task)}`, "text"),
       ],
     });
-    const extra = entry.attention.length > 1 ? ` · ${entry.attention.length - 1} more conditions` : "";
+    const extra = entry.attention.length > 1
+      ? ` · ${UI_COPY.count.moreConditions(entry.attention.length - 1)}`
+      : "";
     lines.push({
       selected,
       spans: [
         span("     ", "dim"),
-        span(emergency ? "Emergency resolution required" : state.label, emergency ? "warning" : state.color),
+        span(
+          emergency ? UI_COPY.manager.emergencyResolutionRequired() : state.label,
+          emergency ? "warning" : state.color,
+        ),
         span(extra, "dim"),
         span(` · ${relativeDeadline(entry.dispatch.deadlineAt, now)}`, "dim"),
       ],
@@ -412,11 +405,11 @@ function appendGroup(
 function technicalLines(dispatch: StoredDispatch): ViewLine[] {
   return [
     { spans: [] },
-    { spans: [span(" TECHNICAL DETAILS", "dim", true)] },
-    { spans: [span(`   Dispatch ID  ${sanitizeLine(dispatch.id, 120)}`, "dim")] },
-    { spans: [span(`   Terminal     ${shortenId(dispatch.targetTerminalId)}`, "dim")] },
-    { spans: [span(`   Origin       ${sanitizeLine(dispatch.originSessionId, 120)}`, "dim")] },
-    { spans: [span(`   Workspace    ${sanitizeLine(dispatch.targetWorkspaceId, 120)}`, "dim")] },
+    { spans: [span(UI_COPY.manager.technicalHeading(), "dim", true)] },
+    { spans: [span(`   ${UI_COPY.manager.technicalLabel("dispatch")}  ${sanitizeLine(dispatch.id, 120)}`, "dim")] },
+    { spans: [span(`   ${UI_COPY.manager.technicalLabel("terminal").padEnd(13)}${shortenId(dispatch.targetTerminalId)}`, "dim")] },
+    { spans: [span(`   ${UI_COPY.manager.technicalLabel("origin").padEnd(13)}${sanitizeLine(dispatch.originSessionId, 120)}`, "dim")] },
+    { spans: [span(`   ${UI_COPY.manager.technicalLabel("workspace").padEnd(13)}${sanitizeLine(dispatch.targetWorkspaceId, 120)}`, "dim")] },
   ];
 }
 

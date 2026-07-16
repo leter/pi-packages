@@ -20,6 +20,7 @@ import {
   updateDispatchWidget,
 } from "./live-presentation.js";
 import { RegistryRuntime } from "./registry-runtime.js";
+import { UI_COPY } from "./ui-copy.js";
 
 export interface DispatchRuntimeOptions {
   registry?: RegistryRuntime;
@@ -40,7 +41,7 @@ export class DispatchRuntime {
   #application?: DispatchApplication;
   #ui?: ExtensionContext["ui"];
   #originSessionId?: string;
-  #mutationUnavailableReason = "Dispatch runtime session has not started";
+  #mutationUnavailableReason = UI_COPY.runtime.dispatchSessionNotStarted();
   readonly #stateListeners = new Set<() => void>();
 
   constructor(options: DispatchRuntimeOptions = {}) {
@@ -82,9 +83,9 @@ export class DispatchRuntime {
     const config = configState.status === "ready" ? configState.config : { ...DEFAULT_DISPATCH_CONFIG };
     if (!registryReady) {
       this.#mutationUnavailableReason =
-        this.registryRuntime.unavailableReason ?? "Dispatch Registry unavailable";
+        this.registryRuntime.unavailableReason ?? UI_COPY.runtime.registryUnavailable();
     } else if (configState.status === "invalid") {
-      this.#mutationUnavailableReason = `Invalid dispatch configuration: ${configState.reason}`;
+      this.#mutationUnavailableReason = UI_COPY.runtime.invalidConfiguration(configState.reason);
     } else {
       this.#mutationUnavailableReason = "";
     }
@@ -93,14 +94,14 @@ export class DispatchRuntime {
     const workspaceId = this.#environment.HERDR_WORKSPACE_ID;
     const paneId = this.#environment.HERDR_PANE_ID;
     if (!socketPath || !workspaceId || !paneId) {
-      this.#mutationUnavailableReason = "Herdr socket, workspace, or current pane identity is unavailable";
+      this.#mutationUnavailableReason = UI_COPY.runtime.herdrIdentityUnavailable();
       return false;
     }
     try {
       this.#adapter = await HerdrAdapter.connect({ socketPath, workspaceId });
       const snapshot = await this.#adapter.currentWorkspaceSnapshot();
       const originPane = snapshot.panes.find((pane) => pane.paneId === paneId);
-      if (!originPane) throw new Error("current Pi pane is absent from the captured Herdr workspace");
+      if (!originPane) throw new Error(UI_COPY.runtime.currentPaneAbsent());
       this.registryRuntime.setActorTerminalId(originPane.terminalId);
       if (ctx.mode === "tui") {
         this.#ui = ctx.ui;
@@ -159,7 +160,7 @@ export class DispatchRuntime {
       this.#adapter?.close();
       this.#adapter = undefined;
       this.#application = undefined;
-      this.#mutationUnavailableReason = `Herdr Adapter unavailable: ${errorMessage(error)}`;
+      this.#mutationUnavailableReason = UI_COPY.runtime.adapterUnavailable(errorMessage(error));
       return false;
     }
   }
@@ -191,7 +192,7 @@ export class DispatchRuntime {
     this.#application = undefined;
     this.registryRuntime.stop();
     if (!this.#mutationUnavailableReason) {
-      this.#mutationUnavailableReason = "Dispatch runtime session is stopped";
+      this.#mutationUnavailableReason = UI_COPY.runtime.dispatchSessionStopped();
     }
   }
 

@@ -4,6 +4,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import { renderConfirmationResult, type ConfirmationResultDetails } from "./renderers.js";
+import { UI_COPY } from "./ui-copy.js";
 
 export const HERDR_DISPATCH_PROMPT_GUIDELINE =
   "Use herdr_dispatch_propose for every request to task another Herdr Agent. Do not use bash, user_bash, or raw herdr pane / herdr agent / herdr wait commands to send work or wait for it.";
@@ -45,7 +46,7 @@ export function createDispatchProposalToolDefinition(
 ): ToolDefinition<typeof proposalParameters, ConfirmationResultDetails> {
   return {
     name: "herdr_dispatch_propose",
-    label: "Propose Herdr Dispatch",
+    label: UI_COPY.tool.label("propose"),
     description:
       "Send work to an existing Agent in the current Herdr workspace without a confirmation prompt.",
     promptSnippet: "Send work to an existing Agent in the current Herdr workspace",

@@ -2,6 +2,7 @@ import { DispatchFollowupService, type FollowupProposal } from "../dispatch/foll
 import type { FinalOutcome } from "../registry/types.js";
 import type { ProposalUI } from "./dispatch-controller.js";
 import { agentDisplayName, taskSummary } from "./dispatch-view-model.js";
+import { UI_COPY } from "./ui-copy.js";
 
 export interface FollowupContext {
   mode: "tui" | "rpc" | "json" | "print";
@@ -19,8 +20,8 @@ export class FollowupController {
   async reply(dispatchId: string, context: FollowupContext): Promise<string> {
     this.#assertTui(context);
     await this.#service()!.replyEvidence(dispatchId, context.sessionId);
-    const reply = await context.ui.editor("Reply to the dispatch target");
-    if (reply === undefined) return "Reply cancelled.";
+    const reply = await context.ui.editor(UI_COPY.followup.replyEditor());
+    if (reply === undefined) return UI_COPY.followup.replyCancelled();
     const proposal = await this.#service()!.prepareReply(dispatchId, context.sessionId, reply);
     return this.#confirmFollowup(proposal, context);
   }
@@ -36,40 +37,37 @@ export class FollowupController {
     const service = this.#service()!;
     const evidence = await service.resolutionEvidence(dispatchId);
     const emergency = evidence.dispatch.originSessionId !== context.sessionId;
-    const evidenceText = `${dispatchIdentity(evidence.dispatch)}
-
-${formatUntrustedTail(evidence.tail)}
-Target status: ${evidence.targetStatus}
-Worktree: ${evidence.dispatch.worktreePath ?? "none"}`;
+    const evidenceText = UI_COPY.followup.resolutionEvidence(
+      dispatchIdentity(evidence.dispatch),
+      formatUntrustedTail(evidence.tail),
+      evidence.targetStatus,
+      evidence.dispatch.worktreePath,
+    );
     if (emergency) {
       const attested = await context.ui.confirm(
-        "Emergency resolution attestation",
-        `${evidenceText}
-
-Origin Session: ${evidence.dispatch.originSessionId}
-Attest that you have personally judged the Origin Session unavailable. No process-liveness inference was performed.`,
+        UI_COPY.followup.emergencyAttestationTitle(),
+        UI_COPY.followup.emergencyAttestationBody(
+          evidenceText,
+          evidence.dispatch.originSessionId,
+        ),
       );
-      if (!attested) return "Emergency resolution cancelled before attestation.";
+      if (!attested) return UI_COPY.followup.emergencyCancelledBeforeAttestation();
     }
-    const outcome = await context.ui.select("Manual Final Outcome", [
-      "blocked",
-      "failed",
-      "cancelled",
+    const outcome = await context.ui.select(UI_COPY.followup.manualFinalOutcome(), [
+      UI_COPY.state.outcome("blocked"),
+      UI_COPY.state.outcome("failed"),
+      UI_COPY.state.outcome("cancelled"),
     ]);
     if (outcome !== "blocked" && outcome !== "failed" && outcome !== "cancelled") {
-      return "Resolution cancelled.";
+      return UI_COPY.followup.resolutionCancelled();
     }
-    const summary = await context.ui.editor("Bounded resolution summary");
-    if (summary === undefined) return "Resolution cancelled.";
+    const summary = await context.ui.editor(UI_COPY.followup.resolutionSummaryEditor());
+    if (summary === undefined) return UI_COPY.followup.resolutionCancelled();
     const confirmed = await context.ui.confirm(
-      emergency ? "Confirm emergency reservation release" : "Confirm manual reservation release",
-      `${evidenceText}
-
-Record ${outcome}, atomically release reservations, and accept first-wins settlement?${
-        emergency ? " This does not transfer monitoring or inject context into this resolver." : ""
-      }`,
+      UI_COPY.followup.reservationReleaseTitle(emergency),
+      UI_COPY.followup.reservationReleaseBody(evidenceText, outcome, emergency),
     );
-    if (!confirmed) return "Resolution cancelled at final confirmation.";
+    if (!confirmed) return UI_COPY.followup.resolutionCancelledAtConfirmation();
     const result = service.resolve({
       dispatchId,
       actorSessionId: context.sessionId,
@@ -78,67 +76,60 @@ Record ${outcome}, atomically release reservations, and accept first-wins settle
       summary,
     });
     return result.status === "settled"
-      ? `${agentDisplayName(evidence.dispatch)} dispatch settled ${result.outcome}.`
-      : `${agentDisplayName(evidence.dispatch)} dispatch was already settled ${result.outcome}; first settlement won.`;
+      ? UI_COPY.followup.settled(agentDisplayName(evidence.dispatch), result.outcome)
+      : UI_COPY.followup.alreadySettled(agentDisplayName(evidence.dispatch), result.outcome);
   }
 
   async #confirmFollowup(proposal: FollowupProposal, context: FollowupContext): Promise<string> {
-    const preview = `${dispatchIdentity(proposal.evidence.dispatch)}
-
-${formatUntrustedTail(proposal.evidence.tail)}
-
-${proposal.focusWarning}
-
-${proposal.kind === "reply"
-  ? "A confirmed reply retains all reservations."
-  : "This sends a normal cancellation request, never Ctrl+C. Reservations remain until settlement."}`;
+    const preview = UI_COPY.followup.preview(
+      dispatchIdentity(proposal.evidence.dispatch),
+      formatUntrustedTail(proposal.evidence.tail),
+      proposal.focusWarning,
+      proposal.kind,
+    );
     let technical = false;
     while (true) {
       const choice = await context.ui.select(
         technical
-          ? `${preview}
-
-Technical details:
-Dispatch ID: ${proposal.dispatchId}
-Target terminal: ${proposal.evidence.dispatch.targetTerminalId}
-
-Exact outbound bytes:
-${proposal.payload}`
-          : `${preview}
-
-Technical details are hidden. Choose Technical details to inspect exact protocol bytes.`,
-        ["Approve", technical ? "Hide technical details" : "Technical details", "Cancel"],
+          ? UI_COPY.followup.previewWithTechnical(
+              preview,
+              proposal.dispatchId,
+              proposal.evidence.dispatch.targetTerminalId,
+              proposal.payload,
+            )
+          : UI_COPY.followup.previewWithoutTechnical(preview),
+        UI_COPY.followup.approvalOptions(technical),
       );
-      if (choice === "Technical details") {
+      if (choice === UI_COPY.followup.technicalOption()) {
         technical = true;
         continue;
       }
-      if (choice === "Hide technical details") {
+      if (choice === UI_COPY.followup.hideTechnicalOption()) {
         technical = false;
         continue;
       }
-      if (choice === "Approve") break;
+      if (choice === UI_COPY.followup.approveOption()) break;
       this.#service()!.cancel(proposal);
-      return `${proposal.kind === "reply" ? "Reply" : "Cancellation request"} cancelled.`;
+      return UI_COPY.followup.cancelled(proposal.kind);
     }
     const result = await this.#service()!.confirm(proposal);
-    if (result.status === "verified") return `${proposal.kind} request delivery echo verified.`;
+    if (result.status === "verified") return UI_COPY.followup.deliveryVerified(proposal.kind);
     if (result.status === "ambiguous") {
-      return `${proposal.kind} request delivery is ambiguous; it was not resent.`;
+      return UI_COPY.followup.deliveryAmbiguous(proposal.kind);
     }
-    return `${proposal.kind} request was proven not sent: ${result.reason}.`;
+    return UI_COPY.followup.deliveryNotSent(proposal.kind, result.reason);
   }
 
   #assertTui(context: FollowupContext): void {
-    if (context.mode !== "tui") throw new Error("Dispatch follow-up actions are available only in TUI mode");
-    if (!this.#service()) throw new Error("Dispatch follow-up runtime is unavailable");
+    if (context.mode !== "tui") throw new Error(UI_COPY.command.followupTuiOnly());
+    if (!this.#service()) throw new Error(UI_COPY.command.followupRuntimeUnavailable());
   }
 }
 
 export type { FinalOutcome };
 
 function dispatchIdentity(dispatch: Parameters<typeof agentDisplayName>[0]): string {
-  return `${agentDisplayName(dispatch)} · ${taskSummary(dispatch.task, 100)} · ${dispatch.lifecycle}`;
+  return `${agentDisplayName(dispatch)} · ${taskSummary(dispatch.task, 100)} · ${UI_COPY.state.lifecycle(dispatch.lifecycle)}`;
 }
 
 function formatUntrustedTail(text: string): string {
