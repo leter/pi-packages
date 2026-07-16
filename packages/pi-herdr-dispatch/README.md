@@ -145,7 +145,7 @@ Do **not** resend automatically. The target may have accepted input even when th
 
 ### Origin Session closed or Pi reloaded
 
-Reservations remain durable. Resume the exact Origin Session. It resolves stored target identity and performs a bounded catch-up read before installing target-specific subscriptions; missing targets become `target-lost` and remain available for manual resolution instead of disabling the Adapter. Monitoring never transfers to another session. A queued sanitized result uses `nextTurn` and does not start a model turn.
+Reservations remain durable. Resume the exact Origin Session. It resolves stored target identity and performs a bounded catch-up read before installing target-specific subscriptions; missing targets become `target-lost` and remain available for manual resolution instead of disabling the Adapter. When a Target Agent's pane route changes while monitoring is live, the monitor performs the same catch-up before re-anchoring target-specific subscriptions. Monitoring never transfers to another session. A queued sanitized result uses `nextTurn` and does not start a model turn.
 
 ### Herdr restarted
 
