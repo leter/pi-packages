@@ -66,7 +66,7 @@ describe("Result Envelope", () => {
   });
 
   it("accepts a Codex result rendered after its hard-wrapped contract template", () => {
-    const tail = `Finish by printing exactly one single-line Result Envelope, not fenced in Markdown:
+    const tail = `Finish by printing exactly one single-line Result Envelope, not fenced in Markdown, keeping the whole line under 200 characters with a one-sentence summary:
   DISPATCH_RESULT {"id":"hd_1","outcome":"done|blocked|
   failed|cancelled","summary":"..."}
 

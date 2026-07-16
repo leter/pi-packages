@@ -104,12 +104,12 @@ describe("dispatch view model", () => {
       .toBe("target-lost");
   });
 
-  it("teaches the next step in the empty state", () => {
+  it("keeps the empty list compact without placeholder copy", () => {
     const snapshot = { originSessionId: "session_origin", unsettled: [], settled: [] };
     const lines = plainAll(buildListLines(snapshot, undefined, false, 0));
-    expect(lines.join("\n")).toBe("\n没有活跃的派发 · 用 /hd-new 发起一个\n");
+    expect(lines).toEqual([""]);
     expect(listChrome(snapshot, false)).toEqual({
-      title: "Herdr 派发",
+      title: "任务派发",
       hint: "enter 详情 · s 显示已结算",
     });
   });
@@ -131,6 +131,8 @@ describe("dispatch view model", () => {
     expect(lines.map(plain).join("\n")).toContain("▲");
     expect(lines.map(plain).join("\n")).not.toContain("hd_one");
     expect(lines.map(plain).join("\n")).not.toContain("hd_two");
+    expect(lines.at(-1)?.spans).toEqual([]);
+    expect(lines.find((line) => plain(line) === "投递中")?.spans[0]?.color).toBe("muted");
   });
 
   it("groups delivery-unverified under attention and never leaks IDs in default rows", () => {
@@ -206,7 +208,8 @@ describe("dispatch view model", () => {
       ],
     };
     const folded = plainAll(buildListLines(snapshot, "hd_live", false, 1_000_000)).join("\n");
-    expect(folded).toContain("1 条已隐藏 · 按 S 显示");
+    expect(folded).toContain("已结算 · 1 条");
+    expect(folded).not.toContain("按 S 显示");
     expect(folded).not.toContain("hd_done");
     const open = plainAll(buildListLines(snapshot, "hd_live", true, 1_000_000)).join("\n");
     expect(open).toContain("Do the work");
@@ -293,6 +296,31 @@ describe("dispatch view model", () => {
     expect(detailChrome(dispatch(), [attention("overdue")]).hint).not.toContain("f 追加派发");
   });
 
+  it("formats the sanitized result as a card in the settled detail", () => {
+    const settled = dispatch({
+      id: "hd_done",
+      lifecycle: "settled",
+      finalOutcome: "done",
+      settledAt: 900_000,
+    });
+    const lines = plainAll(
+      buildDetailLines(settled, [], { status: "none" }, 1_000_000, "session_origin", false, {
+        dispatchId: "hd_done",
+        outcome: "done",
+        summary: "已补充空态居中的 renderer 回归测试并同步 README。",
+        changedFiles: ["a.ts", "b.ts"],
+        tests: ["c.test.ts"],
+        blocker: "无",
+      }),
+    ).join("\n");
+    expect(lines).toContain("已补充空态居中的 renderer 回归测试并同步 README。");
+    expect(lines).toContain("阻碍:无");
+    expect(lines).toContain("2 个文件 · 1 个测试");
+    expect(lines).toContain("untrusted data · agent-reported, not verified");
+    expect(lines).not.toContain("DISPATCH_RESULT");
+    expect(lines).not.toContain('"summary"');
+  });
+
   it("renders clock time with zero padding", () => {
     const timestamp = new Date(2026, 0, 1, 4, 5, 9).getTime();
     expect(clockTime(timestamp)).toBe("04:05:09");
@@ -319,6 +347,7 @@ interface Harness {
     settled: StoredDispatch[];
   };
   markResultSeen: ReturnType<typeof vi.fn>;
+  markResultsSeen: ReturnType<typeof vi.fn>;
 }
 
 function harness(): Harness {
@@ -335,6 +364,13 @@ function harness(): Harness {
   const unsubscribe = vi.fn();
   const done = vi.fn();
   const markResultSeen = vi.fn();
+  const markResultsSeen = vi.fn((dispatchIds: readonly string[]) => {
+    const ids = new Set(dispatchIds);
+    const seen = data.unseenSettled.filter((dispatch) => ids.has(dispatch.id));
+    data.unseenSettled = data.unseenSettled.filter((dispatch) => !ids.has(dispatch.id));
+    data.settled = [...seen, ...data.settled];
+    return seen.length;
+  });
   const ports: DispatchViewPorts = {
     snapshot: () => ({
       originSessionId: "session_origin",
@@ -349,11 +385,12 @@ function harness(): Harness {
     listAttention: (id) => data.unsettled.find((entry) => entry.dispatch.id === id)?.attention ?? [],
     inspect,
     markResultSeen,
+    markResultsSeen,
     onStateChanged: () => unsubscribe,
     now: () => 1_000_000,
   };
   const component = new DispatchViewComponent(tui, fakeTheme(), ports, done);
-  return { component, tui, inspect, unsubscribe, done, data, markResultSeen };
+  return { component, tui, inspect, unsubscribe, done, data, markResultSeen, markResultsSeen };
 }
 
 const UP = "\x1b[A";
@@ -416,6 +453,21 @@ describe("dispatch view component", () => {
     expect(done).toHaveBeenCalledExactlyOnceWith({ action: "reply", dispatchId: "hd_one" });
   });
 
+  it("aligns CJK technical labels by terminal display width", () => {
+    const lines = plainAll(
+      buildDetailLines(dispatch(), [], { status: "none" }, 1_000_000, "session_origin", true),
+    );
+    const valuePrefixes = [
+      ["派发 ID", "hd_a"],
+      ["源会话", "session_origin"],
+      ["工作区", "w1"],
+    ].map(([label, value]) => {
+      const line = lines.find((candidate) => candidate.includes(label!) && candidate.includes(value!))!;
+      return visibleWidth(line.slice(0, line.indexOf(value!)));
+    });
+    expect(new Set(valuePrefixes).size).toBe(1);
+  });
+
   it("toggles technical details without leaking IDs in the default detail", () => {
     const { component } = harness();
     component.handleInput(ENTER);
@@ -432,12 +484,18 @@ describe("dispatch view component", () => {
     }
   });
 
+  it("caps wide panels and never exceeds extremely narrow widths", () => {
+    const { component } = harness();
+    for (const line of component.render(160)) expect(visibleWidth(line.replace(/[«»]/gu, ""))).toBe(96);
+    for (const line of component.render(3)) expect(visibleWidth(line)).toBeLessThanOrEqual(3);
+  });
+
   it("frames every row to one exact width with CJK content", () => {
     const { component, data } = harness();
     data.unsettled[0]!.dispatch.task = "检查登录状态与数据库迁移";
     const lines = component.render(60);
     expect(lines[0]).toMatch(/^╭/u);
-    expect(lines[0]).toContain("Herdr 派发");
+    expect(lines[0]).toContain("任务派发");
     expect(lines.at(-1)).toMatch(/^╰/u);
     expect(lines.at(-1)).toContain("s 显示已结算");
     for (const line of lines) {
@@ -445,19 +503,34 @@ describe("dispatch view component", () => {
     }
   });
 
-  it("centers the empty-state message within the framed body", () => {
+  it("places unseen results directly under the title without an empty-state block", () => {
+    const { component, data } = harness();
+    data.unsettled = [];
+    data.unseenSettled = [
+      dispatch({ id: "hd_unseen", lifecycle: "settled", finalOutcome: "done", settledAt: 900_000 }),
+    ];
+    data.settled = [
+      dispatch({ id: "hd_seen", lifecycle: "settled", finalOutcome: "done", settledAt: 800_000 }),
+    ];
+    const lines = component.render(80);
+
+    expect(lines[0]).toContain("任务派发");
+    expect(lines[1]).not.toContain("没有活跃的派发");
+    expect(lines[2]).toContain("已完成 · 未读");
+    expect(lines.join("\n")).not.toContain("/hd-new");
+  });
+
+  it("renders a compact empty panel without instructional placeholder copy", () => {
     const { component, data } = harness();
     data.unsettled = [];
     data.unseenSettled = [];
     data.settled = [];
-    const message = "没有活跃的派发 · 用 /hd-new 发起一个";
-    const row = component.render(60).find((line) => line.includes(message));
+    const lines = component.render(60);
 
-    expect(row).toBeDefined();
-    const messageStart = row!.indexOf(message);
-    expect(visibleWidth(row!.slice(0, messageStart))).toBe(12);
-    expect(visibleWidth(row!.slice(messageStart + message.length))).toBe(12);
-    expect(visibleWidth(row!)).toBe(60);
+    expect(lines).toHaveLength(3);
+    expect(lines.join("\n")).not.toContain("没有活跃的派发");
+    expect(lines.join("\n")).not.toContain("/hd-new");
+    for (const line of lines) expect(visibleWidth(line)).toBe(60);
   });
 
   it("limits the visible list to ten dispatch rows and supports page navigation", () => {
@@ -491,6 +564,27 @@ describe("dispatch view component", () => {
     component.handleInput(ESCAPE);
     component.handleInput(ENTER);
     expect(markResultSeen).toHaveBeenCalledExactlyOnceWith("hd_unseen");
+  });
+
+  it("clears every unseen result with c while retaining settled history", () => {
+    const { component, data, markResultsSeen } = harness();
+    data.unsettled = [];
+    data.unseenSettled = [
+      dispatch({ id: "hd_first", lifecycle: "settled", finalOutcome: "done", settledAt: 900_000 }),
+      dispatch({ id: "hd_second", lifecycle: "settled", finalOutcome: "failed", settledAt: 800_000 }),
+    ];
+
+    expect(component.render(120).join("\n")).toContain("c 清空未读");
+    component.handleInput("c");
+
+    expect(markResultsSeen).toHaveBeenCalledExactlyOnceWith(["hd_first", "hd_second"]);
+    const folded = component.render(120).join("\n");
+    expect(folded).not.toContain("已完成 · 未读");
+    expect(folded).not.toContain("c 清空未读");
+    component.handleInput("s");
+    const history = component.render(120).join("\n");
+    expect(history).toContain("Do the work");
+    expect(history).toContain("失败");
   });
 
   it("offers a follow-up dispatch from a settled detail via f", () => {
@@ -530,6 +624,7 @@ describe("dispatch view component", () => {
       getDispatch: () => data.unsettled[0]!.dispatch,
       listAttention: () => [],
       inspect: async () => ({ text: "" }),
+      markResultsSeen: () => 0,
       onStateChanged: (listener) => {
         stateChanged = listener;
         return () => undefined;
@@ -549,6 +644,7 @@ describe("dispatch view component", () => {
       getDispatch: (id) => data.unsettled.find((entry) => entry.dispatch.id === id)?.dispatch,
       listAttention: () => [],
       inspect: inspect as unknown as DispatchViewPorts["inspect"],
+      markResultsSeen: () => 0,
       onStateChanged: () => unsubscribe as unknown as () => void,
       now: () => 1_000_000,
     };

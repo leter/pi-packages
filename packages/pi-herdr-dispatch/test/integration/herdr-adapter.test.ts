@@ -162,6 +162,170 @@ describe("HerdrAdapter discovery and routing", () => {
     adapter.close();
   });
 
+  it("creates, labels, and starts a no-focus split through typed current-workspace requests", async () => {
+    const created = pane({
+      pane_id: "p-created",
+      terminal_id: "term-created",
+      focused: false,
+      agent_status: "unknown",
+      revision: 0,
+      agent: null,
+      label: null,
+    });
+    const fake = await fakeServer((request, connection) => {
+      switch (request.method) {
+        case "session.snapshot":
+          connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() });
+          return;
+        case "pane.layout":
+          expect(request.params).toEqual({ pane_id: "p-origin" });
+          connection.sendResponse(request.id, {
+            type: "pane_layout",
+            layout: {
+              workspace_id: "w-current",
+              tab_id: "t-current",
+              zoomed: false,
+              area: { x: 0, y: 0, width: 160, height: 60 },
+              focused_pane_id: "p-origin",
+              panes: [{ pane_id: "p-origin", focused: true, rect: { x: 0, y: 0, width: 160, height: 60 } }],
+              splits: [],
+            },
+          });
+          return;
+        case "pane.split":
+          expect(request.params).toEqual({
+            target_pane_id: "p-origin",
+            workspace_id: "w-current",
+            direction: "right",
+            cwd: "/repo/worktree",
+            ratio: 0.5,
+            focus: false,
+            env: {},
+          });
+          connection.sendResponse(request.id, { type: "pane_info", pane: created });
+          return;
+        case "pane.rename":
+          expect(request.params).toEqual({ pane_id: "p-created", label: "claude · task" });
+          connection.sendResponse(request.id, {
+            type: "pane_info",
+            pane: { ...created, label: "claude · task" },
+          });
+          return;
+        case "pane.send_input":
+          connection.sendResponse(request.id, { type: "ok" });
+          return;
+      }
+    });
+    const adapter = await HerdrAdapter.connect({ socketPath: fake.socketPath, workspaceId: "w-current" });
+
+    await expect(adapter.paneLayout("p-origin")).resolves.toEqual(
+      expect.objectContaining({
+        workspaceId: "w-current",
+        panes: [expect.objectContaining({ paneId: "p-origin", rect: { x: 0, y: 0, width: 160, height: 60 } })],
+      }),
+    );
+    const newPane = await adapter.createSplitPane({
+      targetPaneId: "p-origin",
+      direction: "right",
+      cwd: "/repo/worktree",
+      ratio: 0.5,
+    });
+    await adapter.renamePane(newPane.paneId, "claude · task");
+    await adapter.startAgentExecutable(newPane.paneId, "claude");
+
+    expect(fake.requests.at(-1)?.params).toEqual({
+      pane_id: "p-created",
+      text: "claude",
+      keys: ["Enter"],
+    });
+    adapter.close();
+  });
+
+  it("creates a labelled no-focus tab and validates its root pane", async () => {
+    const rootPane = pane({
+      pane_id: "p-created",
+      terminal_id: "term-created",
+      tab_id: "t-created",
+      focused: false,
+      agent_status: "unknown",
+      revision: 0,
+      agent: null,
+      label: null,
+    });
+    const fake = await fakeServer((request, connection) => {
+      if (request.method === "session.snapshot") {
+        connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() });
+      } else {
+        expect(request).toEqual({
+          id: "pi-herdr-1",
+          method: "tab.create",
+          params: {
+            workspace_id: "w-current",
+            cwd: "/repo/worktree",
+            label: "pi · task",
+            focus: false,
+            env: {},
+          },
+        });
+        connection.sendResponse(request.id, {
+          type: "tab_created",
+          tab: { tab_id: "t-created", workspace_id: "w-current", label: "pi · task", focused: false, pane_count: 1 },
+          root_pane: rootPane,
+        });
+      }
+    });
+    const adapter = await HerdrAdapter.connect({ socketPath: fake.socketPath, workspaceId: "w-current" });
+
+    await expect(adapter.createTab({ cwd: "/repo/worktree", label: "pi · task" })).resolves.toEqual({
+      tabId: "t-created",
+      workspaceId: "w-current",
+      focused: false,
+      rootPane: expect.objectContaining({ paneId: "p-created", terminalId: "term-created" }),
+    });
+    adapter.close();
+  });
+
+  it.each([
+    ["foreign tab workspace", { workspace_id: "w-foreign" }, {}],
+    ["focused tab", { focused: true }, {}],
+    ["mismatched root pane tab", {}, { tab_id: "t-other" }],
+  ])("rejects tab.create with %s", async (_label, tabOverrides, paneOverrides) => {
+    const fake = await fakeServer((request, connection) => {
+      if (request.method === "session.snapshot") {
+        connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() });
+      } else {
+        connection.sendResponse(request.id, {
+          type: "tab_created",
+          tab: {
+            tab_id: "t-created",
+            workspace_id: "w-current",
+            label: "pi · task",
+            focused: false,
+            pane_count: 1,
+            ...tabOverrides,
+          },
+          root_pane: pane({
+            pane_id: "p-created",
+            terminal_id: "term-created",
+            tab_id: "t-created",
+            focused: false,
+            agent_status: "unknown",
+            revision: 0,
+            agent: null,
+            label: null,
+            ...paneOverrides,
+          }),
+        });
+      }
+    });
+    const adapter = await HerdrAdapter.connect({ socketPath: fake.socketPath, workspaceId: "w-current" });
+
+    await expect(adapter.createTab({ cwd: "/repo/worktree", label: "pi · task" })).rejects.toBeInstanceOf(
+      HerdrProtocolError,
+    );
+    adapter.close();
+  });
+
   it("coalesces concurrent reconnect requests into one fresh connection and revalidates protocol", async () => {
     const fake = await fakeServer((request, connection) =>
       connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() }),

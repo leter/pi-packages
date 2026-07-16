@@ -38,6 +38,26 @@ export interface HerdrSnapshot {
   agents: HerdrAgent[];
 }
 
+export interface HerdrPaneRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface HerdrPaneLayout {
+  workspaceId: string;
+  tabId: string;
+  panes: readonly { paneId: string; focused: boolean; rect: HerdrPaneRect }[];
+}
+
+export interface HerdrCreatedTab {
+  tabId: string;
+  workspaceId: string;
+  focused: boolean;
+  rootPane: HerdrPane;
+}
+
 export interface HerdrPaneRead {
   paneId: string;
   workspaceId: string;
@@ -81,6 +101,32 @@ export function parsePaneInfoResult(result: Record<string, unknown>): HerdrPane 
 
 export function parsePaneReadResult(result: Record<string, unknown>): HerdrPaneRead {
   return parsePaneRead(record(result.read, "pane_read.read"));
+}
+
+export function parsePaneLayoutResult(result: Record<string, unknown>): HerdrPaneLayout {
+  const layout = record(result.layout, "pane_layout.layout");
+  return {
+    workspaceId: string(layout.workspace_id, "pane layout workspace_id"),
+    tabId: string(layout.tab_id, "pane layout tab_id"),
+    panes: array(layout.panes, "pane layout panes").map((value, index) => {
+      const pane = record(value, `pane layout panes[${index}]`);
+      return {
+        paneId: string(pane.pane_id, "pane layout pane_id"),
+        focused: boolean(pane.focused, "pane layout focused"),
+        rect: parsePaneRect(record(pane.rect, "pane layout rect")),
+      };
+    }),
+  };
+}
+
+export function parseTabCreatedResult(result: Record<string, unknown>): HerdrCreatedTab {
+  const tab = record(result.tab, "tab_created.tab");
+  return {
+    tabId: string(tab.tab_id, "tab_created tab_id"),
+    workspaceId: string(tab.workspace_id, "tab_created workspace_id"),
+    focused: boolean(tab.focused, "tab_created focused"),
+    rootPane: parsePane(record(result.root_pane, "tab_created.root_pane")),
+  };
 }
 
 export function parsePaneRead(value: Record<string, unknown>): HerdrPaneRead {
@@ -144,6 +190,15 @@ function parseAgent(value: Record<string, unknown>): HerdrAgent {
     ...parsePane(value),
     ...(name === undefined ? {} : { name }),
     screenDetectionSkipped: value.screen_detection_skipped === true,
+  };
+}
+
+function parsePaneRect(value: Record<string, unknown>): HerdrPaneRect {
+  return {
+    x: nonnegativeInteger(value.x, "pane rect x"),
+    y: nonnegativeInteger(value.y, "pane rect y"),
+    width: nonnegativeInteger(value.width, "pane rect width"),
+    height: nonnegativeInteger(value.height, "pane rect height"),
   };
 }
 

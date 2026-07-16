@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { AgentLaunchService } from "../dispatch/agent-launch.js";
 import { DispatchApplication } from "../dispatch/application.js";
 import { DispatchFollowupService } from "../dispatch/followup.js";
 import {
@@ -39,6 +40,7 @@ export class DispatchRuntime {
   #contextDelivery?: OriginContextDelivery;
   #followup?: DispatchFollowupService;
   #application?: DispatchApplication;
+  #agentLauncher?: AgentLaunchService;
   #ui?: ExtensionContext["ui"];
   #originSessionId?: string;
   #workspaceId?: string;
@@ -58,6 +60,10 @@ export class DispatchRuntime {
 
   get followup(): DispatchFollowupService | undefined {
     return this.#followup;
+  }
+
+  get agentLauncher(): AgentLaunchService | undefined {
+    return this.#agentLauncher;
   }
 
   get mutationUnavailableReason(): string | undefined {
@@ -153,6 +159,14 @@ export class DispatchRuntime {
               }),
           onSettled: (dispatchId) => void this.#notifyOutcome(dispatchId),
         });
+        if (ctx.mode === "tui") {
+          this.#agentLauncher = new AgentLaunchService({
+            herdr: this.#adapter,
+            workspaceId,
+            originPaneId: originPane.paneId,
+            startupTimeoutMs: config.agentStartupTimeoutMs,
+          });
+        }
         await this.#monitor?.start();
         this.#updateWidget();
         await this.deliverPendingContext(ctx);
@@ -162,6 +176,7 @@ export class DispatchRuntime {
       this.#adapter?.close();
       this.#adapter = undefined;
       this.#application = undefined;
+      this.#agentLauncher = undefined;
       this.#mutationUnavailableReason = UI_COPY.runtime.adapterUnavailable(errorMessage(error));
       return false;
     }
@@ -190,6 +205,7 @@ export class DispatchRuntime {
     this.#monitor = undefined;
     this.#contextDelivery = undefined;
     this.#followup = undefined;
+    this.#agentLauncher = undefined;
     this.#adapter?.close();
     this.#adapter = undefined;
     this.#application = undefined;

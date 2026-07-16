@@ -7,6 +7,7 @@ export interface DispatchConfig {
   minDeadlineMinutes: number;
   maxDeadlineMinutes: number;
   startupWindowMs: number;
+  agentStartupTimeoutMs: number;
   minStartupWindowMs: number;
   maxStartupWindowMs: number;
   maxActivePerTargetWorkspace: number;
@@ -27,6 +28,7 @@ export const DEFAULT_DISPATCH_CONFIG: DispatchConfig = Object.freeze({
   minDeadlineMinutes: 1,
   maxDeadlineMinutes: 1440,
   startupWindowMs: 30_000,
+  agentStartupTimeoutMs: 60_000,
   minStartupWindowMs: 5_000,
   maxStartupWindowMs: 300_000,
   maxActivePerTargetWorkspace: 4,
@@ -72,6 +74,7 @@ export function parseDispatchConfig(value: unknown): DispatchConfig {
   range(config.minStartupWindowMs, 1, 300_000, "minStartupWindowMs");
   range(config.maxStartupWindowMs, 1, 300_000, "maxStartupWindowMs");
   ordered(config.minStartupWindowMs, config.startupWindowMs, config.maxStartupWindowMs, "startup window");
+  range(config.agentStartupTimeoutMs, 5_000, 300_000, "agentStartupTimeoutMs");
   range(config.maxActivePerTargetWorkspace, 1, 100, "maxActivePerTargetWorkspace");
   range(config.maxActiveGlobal, 1, 1000, "maxActiveGlobal");
   if (config.maxActivePerTargetWorkspace > config.maxActiveGlobal) {

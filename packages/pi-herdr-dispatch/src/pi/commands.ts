@@ -1,12 +1,23 @@
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  ExtensionContext,
-  RegisteredCommand,
+import {
+  BorderedLoader,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type ExtensionContext,
+  type RegisteredCommand,
 } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 
+import {
+  AgentLaunchCancelledError,
+  AgentLaunchError,
+  type AgentLaunchLayout,
+  type AgentLaunchService,
+  type SupportedAgentType,
+} from "../dispatch/agent-launch.js";
 import type { CreateProposalRequest, DispatchApplication } from "../dispatch/application.js";
+import type { HerdrPane } from "../herdr/protocol.js";
 import type { StoredDispatch } from "../registry/types.js";
+import { launchableAgentTypes } from "./agent-launch-catalog.js";
 import {
   actionCandidates,
   actionIneligibility,
@@ -23,6 +34,7 @@ import {
   formatAgentTable,
   formatDispatchTable,
   formatInspectionText,
+  sanitizedResultCard,
 } from "./visual.js";
 import type { DispatchRuntime } from "./dispatch-runtime.js";
 import { selectDomainValue } from "./select-value.js";
@@ -34,14 +46,6 @@ export function registerDispatchCommands(
   controller: DispatchController,
   followup: FollowupController,
 ): void {
-  registerCommandWithAlias(pi, "herdr-agents", "hd-agents", {
-    description: UI_COPY.command.description("agents"),
-    handler: async (_args, ctx) =>
-      handle(ctx, async () => {
-        ctx.ui.notify(formatAgentTable(await application(runtime).listEligibleAgents()), "info");
-      }),
-  });
-
   registerCommandWithAlias(pi, "herdr-dispatch", "hd-new", {
     description: UI_COPY.command.description("new"),
     handler: async (_args, ctx) =>
@@ -59,32 +63,116 @@ export function registerDispatchCommands(
         if (!selected) return;
         const target = targets[options.indexOf(selected)];
         if (!target) throw new Error(UI_COPY.command.selectedAgentUnavailable());
-        await completeDispatchWizard(ctx, target.terminalId, UI_COPY.command.completeTask());
+        const request = await collectDispatchWizard(ctx, UI_COPY.command.completeTask());
+        if (request) await dispatchRequest(ctx, target.terminalId, request);
       }),
   });
 
-  /** Shared tail of the dispatch wizard: task, mode, deadline, dependency consent, send. */
-  const completeDispatchWizard = async (
+  registerCommandWithAlias(pi, "herdr-dispatch-create", "hd-create", {
+    description: UI_COPY.command.description("create"),
+    handler: async (_args, ctx) =>
+      handle(ctx, async () => {
+        if (ctx.mode !== "tui") throw new Error(UI_COPY.command.createTuiOnly());
+        if (runtime.mutationUnavailableReason) throw new Error(runtime.mutationUnavailableReason);
+        const launcher = agentLauncher(runtime);
+        const integrationStatus = await pi.exec("herdr", ["integration", "status"], { cwd: ctx.cwd });
+        if (integrationStatus.code !== 0) {
+          throw new Error(
+            UI_COPY.command.integrationStatusFailed(
+              integrationStatus.stderr || `exit ${integrationStatus.code}`,
+            ),
+          );
+        }
+        const agentTypes = await launchableAgentTypes(integrationStatus.stdout);
+        if (agentTypes.length === 0) throw new Error(UI_COPY.command.noLaunchableAgents());
+        const selectedType = await selectDomainValue(
+          (title, options) => ctx.ui.select(title, options),
+          UI_COPY.command.chooseAgentType(),
+          agentTypes,
+          (value) => value,
+        );
+        if (selectedType === undefined) return;
+        const layout = await selectDomainValue(
+          (title, options) => ctx.ui.select(title, options),
+          UI_COPY.command.chooseAgentLayout(),
+          ["adaptive", "right", "down", "new-tab"] as const,
+          (value) => UI_COPY.command.agentLayout(value),
+        );
+        if (layout === undefined) return;
+        const request = await collectDispatchWizard(ctx, UI_COPY.command.completeTask());
+        if (!request) return;
+        try {
+          await application(runtime).assertCanCreateTarget({ ...request, cwd: ctx.cwd });
+        } catch (error) {
+          throw new Error(UI_COPY.command.agentCreationPreflightFailed(errorMessage(error)), {
+            cause: error,
+          });
+        }
+        const launched = await launchAgentWithLoader(
+          ctx,
+          launcher,
+          selectedType,
+          layout,
+          ctx.cwd,
+          createAgentLabel(selectedType, request.task),
+        );
+        if (launched.status === "cancelled") {
+          ctx.ui.notify(
+            UI_COPY.command.agentCreationCancelled(createdResourceLocation(launched.createdPane)),
+            "warning",
+          );
+          return;
+        }
+        if (launched.status === "failed") {
+          throw new Error(
+            UI_COPY.command.agentCreationFailed(
+              errorMessage(launched.error),
+              createdResourceLocation(
+                launched.error instanceof AgentLaunchError
+                  ? launched.error.createdPane
+                  : undefined,
+              ),
+            ),
+            { cause: launched.error },
+          );
+        }
+        await dispatchRequest(ctx, launched.terminalId, request);
+      }),
+  });
+
+  registerCommandWithAlias(pi, "herdr-agents", "hd-agents", {
+    description: UI_COPY.command.description("agents"),
+    handler: async (_args, ctx) =>
+      handle(ctx, async () => {
+        ctx.ui.notify(formatAgentTable(await application(runtime).listEligibleAgents()), "info");
+      }),
+  });
+
+  /** Shared tail of the dispatch wizard: task, mode, deadline, dependency consent. */
+  const collectDispatchWizard = async (
     ctx: ExtensionContext,
-    targetTerminalId: string,
     taskTitle: string,
-  ): Promise<void> => {
+  ): Promise<Omit<CreateProposalRequest, "target"> | undefined> => {
     const task = await ctx.ui.editor(taskTitle);
     if (task === undefined) return;
     const mode = await selectDomainValue(
       (title, options) => ctx.ui.select(title, options),
       UI_COPY.command.mutationMode(),
-      ["non-mutating", "write"] as const,
+      ["write", "non-mutating"] as const,
       (value) => UI_COPY.state.mode(value),
     );
     if (mode === undefined) return;
-    const deadlineInput = await ctx.ui.input(UI_COPY.command.deadlineMinutes(), "30");
+    const defaultDeadlineMinutes = application(runtime).defaultDeadlineMinutes;
+    const deadlineInput = await ctx.ui.input(
+      UI_COPY.command.deadlineMinutes(defaultDeadlineMinutes),
+      String(defaultDeadlineMinutes),
+    );
     if (deadlineInput === undefined) return;
-    const request: CreateProposalRequest = {
-      target: targetTerminalId,
+    return {
       task,
       mode,
-      deadlineMinutes: Number(deadlineInput),
+      deadlineMinutes:
+        deadlineInput.trim() === "" ? defaultDeadlineMinutes : Number(deadlineInput),
       allowProjectDependencyInstall:
         mode === "write"
           ? await ctx.ui.confirm(
@@ -93,7 +181,17 @@ export function registerDispatchCommands(
             )
           : false,
     };
-    const result = await controller.proposeAndDispatch(request, interactionContext(ctx));
+  };
+
+  const dispatchRequest = async (
+    ctx: ExtensionContext,
+    targetTerminalId: string,
+    request: Omit<CreateProposalRequest, "target">,
+  ): Promise<void> => {
+    const result = await controller.proposeAndDispatch(
+      { ...request, target: targetTerminalId },
+      interactionContext(ctx),
+    );
     ctx.ui.notify(
       UI_COPY.presentation.confirmationResult(
         result.status,
@@ -154,13 +252,15 @@ export function registerDispatchCommands(
           settled: action
             ? []
             : app
-                .listRecentSettled(originSessionId, SETTLED_DISPLAY_LIMIT)
+                .listRecentSettledInWorkspace(SETTLED_DISPLAY_LIMIT)
                 .filter((dispatch) => !unseenIds.has(dispatch.id)),
         };
       },
       getDispatch: (dispatchId) => app.getDispatch(dispatchId),
       listAttention: (dispatchId) => app.listAttention(dispatchId),
       markResultSeen: (dispatchId) => app.markResultSeen(dispatchId, Date.now()),
+      markResultsSeen: (dispatchIds) => app.markResultsSeen(dispatchIds, Date.now()),
+      getResult: (dispatchId) => sanitizedResultCard(app.getResult(dispatchId)?.sanitizedResult),
       inspect: async (terminalId, lines) => ({
         text: (await app.inspectAgent(terminalId, lines)).text,
       }),
@@ -191,7 +291,8 @@ export function registerDispatchCommands(
         );
         return;
       }
-      await completeDispatchWizard(ctx, target.terminalId, UI_COPY.command.followupTask());
+      const request = await collectDispatchWizard(ctx, UI_COPY.command.followupTask());
+      if (request) await dispatchRequest(ctx, target.terminalId, request);
       return;
     }
     await executeFollowup(result.action, dispatch, ctx);
@@ -297,7 +398,52 @@ export function registerDispatchCommands(
   });
 }
 
+type AgentLoaderResult =
+  | { status: "ready"; terminalId: string }
+  | { status: "cancelled"; createdPane?: HerdrPane }
+  | { status: "failed"; error: unknown };
+
 type CommandOptions = Omit<RegisteredCommand, "name" | "sourceInfo">;
+
+async function launchAgentWithLoader(
+  ctx: ExtensionContext,
+  launcher: AgentLaunchService,
+  agentType: SupportedAgentType,
+  layout: AgentLaunchLayout,
+  cwd: string,
+  label: string,
+): Promise<AgentLoaderResult> {
+  return ctx.ui.custom<AgentLoaderResult>((tui, theme, _keybindings, done) => {
+    const loader = new BorderedLoader(tui, theme, UI_COPY.command.creatingAgent(agentType));
+    let settled = false;
+    const finish = (result: AgentLoaderResult) => {
+      if (settled) return;
+      settled = true;
+      done(result);
+    };
+    loader.onAbort = () => undefined;
+    void launcher
+      .launch({ agentType, layout, cwd, label, signal: loader.signal })
+      .then((target) => finish({ status: "ready", terminalId: target.terminalId }))
+      .catch((error: unknown) =>
+        finish(
+          error instanceof AgentLaunchCancelledError
+            ? { status: "cancelled", createdPane: error.createdPane }
+            : { status: "failed", error },
+        ),
+      );
+    return loader;
+  });
+}
+
+function createdResourceLocation(pane?: HerdrPane): string | undefined {
+  return pane ? `pane ${pane.paneId} · tab ${pane.tabId}` : undefined;
+}
+
+function createAgentLabel(agentType: SupportedAgentType, task: string): string {
+  const summary = task.replace(/\r\n?/gu, "\n").trim().split("\n", 1)[0] ?? "";
+  return truncateToWidth(`${agentType} · ${summary}`, 48, "…");
+}
 
 function registerCommandWithAlias(
   pi: ExtensionAPI,
@@ -307,6 +453,13 @@ function registerCommandWithAlias(
 ): void {
   pi.registerCommand(canonicalName, options);
   pi.registerCommand(alias, options);
+}
+
+function agentLauncher(runtime: DispatchRuntime): AgentLaunchService {
+  if (!runtime.agentLauncher) {
+    throw new Error(runtime.mutationUnavailableReason ?? UI_COPY.command.runtimeUnavailable());
+  }
+  return runtime.agentLauncher;
 }
 
 function application(runtime: DispatchRuntime): DispatchApplication {
@@ -375,6 +528,10 @@ function interactionContext(ctx: ExtensionContext) {
       ...(sessionFile === undefined ? {} : { sessionFile }),
     },
   };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function handle(

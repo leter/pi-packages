@@ -30,12 +30,14 @@ describe("dispatch configuration", () => {
       parseDispatchConfig({
         defaultDeadlineMinutes: 45,
         startupWindowMs: 12_000,
+        agentStartupTimeoutMs: 90_000,
         maxActiveGlobal: 10,
       }),
     ).toEqual({
       ...DEFAULT_DISPATCH_CONFIG,
       defaultDeadlineMinutes: 45,
       startupWindowMs: 12_000,
+      agentStartupTimeoutMs: 90_000,
       maxActiveGlobal: 10,
     });
   });
@@ -45,6 +47,8 @@ describe("dispatch configuration", () => {
     { defaultDeadlineMinutes: 0 },
     { minDeadlineMinutes: 60, defaultDeadlineMinutes: 30 },
     { startupWindowMs: 1_000 },
+    { agentStartupTimeoutMs: 4_999 },
+    { agentStartupTimeoutMs: 300_001 },
     { maxActivePerTargetWorkspace: 9, maxActiveGlobal: 8 },
     { inspectionLines: 80 },
     { maxInspectionLines: 1000 },

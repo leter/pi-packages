@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   attentionNotification,
   clearDispatchWidget,
+  DISPATCH_WIDGET_REFRESH_MS,
   outcomeNotification,
   updateDispatchWidget,
 } from "../../src/pi/live-presentation.js";
@@ -52,11 +53,11 @@ describe("dispatch widget", () => {
       { placement: "belowEditor" },
     );
     const factory = (presentation.setWidget as ReturnType<typeof vi.fn>).mock.calls[0]![1] as (
-      tui: unknown,
+      tui: { requestRender(): void },
       theme: unknown,
-    ) => { render(width: number): string[] };
+    ) => { render(width: number): string[]; dispose(): void };
     const fakeTheme = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
-    const widget = factory(undefined, fakeTheme);
+    const widget = factory({ requestRender: vi.fn() }, fakeTheme);
     const rendered = widget.render(120).join(" ");
     expect(rendered).toContain("1 投递中");
     expect(rendered).not.toContain("0 运行中");
@@ -71,6 +72,7 @@ describe("dispatch widget", () => {
     expect(refreshed).not.toContain("待处理");
     expect(refreshed).not.toContain("1 运行中");
 
+    widget.dispose();
     clearDispatchWidget(presentation);
     expect(presentation.setWidget).toHaveBeenLastCalledWith(
       "pi-herdr-dispatch",
@@ -78,6 +80,38 @@ describe("dispatch widget", () => {
       { placement: "belowEditor" },
     );
     expect(presentation.setFooter).not.toHaveBeenCalled();
+  });
+
+  it("requests a repaint so cross-process Registry changes appear without /reload", () => {
+    vi.useFakeTimers();
+    try {
+      const presentation = ui();
+      let unsettled = [
+        { id: "hd_1", lifecycle: "active", originSessionId: "session-origin" },
+      ];
+      const registry = {
+        listUnsettledInWorkspace: () => unsettled,
+        listUnseenSettled: () => [],
+        listAttention: () => [],
+      } as unknown as DispatchRegistry;
+      updateDispatchWidget(presentation, registry, "session-origin", "workspace-current");
+      const factory = (presentation.setWidget as ReturnType<typeof vi.fn>).mock.calls[0]![1] as (
+        tui: { requestRender(): void },
+        theme: unknown,
+      ) => { render(width: number): string[]; dispose?(): void };
+      const tui = { requestRender: vi.fn() };
+      const fakeTheme = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
+      const widget = factory(tui, fakeTheme);
+
+      unsettled = [];
+      vi.advanceTimersByTime(DISPATCH_WIDGET_REFRESH_MS);
+
+      expect(tui.requestRender).toHaveBeenCalled();
+      expect(widget.render(120).join(" ")).toContain("派发 · alt+h");
+      widget.dispose?.();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([

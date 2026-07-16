@@ -69,6 +69,7 @@ describe("Herdr shell safety policy", () => {
     "herdr pane send-text w1:p2 hello",
     "herdr pane send-keys w1:p2 enter",
     "herdr pane split --current --direction right",
+    "herdr tab create --workspace w1 --no-focus",
     "herdr pane close w1:p2",
     "herdr agent send term_other hello",
     "herdr agent start reviewer -- pi",
@@ -81,7 +82,7 @@ describe("Herdr shell safety policy", () => {
 
     expect(decision.action).toBe("deny");
     if (decision.action === "deny") {
-      expect(decision.redirect).toBe("herdr_dispatch_propose or /hd-new");
+      expect(decision.redirect).toBe("herdr_dispatch_propose, /hd-new, or user-run /hd-create");
     }
   });
 

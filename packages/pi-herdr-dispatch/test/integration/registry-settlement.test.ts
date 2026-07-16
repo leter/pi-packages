@@ -110,6 +110,70 @@ describe("first-wins settlement and active-branch claims", () => {
     expect(registry.getDispatch("hd_settle")).toMatchObject({ resultSeenAt: 2_200 });
   });
 
+  it("atomically marks the requested unseen results only within one workspace", async () => {
+    const [registry] = await registryPair();
+    const own = intent();
+    const second = {
+      ...intent(),
+      id: "hd_second",
+      targetTerminalId: "term_second",
+      targetPaneId: "w1:p3",
+      payloadHash: "sha256:second",
+      confirmedAt: 2_200,
+      deadlineAt: 4_000,
+    };
+    const elsewhere = {
+      ...intent(),
+      id: "hd_elsewhere",
+      originWorkspaceId: "w2",
+      targetWorkspaceId: "w2",
+      targetTerminalId: "term_elsewhere",
+      targetPaneId: "w2:p2",
+      payloadHash: "sha256:elsewhere",
+      confirmedAt: 3_200,
+      deadlineAt: 5_000,
+    };
+    const later = {
+      ...intent(),
+      id: "hd_later",
+      targetTerminalId: "term_later",
+      targetPaneId: "w1:p4",
+      payloadHash: "sha256:later",
+      confirmedAt: 4_200,
+      deadlineAt: 6_000,
+    };
+    for (const [delivery, settledAt] of [
+      [own, 2_100],
+      [second, 3_100],
+      [elsewhere, 4_100],
+      [later, 4_500],
+    ] as const) {
+      registry.confirmDeliveryIntent(delivery);
+      registry.settle({
+        dispatchId: delivery.id,
+        outcome: "done",
+        sanitizedResult: { summary: delivery.id },
+        kind: "result",
+        settledAt,
+      });
+    }
+
+    expect(
+      registry.markWorkspaceResultsSeen("w1", ["hd_settle", "hd_second"], 5_000),
+    ).toBe(2);
+    expect(registry.listUnseenSettled("w1").map((dispatch) => dispatch.id)).toEqual([
+      "hd_later",
+    ]);
+    expect(registry.getDispatch("hd_settle")?.resultSeenAt).toBe(5_000);
+    expect(registry.getDispatch("hd_second")?.resultSeenAt).toBe(5_000);
+    expect(registry.listUnseenSettled("w2").map((dispatch) => dispatch.id)).toEqual([
+      "hd_elsewhere",
+    ]);
+    expect(
+      registry.markWorkspaceResultsSeen("w1", ["hd_settle", "hd_second"], 6_000),
+    ).toBe(0);
+  });
+
   it("accepts settlement directly from durable delivering intent", async () => {
     const [registry] = await registryPair();
     registry.confirmDeliveryIntent(intent());

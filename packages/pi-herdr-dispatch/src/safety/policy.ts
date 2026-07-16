@@ -65,7 +65,7 @@ const HELP_GROUPS = new Set([
 ]);
 const HELP_FLAGS = new Set(["--help", "-h", "help"]);
 const VERSION_FLAGS = new Set(["--version", "-V"]);
-const TASKING_REDIRECT = "herdr_dispatch_propose or /hd-new";
+const TASKING_REDIRECT = "herdr_dispatch_propose, /hd-new, or user-run /hd-create";
 
 export function classifyHerdrShell(
   command: string,

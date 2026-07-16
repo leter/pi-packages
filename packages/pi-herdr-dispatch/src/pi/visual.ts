@@ -308,6 +308,22 @@ export interface ResultCard {
   taskSummary?: string;
 }
 
+/** Build a ResultCard directly from a stored sanitized-result object. */
+export function sanitizedResultCard(value: unknown): ResultCard | undefined {
+  if (!isRecord(value) || typeof value.outcome !== "string" || typeof value.id !== "string") {
+    return undefined;
+  }
+  return {
+    outcome: value.outcome,
+    dispatchId: value.id,
+    ...(typeof value.summary === "string" ? { summary: value.summary } : {}),
+    ...(isStringArray(value.tests) ? { tests: value.tests } : {}),
+    ...(isStringArray(value.changedFiles) ? { changedFiles: value.changedFiles } : {}),
+    ...(isStringArray(value.artifacts) ? { artifacts: value.artifacts } : {}),
+    ...(typeof value.blocker === "string" ? { blocker: value.blocker } : {}),
+  };
+}
+
 /** Parse the framed sanitized-result JSON out of a delivered context message. */
 export function parseResultCard(content: string, details?: unknown): ResultCard | undefined {
   const fallback = isRecord(details)

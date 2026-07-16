@@ -32,6 +32,7 @@ import type {
 } from "../registry/types.js";
 import {
   createDispatchProposal,
+  normalizeDispatchTask,
   type DispatchProposal,
   type DispatchProposalInput,
   type ProposalTarget,
@@ -134,6 +135,56 @@ export class DispatchApplication {
     this.#onIntentRecorded = options.onIntentRecorded ?? (() => undefined);
     this.#captureWorktreeSnapshot = options.captureWorktreeSnapshot ?? captureWorktreeSnapshot;
     this.#onSettled = options.onSettled ?? (() => undefined);
+  }
+
+  get defaultDeadlineMinutes(): number {
+    return this.#config.defaultDeadlineMinutes;
+  }
+
+  async assertCanCreateTarget(
+    request: Omit<CreateProposalRequest, "target"> & { cwd: string },
+  ): Promise<void> {
+    normalizeDispatchTask(request.task);
+    if (request.mode !== "write" && request.mode !== "non-mutating") {
+      throw new TypeError("mode must be write or non-mutating");
+    }
+    if (request.allowProjectDependencyInstall && request.mode !== "write") {
+      throw new TypeError("project dependency installation requires a write proposal");
+    }
+    const deadlineMinutes = request.deadlineMinutes ?? this.#config.defaultDeadlineMinutes;
+    if (
+      !Number.isSafeInteger(deadlineMinutes) ||
+      deadlineMinutes < this.#config.minDeadlineMinutes ||
+      deadlineMinutes > this.#config.maxDeadlineMinutes
+    ) {
+      throw new RangeError(
+        `deadlineMinutes must be from ${this.#config.minDeadlineMinutes} to ${this.#config.maxDeadlineMinutes}`,
+      );
+    }
+    if (this.#registry.listUnsettled().length >= this.#config.maxActiveGlobal) {
+      throw new RegistryConflictError("global-limit", "Global active dispatch limit reached");
+    }
+    if (
+      this.#registry.listUnsettledInWorkspace(this.#workspaceId).length >=
+      this.#config.maxActivePerTargetWorkspace
+    ) {
+      throw new RegistryConflictError(
+        "workspace-limit",
+        `Active dispatch limit reached for workspace ${this.#workspaceId}`,
+      );
+    }
+    if (request.mode !== "write") return;
+    const worktreePath = await this.#resolveWorktree(request.cwd);
+    const lease = this.#registry
+      .listWriteLeases()
+      .find((candidate) => candidate.worktreePath === worktreePath);
+    if (lease) {
+      throw new RegistryConflictError(
+        "worktree-leased",
+        `Worktree ${worktreePath} is leased by ${lease.dispatchId}`,
+        lease.dispatchId,
+      );
+    }
   }
 
   async listEligibleAgents(): Promise<readonly ProposalTarget[]> {
@@ -357,8 +408,8 @@ export class DispatchApplication {
     return this.#registry.listAttention(dispatchId);
   }
 
-  listRecentSettled(originSessionId: string, limit: number): readonly StoredDispatch[] {
-    return this.#registry.listRecentSettled(originSessionId, limit);
+  listRecentSettledInWorkspace(limit: number): readonly StoredDispatch[] {
+    return this.#registry.listRecentSettledInWorkspace(this.#workspaceId, limit);
   }
 
   /** Whether a terminal still exists in the current workspace (regardless of eligibility). */
@@ -367,12 +418,20 @@ export class DispatchApplication {
     return snapshot.agents.some((agent) => agent.terminalId === terminalId);
   }
 
+  getResult(dispatchId: string) {
+    return this.#registry.getResult(dispatchId);
+  }
+
   listUnseenSettled(): readonly StoredDispatch[] {
     return this.#registry.listUnseenSettled(this.#workspaceId);
   }
 
   markResultSeen(dispatchId: string, seenAt: number): void {
     this.#registry.markResultSeen(dispatchId, seenAt);
+  }
+
+  markResultsSeen(dispatchIds: readonly string[], seenAt: number): number {
+    return this.#registry.markWorkspaceResultsSeen(this.#workspaceId, dispatchIds, seenAt);
   }
 
   async inspectAgent(target: string, requestedLines: number): Promise<{ target: ProposalTarget; text: string }> {

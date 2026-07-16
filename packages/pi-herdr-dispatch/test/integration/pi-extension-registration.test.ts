@@ -58,10 +58,12 @@ describe("Pi extension Phase 4 registration", () => {
       "Herdr 派发状态",
     ]);
     expect(commands).toEqual([
-      "herdr-agents",
-      "hd-agents",
       "herdr-dispatch",
       "hd-new",
+      "herdr-dispatch-create",
+      "hd-create",
+      "herdr-agents",
+      "hd-agents",
       "herdr-dispatches",
       "hd-manager",
       "herdr-dispatch-reply",
@@ -79,8 +81,10 @@ describe("Pi extension Phase 4 registration", () => {
     expect(Object.fromEntries(descriptions)).toEqual({
       "herdr-agents": "列出当前 Herdr 工作区的可用 Agent",
       "hd-agents": "列出当前 Herdr 工作区的可用 Agent",
-      "herdr-dispatch": "创建并立即发送一个 Herdr 派发",
-      "hd-new": "创建并立即发送一个 Herdr 派发",
+      "herdr-dispatch": "使用现有 Agent 创建并立即发送一个 Herdr 派发",
+      "hd-new": "使用现有 Agent 创建并立即发送一个 Herdr 派发",
+      "herdr-dispatch-create": "创建一个新 Agent 并立即发送 Herdr 派发",
+      "hd-create": "创建一个新 Agent 并立即发送 Herdr 派发",
       "herdr-dispatches": "打开 Herdr 派发管理器",
       "hd-manager": "打开 Herdr 派发管理器",
       "herdr-dispatch-reply": "预览并确认对一个有待处理状况的运行中派发的回复",

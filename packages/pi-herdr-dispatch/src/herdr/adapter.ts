@@ -7,13 +7,17 @@ import {
 } from "./delivery.js";
 import {
   type HerdrAgent,
+  type HerdrCreatedTab,
   type HerdrPane,
+  type HerdrPaneLayout,
   type HerdrPaneRead,
   type HerdrSnapshot,
   type HerdrWorkspace,
   parsePaneInfoResult,
+  parsePaneLayoutResult,
   parsePaneReadResult,
   parseSnapshotResult,
+  parseTabCreatedResult,
 } from "./protocol.js";
 import {
   HerdrApiError,
@@ -123,6 +127,93 @@ export class HerdrAdapter {
   async readTail(paneId: string, lines: 50 | 200): Promise<HerdrPaneRead> {
     validateTailLines(lines);
     return this.#readTail(paneId, lines);
+  }
+
+  async paneLayout(paneId: string): Promise<HerdrPaneLayout> {
+    if (!paneId) throw new TypeError("paneId must not be empty");
+    const result = await this.#unary.request(
+      "pane.layout",
+      { pane_id: paneId },
+      "pane_layout",
+    );
+    const layout = parsePaneLayoutResult(result);
+    if (layout.workspaceId !== this.#options.workspaceId) {
+      throw new HerdrWorkspaceError("Herdr returned a pane layout outside the captured workspace");
+    }
+    return layout;
+  }
+
+  async createSplitPane(input: {
+    targetPaneId: string;
+    direction: "right" | "down";
+    cwd: string;
+    ratio: number;
+  }): Promise<HerdrPane> {
+    const result = await this.#unary.request(
+      "pane.split",
+      {
+        target_pane_id: input.targetPaneId,
+        workspace_id: this.#options.workspaceId,
+        direction: input.direction,
+        cwd: input.cwd,
+        ratio: input.ratio,
+        focus: false,
+        env: {},
+      },
+      "pane_info",
+    );
+    return this.#validateCreatedPane(parsePaneInfoResult(result), input.cwd);
+  }
+
+  async createTab(input: { cwd: string; label: string }): Promise<HerdrCreatedTab> {
+    const result = await this.#unary.request(
+      "tab.create",
+      {
+        workspace_id: this.#options.workspaceId,
+        cwd: input.cwd,
+        label: input.label,
+        focus: false,
+        env: {},
+      },
+      "tab_created",
+    );
+    const created = parseTabCreatedResult(result);
+    const rootPane = this.#validateCreatedPane(created.rootPane, input.cwd);
+    if (
+      created.workspaceId !== this.#options.workspaceId ||
+      created.focused ||
+      rootPane.tabId !== created.tabId
+    ) {
+      throw new HerdrProtocolError(
+        "tab.create response does not match the requested workspace, no-focus policy, or root pane",
+      );
+    }
+    return { ...created, rootPane };
+  }
+
+  async renamePane(paneId: string, label: string): Promise<void> {
+    if (!paneId || !label) throw new TypeError("paneId and label must not be empty");
+    const result = await this.#unary.request(
+      "pane.rename",
+      { pane_id: paneId, label },
+      "pane_info",
+    );
+    const pane = parsePaneInfoResult(result);
+    if (pane.paneId !== paneId || pane.workspaceId !== this.#options.workspaceId) {
+      throw new HerdrProtocolError("pane.rename response does not match the created pane");
+    }
+  }
+
+  async startAgentExecutable(paneId: string, executable: string): Promise<void> {
+    if (!paneId) throw new TypeError("paneId must not be empty");
+    if (!/^[a-z][a-z0-9-]{0,31}$/u.test(executable)) {
+      throw new TypeError("agent executable is not in the supported command form");
+    }
+    await this.#unary.request(
+      "pane.send_input",
+      { pane_id: paneId, text: executable, keys: ["Enter"] },
+      "ok",
+    );
   }
 
   async showNotification(notification: HerdrNotification): Promise<HerdrNotificationResult> {
@@ -375,6 +466,19 @@ export class HerdrAdapter {
       throw new HerdrProtocolError("pane.read response does not match the bounded current-workspace request");
     }
     return read;
+  }
+
+  #validateCreatedPane(pane: HerdrPane, cwd: string): HerdrPane {
+    if (
+      pane.workspaceId !== this.#options.workspaceId ||
+      pane.cwd !== cwd ||
+      pane.focused
+    ) {
+      throw new HerdrProtocolError(
+        "created pane response does not match the requested workspace, cwd, or no-focus policy",
+      );
+    }
+    return pane;
   }
 
   #currentWorkspace(snapshot: HerdrSnapshot): CurrentWorkspaceSnapshot {

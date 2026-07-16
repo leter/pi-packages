@@ -48,8 +48,9 @@ Constraints:
 - Do not commit, push, deploy, publish, mutate remote systems, or perform destructive cleanup.
 - Global and system installs are forbidden.
 - Project dependency installation is forbidden unless explicitly authorized above.
+- Write the Result Envelope summary and any blocker text in Simplified Chinese; keep code, identifiers, and paths verbatim.
 
-Finish by printing exactly one single-line Result Envelope, not fenced in Markdown:
+Finish by printing exactly one single-line Result Envelope, not fenced in Markdown, keeping the whole line under 200 characters with a one-sentence summary:
 DISPATCH_RESULT {"id":"hd_fixed_1","outcome":"done|blocked|failed|cancelled","summary":"..."}`);
     expect(proposal.payloadHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(Object.isFrozen(proposal)).toBe(true);

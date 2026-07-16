@@ -9,6 +9,7 @@ import type { StoredDispatch } from "../registry/types.js";
 import { UI_COPY } from "./ui-copy.js";
 
 export const DISPATCH_WIDGET_KEY = "pi-herdr-dispatch";
+export const DISPATCH_WIDGET_REFRESH_MS = 1_000;
 
 export function updateDispatchWidget(
   ui: Pick<ExtensionUIContext, "setWidget">,
@@ -20,15 +21,22 @@ export function updateDispatchWidget(
   const text = UI_COPY.presentation.widget(counts).plain;
   ui.setWidget(
     DISPATCH_WIDGET_KEY,
-    (_tui, theme) => ({
-      render(width: number): string[] {
-        return renderDispatchWidget(
-          readWidgetCounts(registry, originSessionId, targetWorkspaceId),
-          theme,
-        ).render(width);
-      },
-      invalidate(): void {},
-    }),
+    (tui, theme) => {
+      const refreshTimer = setInterval(() => tui.requestRender(), DISPATCH_WIDGET_REFRESH_MS);
+      refreshTimer.unref();
+      return {
+        render(width: number): string[] {
+          return renderDispatchWidget(
+            readWidgetCounts(registry, originSessionId, targetWorkspaceId),
+            theme,
+          ).render(width);
+        },
+        invalidate(): void {},
+        dispose(): void {
+          clearInterval(refreshTimer);
+        },
+      };
+    },
     { placement: "belowEditor" },
   );
   return text;

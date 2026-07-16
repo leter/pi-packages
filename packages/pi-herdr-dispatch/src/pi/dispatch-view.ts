@@ -22,7 +22,7 @@ import {
   type ViewChrome,
   type ViewLine,
 } from "./dispatch-view-model.js";
-import { sanitizeLine } from "./visual.js";
+import { sanitizeLine, type ResultCard } from "./visual.js";
 import { UI_COPY } from "./ui-copy.js";
 
 /**
@@ -42,6 +42,10 @@ export interface DispatchViewPorts {
   inspect(terminalId: string, lines: number): Promise<{ text: string }>;
   /** Marks a settled record's result as seen when its detail is opened. */
   markResultSeen?(dispatchId: string): void;
+  /** Marks the displayed Unseen Settlements in the Workspace Scope as seen. */
+  markResultsSeen(dispatchIds: readonly string[]): number;
+  /** Sanitized result card for a settled record, if one was stored. */
+  getResult?(dispatchId: string): ResultCard | undefined;
   onStateChanged(listener: () => void): () => void;
   now?(): number;
 }
@@ -55,6 +59,7 @@ export interface DispatchViewOptions {
 }
 
 const RELATIVE_TIME_TICK_MS = 30_000;
+const PANEL_MAX_WIDTH = 96;
 const LIST_WINDOW_ROWS = 10;
 const PAGE_ROWS = 8;
 
@@ -169,6 +174,16 @@ export class DispatchViewComponent implements Component {
       matchesKey(data, "ctrl+c")
     ) return this.#finish(undefined);
     const key = printableKey(data);
+    if (key === "c") {
+      const unseenIds = (this.#ports.snapshot().unseenSettled ?? []).map(
+        (dispatch) => dispatch.id,
+      );
+      if (unseenIds.length > 0) {
+        this.#ports.markResultsSeen(unseenIds);
+        this.#reconcileSelection();
+      }
+      return;
+    }
     if (key === "s") {
       this.#showSettled = !this.#showSettled;
       this.#reconcileSelection();
@@ -228,6 +243,8 @@ export class DispatchViewComponent implements Component {
     }
     const snapshot = this.#ports.snapshot();
     const attention = this.#ports.listAttention(dispatch.id);
+    const result =
+      dispatch.lifecycle === "settled" ? this.#ports.getResult?.(dispatch.id) : undefined;
     return {
       body: buildDetailLines(
         dispatch,
@@ -236,6 +253,7 @@ export class DispatchViewComponent implements Component {
         this.#now(),
         snapshot.originSessionId,
         this.#showTechnical,
+        result,
       ),
       chrome: detailChrome(dispatch, attention, snapshot.originSessionId),
     };
@@ -350,7 +368,8 @@ export class DispatchViewComponent implements Component {
 
   /** Wrap body lines in the rounded frame; title/counts live in the top border, the keybar in the bottom border. */
   #frame(body: ViewLine[], chrome: ViewChrome, width: number): string[] {
-    const safeWidth = Math.max(24, width);
+    const safeWidth = Math.max(1, Math.min(width, PANEL_MAX_WIDTH));
+    if (safeWidth < 5) return [truncateToWidth(chrome.title, safeWidth, "")];
     const inner = safeWidth - 4;
     const border = (text: string) => this.#theme.fg("accent", text);
     const rows = body.map(
@@ -393,8 +412,7 @@ export class DispatchViewComponent implements Component {
       const colored = this.#theme.fg(part.color, text);
       painted += part.bold ? this.#theme.bold(colored) : colored;
     }
-    const leftPad = line.align === "center" ? Math.floor(Math.max(0, remaining) / 2) : 0;
-    const padded = `${" ".repeat(leftPad)}${painted}${" ".repeat(Math.max(0, remaining - leftPad))}`;
+    const padded = `${painted}${" ".repeat(Math.max(0, remaining))}`;
     return line.selected ? this.#theme.bg("selectedBg", padded) : padded;
   }
 }

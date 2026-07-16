@@ -105,7 +105,7 @@ class FakeHerdr implements HerdrDispatchPort {
   }
 }
 
-async function harness() {
+async function harness(configOverrides: Partial<typeof DEFAULT_DISPATCH_CONFIG> = {}) {
   const root = await mkdtemp(join(tmpdir(), "pi-herdr-application-"));
   roots.push(root);
   const registry = await openDispatchRegistry(join(root, "registry.sqlite"));
@@ -114,7 +114,7 @@ async function harness() {
   let now = 1_750_000_000_000;
   let sequence = 0;
   const application = new DispatchApplication({
-    config: { ...DEFAULT_DISPATCH_CONFIG, startupWindowMs: 5_000 },
+    config: { ...DEFAULT_DISPATCH_CONFIG, startupWindowMs: 5_000, ...configOverrides },
     registry,
     herdr,
     workspaceId: "w-current",
@@ -161,6 +161,40 @@ describe("DispatchApplication", () => {
     });
     expect(proposal.target.terminalId).toBe("term-target");
     expect(proposal.payload).toContain("ID: hd_test_1");
+  });
+
+  it("preflights capacity and worktree leases before an Agent window is created", async () => {
+    const capacity = await harness({ maxActiveGlobal: 1, maxActivePerTargetWorkspace: 1 });
+    const first = await capacity.application.createProposal({
+      target: "term-target",
+      mode: "non-mutating",
+      task: "First task",
+    });
+    await capacity.application.confirmProposal(first, origin);
+
+    await expect(
+      capacity.application.assertCanCreateTarget({
+        cwd: "/repo/worktree",
+        mode: "non-mutating",
+        task: "Second task",
+      }),
+    ).rejects.toMatchObject({ code: "global-limit" });
+
+    const leased = await harness();
+    const writer = await leased.application.createProposal({
+      target: "term-target",
+      mode: "write",
+      task: "Write task",
+    });
+    await leased.application.confirmProposal(writer, origin);
+
+    await expect(
+      leased.application.assertCanCreateTarget({
+        cwd: "/repo/worktree",
+        mode: "write",
+        task: "Another write task",
+      }),
+    ).rejects.toMatchObject({ code: "worktree-leased" });
   });
 
   it("persists delivering intent and reservations before one verified delivery becomes active", async () => {

@@ -9,6 +9,7 @@ export type HumanDispatchAction = "reply" | "cancel" | "resolve";
 export type HumanCommand =
   | "agents"
   | "new"
+  | "create"
   | "manager"
   | "reply"
   | "cancel"
@@ -53,16 +54,26 @@ export interface HumanUiCopy {
   readonly command: {
     description(command: HumanCommand): string;
     dispatchTuiOnly(): string;
+    createTuiOnly(): string;
     proposalTuiOnly(): string;
     managerTuiOnly(): string;
     setupTuiOnly(): string;
     followupTuiOnly(): string;
     noEligibleAgents(): string;
     chooseEligibleAgent(): string;
+    noLaunchableAgents(): string;
+    integrationStatusFailed(reason: string): string;
+    chooseAgentType(): string;
+    chooseAgentLayout(): string;
+    agentLayout(layout: "adaptive" | "right" | "down" | "new-tab"): string;
+    creatingAgent(agent: string): string;
+    agentCreationCancelled(location?: string): string;
+    agentCreationFailed(reason: string, location?: string): string;
+    agentCreationPreflightFailed(reason: string): string;
     selectedAgentUnavailable(): string;
     completeTask(): string;
     mutationMode(): string;
-    deadlineMinutes(): string;
+    deadlineMinutes(defaultMinutes: number): string;
     dependencyInstallTitle(): string;
     dependencyInstallQuestion(): string;
     selectedDispatchUnavailable(): string;
@@ -93,14 +104,12 @@ export interface HumanUiCopy {
     title(): string;
     detailTitle(): string;
     heading(running: number, delivering: number, attention: number): string;
-    noActiveDispatches(): string;
-    startWithCommand(): string;
     groupAttention(): string;
     groupRunning(): string;
     groupDelivering(): string;
     groupUnseenSettled(): string;
     settledHeading(count: number, shown: boolean): string;
-    listKeybar(settledShown: boolean): string;
+    listKeybar(settledShown: boolean, hasUnseen: boolean): string;
     emergencyResolutionRequired(): string;
     activeSince(age: string): string;
     deliveryStarted(age: string): string;
@@ -245,7 +254,8 @@ const modeLabels: Readonly<Record<string, string>> = Object.freeze({
 
 const commandDescriptions: Readonly<Record<HumanCommand, string>> = Object.freeze({
   agents: "列出当前 Herdr 工作区的可用 Agent",
-  new: "创建并立即发送一个 Herdr 派发",
+  new: "使用现有 Agent 创建并立即发送一个 Herdr 派发",
+  create: "创建一个新 Agent 并立即发送 Herdr 派发",
   manager: "打开 Herdr 派发管理器",
   reply: "预览并确认对一个有待处理状况的运行中派发的回复",
   cancel: "预览并确认一次常规取消请求",
@@ -310,16 +320,34 @@ export const UI_COPY = Object.freeze({
   command: {
     description: (command) => commandDescriptions[command],
     dispatchTuiOnly: () => "派发投递仅在 TUI 模式下可用",
+    createTuiOnly: () => "Agent 创建和派发仅在 TUI 模式下可用",
     proposalTuiOnly: () => "Herdr 派发投递仅在 TUI 模式下可用",
     managerTuiOnly: () => "派发管理器仅在 TUI 模式下可用",
     setupTuiOnly: () => "集成安装仅在 TUI 模式下可用",
     followupTuiOnly: () => "派发后续操作仅在 TUI 模式下可用",
     noEligibleAgents: () => "当前没有可用 Agent",
     chooseEligibleAgent: () => "选择一个可用 Agent",
+    noLaunchableAgents: () =>
+      "当前没有可创建的受支持 Agent。集成型 Agent 可先运行 /hd-setup,屏测型 Agent 需要本机标准可执行文件。",
+    integrationStatusFailed: (reason) => `无法读取 Herdr 状态集成:${reason}`,
+    chooseAgentType: () => "选择要创建的 Agent",
+    chooseAgentLayout: () => "选择新 Agent 的布局",
+    agentLayout: (layout) => ({
+      adaptive: "当前标签页 · 自适应",
+      right: "当前标签页 · 左右",
+      down: "当前标签页 · 上下",
+      "new-tab": "单独标签页",
+    })[layout],
+    creatingAgent: (agent) => `正在创建并等待 ${agent} Agent…按 Esc 可停止等待。`,
+    agentCreationCancelled: (location) =>
+      `已停止等待和派发;如窗口已经创建,它会继续保留${location ? `:${location}。` : "。"}`,
+    agentCreationFailed: (reason, location) =>
+      `Agent 创建或启动失败:${reason} 如窗口已经创建,它会继续保留${location ? `:${location}。` : "。"}`,
+    agentCreationPreflightFailed: (reason) => `创建前检查未通过:${reason}`,
     selectedAgentUnavailable: () => "所选 Agent 已不可用",
     completeTask: () => "填写派发任务",
     mutationMode: () => "派发变更模式",
-    deadlineMinutes: () => "截止时间(分钟)",
+    deadlineMinutes: (defaultMinutes) => `截止时间(分钟,默认 ${defaultMinutes})`,
     dependencyInstallTitle: () => "项目依赖安装",
     dependencyInstallQuestion: () => "是否显式允许在项目内安装依赖?",
     selectedDispatchUnavailable: () => "所选派发已不在当前工作区",
@@ -359,7 +387,7 @@ export const UI_COPY = Object.freeze({
     redispatchTargetGone: () => "目标 Agent 已不在当前工作区——它的 pane 可能已被关闭。",
   },
   manager: {
-    title: () => "Herdr 派发",
+    title: () => "任务派发",
     detailTitle: () => "派发详情",
     heading: (running, delivering, attention) =>
       [
@@ -369,16 +397,20 @@ export const UI_COPY = Object.freeze({
       ]
         .filter(Boolean)
         .join(" · "),
-    noActiveDispatches: () => "没有活跃的派发",
-    startWithCommand: () => "用 /hd-new 发起一个",
     groupAttention: () => "待处理",
     groupRunning: () => "运行中",
     groupDelivering: () => "投递中",
     groupUnseenSettled: () => "已完成 · 未读",
     settledHeading: (count, shown) =>
-      shown ? `已结算 · 最近 ${count} 条` : `已结算 · ${count} 条已隐藏 · 按 S 显示`,
-    listKeybar: (settledShown) =>
-      `enter 详情 · s ${settledShown ? "隐藏" : "显示"}已结算`,
+      shown ? `已结算 · 最近 ${count} 条` : `已结算 · ${count} 条`,
+    listKeybar: (settledShown, hasUnseen) =>
+      [
+        "enter 详情",
+        hasUnseen ? "c 清空未读" : "",
+        `s ${settledShown ? "隐藏" : "显示"}已结算`,
+      ]
+        .filter(Boolean)
+        .join(" · "),
     emergencyResolutionRequired: () => "需要应急处理",
     activeSince: (age) => `运行开始于${age}`,
     deliveryStarted: (age) => `投递开始于${age}`,

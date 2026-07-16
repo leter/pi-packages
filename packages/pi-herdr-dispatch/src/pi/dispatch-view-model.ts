@@ -3,11 +3,13 @@ import {
   ATTENTION_GLYPH,
   lifecycleMark,
   outcomeMark,
+  padToDisplayWidth,
   relativeAge,
   relativeDeadline,
   sanitizeLine,
   shortenId,
   shortenPath,
+  type ResultCard,
   type SemanticColor,
 } from "./visual.js";
 import { UI_COPY } from "./ui-copy.js";
@@ -21,7 +23,6 @@ export interface ViewSpan {
 export interface ViewLine {
   spans: readonly ViewSpan[];
   selected?: boolean;
-  align?: "center";
 }
 
 export interface UnsettledEntry {
@@ -65,6 +66,9 @@ const ATTENTION_PRIORITY: Readonly<Record<AttentionCondition, number>> = Object.
   overdue: 7,
   unacknowledged: 8,
 });
+
+const ROW_INDENT = "   ";
+const META_INDENT = "     ";
 
 const span = (text: string, color: SemanticColor = "text", bold = false): ViewSpan =>
   bold ? { text, color, bold } : { text, color };
@@ -162,18 +166,7 @@ export function buildListLines(
   );
   const lines: ViewLine[] = [];
 
-  if (entries.length === 0) {
-    lines.push({ spans: [] });
-    lines.push({
-      align: "center",
-      spans: [
-        span(UI_COPY.manager.noActiveDispatches(), "muted"),
-        span(" · ", "dim"),
-        span(UI_COPY.manager.startWithCommand(), "dim"),
-      ],
-    });
-    lines.push({ spans: [] });
-  } else {
+  if (entries.length > 0) {
     appendGroup(lines, UI_COPY.manager.groupAttention(), visibleEntries(attention, visibleIds), selectedId, snapshot.originSessionId, now);
     appendGroup(lines, UI_COPY.manager.groupRunning(), visibleEntries(active, visibleIds), selectedId, snapshot.originSessionId, now);
     appendGroup(lines, UI_COPY.manager.groupDelivering(), visibleEntries(delivering, visibleIds), selectedId, snapshot.originSessionId, now);
@@ -196,7 +189,7 @@ export function buildListLines(
       spans: [
         span(
           UI_COPY.manager.settledHeading(snapshot.settled.length, showSettled),
-          "dim",
+          "muted",
           true,
         ),
       ],
@@ -210,6 +203,7 @@ export function buildListLines(
     }
   }
 
+  if (lines.length === 0 || lines.at(-1)?.spans.length !== 0) lines.push({ spans: [] });
   return lines;
 }
 
@@ -219,7 +213,7 @@ function settledRows(dispatch: StoredDispatch, selected: boolean, now: number): 
     {
       selected,
       spans: [
-        span(selected ? " → " : "   ", "accent", selected),
+        span(selected ? " → " : ROW_INDENT, "accent", selected),
         span(`${state.glyph} `, state.color),
         span(agentDisplayName(dispatch), "text", true),
         span(` · ${taskSummary(dispatch.task)}`, "text"),
@@ -228,7 +222,7 @@ function settledRows(dispatch: StoredDispatch, selected: boolean, now: number): 
     {
       selected,
       spans: [
-        span("     ", "dim"),
+        span(META_INDENT, "dim"),
         span(state.label, state.color),
         span(
           dispatch.settledAt === undefined ? "" : ` · ${relativeAge(dispatch.settledAt, now)}`,
@@ -259,7 +253,10 @@ export function listChrome(snapshot: DispatchViewSnapshot, showSettled: boolean)
   return {
     title: UI_COPY.manager.title(),
     ...(counts === "" ? {} : { counts, countsColor: attention > 0 ? "warning" : "muted" }),
-    hint: UI_COPY.manager.listKeybar(showSettled),
+    hint: UI_COPY.manager.listKeybar(
+      showSettled,
+      (snapshot.unseenSettled?.length ?? 0) > 0,
+    ),
   };
 }
 
@@ -286,6 +283,7 @@ export function buildDetailLines(
   now: number,
   originSessionId = dispatch.originSessionId,
   showTechnical = false,
+  result?: ResultCard,
 ): ViewLine[] {
   const primary = primaryAttention(attention);
   const lifecycle = lifecycleMark(dispatch);
@@ -340,9 +338,38 @@ export function buildDetailLines(
       lines.push({ spans: [span(`     ${UI_COPY.manager.reservationsRetained()}`, "dim")] });
     }
   }
+  if (result !== undefined) lines.push(...resultCardLines(result));
   if (showTechnical) lines.push(...technicalLines(dispatch));
   lines.push({ spans: [] });
   lines.push(...buildOutputLines(output));
+  return lines;
+}
+
+/** Formatted sanitized result for a settled detail; always labelled untrusted. */
+function resultCardLines(result: ResultCard): ViewLine[] {
+  const lines: ViewLine[] = [{ spans: [] }];
+  if (result.summary !== undefined) {
+    lines.push({ spans: [span(`   ${sanitizeLine(result.summary, 160)}`, "text")] });
+  }
+  if (result.blocker !== undefined) {
+    lines.push({
+      spans: [span(`   ${UI_COPY.presentation.blocker(sanitizeLine(result.blocker, 120))}`, "warning")],
+    });
+  }
+  const counts = [
+    result.changedFiles !== undefined && result.changedFiles.length > 0
+      ? UI_COPY.count.files(result.changedFiles.length)
+      : "",
+    result.tests !== undefined && result.tests.length > 0
+      ? UI_COPY.count.tests(result.tests.length)
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  if (counts) lines.push({ spans: [span(`   ${counts}`, "dim")] });
+  lines.push({
+    spans: [span("   untrusted data · agent-reported, not verified", "dim")],
+  });
   return lines;
 }
 
@@ -407,7 +434,7 @@ function appendGroup(
   if (entries.length === 0) return;
   lines.push({ spans: [] });
   lines.push({
-    spans: [span(label, label === UI_COPY.manager.groupAttention() ? "warning" : "dim", true)],
+    spans: [span(label, label === UI_COPY.manager.groupAttention() ? "warning" : "muted", true)],
   });
   for (const entry of entries) {
     const selected = entry.dispatch.id === selectedId;
@@ -424,7 +451,7 @@ function appendGroup(
     lines.push({
       selected,
       spans: [
-        span(selected ? " → " : "   ", "accent", selected),
+        span(selected ? " → " : ROW_INDENT, "accent", selected),
         span(`${state.glyph} `, state.color),
         span(agentDisplayName(entry.dispatch), "text", true),
         span(` · ${taskSummary(entry.dispatch.task)}`, "text"),
@@ -436,7 +463,7 @@ function appendGroup(
     lines.push({
       selected,
       spans: [
-        span("     ", "dim"),
+        span(META_INDENT, "dim"),
         span(
           emergency ? UI_COPY.manager.emergencyResolutionRequired() : state.label,
           emergency ? "warning" : state.color,
@@ -452,10 +479,10 @@ function technicalLines(dispatch: StoredDispatch): ViewLine[] {
   return [
     { spans: [] },
     { spans: [span(UI_COPY.manager.technicalHeading(), "dim", true)] },
-    { spans: [span(`   ${UI_COPY.manager.technicalLabel("dispatch")}  ${sanitizeLine(dispatch.id, 120)}`, "dim")] },
-    { spans: [span(`   ${UI_COPY.manager.technicalLabel("terminal").padEnd(13)}${shortenId(dispatch.targetTerminalId)}`, "dim")] },
-    { spans: [span(`   ${UI_COPY.manager.technicalLabel("origin").padEnd(13)}${sanitizeLine(dispatch.originSessionId, 120)}`, "dim")] },
-    { spans: [span(`   ${UI_COPY.manager.technicalLabel("workspace").padEnd(13)}${sanitizeLine(dispatch.targetWorkspaceId, 120)}`, "dim")] },
+    { spans: [span(`${ROW_INDENT}${padToDisplayWidth(UI_COPY.manager.technicalLabel("dispatch"), 13)}${sanitizeLine(dispatch.id, 120)}`, "dim")] },
+    { spans: [span(`${ROW_INDENT}${padToDisplayWidth(UI_COPY.manager.technicalLabel("terminal"), 13)}${shortenId(dispatch.targetTerminalId)}`, "dim")] },
+    { spans: [span(`${ROW_INDENT}${padToDisplayWidth(UI_COPY.manager.technicalLabel("origin"), 13)}${sanitizeLine(dispatch.originSessionId, 120)}`, "dim")] },
+    { spans: [span(`${ROW_INDENT}${padToDisplayWidth(UI_COPY.manager.technicalLabel("workspace"), 13)}${sanitizeLine(dispatch.targetWorkspaceId, 120)}`, "dim")] },
   ];
 }
 

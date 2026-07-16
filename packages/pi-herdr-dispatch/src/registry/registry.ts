@@ -636,7 +636,7 @@ export class DispatchRegistry {
         .prepare(
           `SELECT * FROM dispatches
            WHERE lifecycle = 'settled' AND result_seen_at IS NULL AND target_workspace_id = ?
-           ORDER BY settled_at DESC, id DESC LIMIT 50`,
+           ORDER BY settled_at DESC, id DESC`,
         )
         .all(targetWorkspaceId) as unknown as DispatchRow[];
       return rows.map(mapDispatch);
@@ -656,6 +656,33 @@ export class DispatchRegistry {
     });
   }
 
+  /** Marks the displayed Unseen Settlements in one Workspace Scope as seen, atomically. */
+  markWorkspaceResultsSeen(
+    targetWorkspaceId: string,
+    dispatchIds: readonly string[],
+    seenAt: number,
+  ): number {
+    if (!targetWorkspaceId) throw new TypeError("targetWorkspaceId must not be empty");
+    if (dispatchIds.some((id) => !/^hd_[A-Za-z0-9_-]+$/u.test(id))) {
+      throw new TypeError("invalid dispatch ID");
+    }
+    validateTimestamp(seenAt, "seenAt");
+    const uniqueIds = [...new Set(dispatchIds)];
+    if (uniqueIds.length === 0) return 0;
+    return this.#mutate("mark workspace dispatch results seen", () => {
+      const update = this.#database.prepare(
+        `UPDATE dispatches SET result_seen_at = ?, updated_at = ?
+         WHERE target_workspace_id = ? AND id = ?
+           AND lifecycle = 'settled' AND result_seen_at IS NULL`,
+      );
+      let marked = 0;
+      for (const dispatchId of uniqueIds) {
+        marked += changes(update.run(seenAt, seenAt, targetWorkspaceId, dispatchId).changes);
+      }
+      return marked;
+    });
+  }
+
   listRecentSettled(originSessionId: string, limit: number): readonly StoredDispatch[] {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
       throw new RangeError("recent settled limit must be from 1 to 100");
@@ -668,6 +695,26 @@ export class DispatchRegistry {
            ORDER BY settled_at DESC, id DESC LIMIT ?`,
         )
         .all(originSessionId, limit) as unknown as DispatchRow[];
+      return rows.map(mapDispatch);
+    });
+  }
+
+  listRecentSettledInWorkspace(
+    targetWorkspaceId: string,
+    limit: number,
+  ): readonly StoredDispatch[] {
+    if (!targetWorkspaceId) throw new TypeError("targetWorkspaceId must not be empty");
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new RangeError("recent settled limit must be from 1 to 100");
+    }
+    return this.#read("list recent settled dispatches in workspace", () => {
+      const rows = this.#database
+        .prepare(
+          `SELECT * FROM dispatches
+           WHERE lifecycle = 'settled' AND target_workspace_id = ?
+           ORDER BY settled_at DESC, id DESC LIMIT ?`,
+        )
+        .all(targetWorkspaceId, limit) as unknown as DispatchRow[];
       return rows.map(mapDispatch);
     });
   }

@@ -2,7 +2,7 @@
   "name": "pi-herdr-dispatch",
   "version": "0.0.0-development",
   "private": true,
-  "description": "Safely dispatch work from Pi to existing agents on a local Herdr server",
+  "description": "Safely launch or dispatch work from Pi to agents on a local Herdr server",
   "type": "module",
   "keywords": [
     "pi-package",
@@ -21,6 +21,9 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "peerDependencies": {

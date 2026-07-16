@@ -55,7 +55,7 @@ describe("Pi safety gate adapters", () => {
 
     expect(result).toEqual({
       block: true,
-      reason: expect.stringContaining("herdr_dispatch_propose or /hd-new"),
+      reason: expect.stringContaining("herdr_dispatch_propose, /hd-new, or user-run /hd-create"),
     });
     expect(getLeaseContext).not.toHaveBeenCalled();
   });
@@ -72,7 +72,7 @@ describe("Pi safety gate adapters", () => {
       exitCode: 126,
       cancelled: false,
       truncated: false,
-      output: expect.stringContaining("herdr_dispatch_propose or /hd-new"),
+      output: expect.stringContaining("herdr_dispatch_propose, /hd-new, or user-run /hd-create"),
     });
   });
 

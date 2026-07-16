@@ -53,6 +53,7 @@ const BASE_CONSTRAINTS = Object.freeze([
   "Do not commit, push, deploy, publish, mutate remote systems, or perform destructive cleanup.",
   "Global and system installs are forbidden.",
   "Project dependency installation is forbidden unless explicitly authorized above.",
+  "Write the Result Envelope summary and any blocker text in Simplified Chinese; keep code, identifiers, and paths verbatim.",
 ]);
 
 export function createDispatchProposal(
@@ -60,7 +61,7 @@ export function createDispatchProposal(
   options: ProposalFactoryOptions = {},
 ): DispatchProposal {
   validateTarget(input.target, input.mode);
-  const task = normalizeTask(input.task);
+  const task = normalizeDispatchTask(input.task);
   if (!Number.isSafeInteger(input.deadlineMinutes) || input.deadlineMinutes < 1 || input.deadlineMinutes > 1440) {
     throw new RangeError("deadlineMinutes must be an integer from 1 to 1440");
   }
@@ -92,7 +93,7 @@ ${task}
 Constraints:
 ${constraints.map((constraint) => `- ${constraint}`).join("\n")}
 
-Finish by printing exactly one single-line Result Envelope, not fenced in Markdown:
+Finish by printing exactly one single-line Result Envelope, not fenced in Markdown, keeping the whole line under 200 characters with a one-sentence summary:
 DISPATCH_RESULT {"id":"${id}","outcome":"done|blocked|failed|cancelled","summary":"..."}`;
   return Object.freeze({
     id,
@@ -113,7 +114,7 @@ function generateCorrelationId(now: number): string {
   return `hd_${now.toString(36)}_${randomBytes(12).toString("base64url")}`;
 }
 
-function normalizeTask(value: string): string {
+export function normalizeDispatchTask(value: string): string {
   if (typeof value !== "string") throw new TypeError("task must be a string");
   const task = value.replace(/\r\n?/gu, "\n").trim();
   if (!task) throw new TypeError("task must not be empty");

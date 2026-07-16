@@ -137,6 +137,52 @@ describe("recent settled listing", () => {
     expect(() => registry.listRecentSettled("session_origin", 0)).toThrowError(RangeError);
     expect(() => registry.listRecentSettled("session_origin", 101)).toThrowError(RangeError);
   });
+
+  it("lists recent settled history across origins in one workspace", async () => {
+    const registry = await openRegistry();
+    registry.confirmDeliveryIntent(intent("hd_own", "term_own", 1_000));
+    registry.settle({
+      dispatchId: "hd_own",
+      outcome: "done",
+      sanitizedResult: { summary: "own" },
+      kind: "result",
+      settledAt: 2_000,
+    });
+    registry.confirmDeliveryIntent(
+      intent("hd_foreign", "term_foreign", 3_000, { originSessionId: "session_other" }),
+    );
+    registry.settle({
+      dispatchId: "hd_foreign",
+      outcome: "failed",
+      sanitizedResult: { summary: "foreign" },
+      kind: "result",
+      settledAt: 4_000,
+    });
+    registry.confirmDeliveryIntent(
+      intent("hd_elsewhere", "term_elsewhere", 5_000, {
+        originSessionId: "session_other",
+        originWorkspaceId: "w2",
+        targetWorkspaceId: "w2",
+      }),
+    );
+    registry.settle({
+      dispatchId: "hd_elsewhere",
+      outcome: "done",
+      sanitizedResult: { summary: "elsewhere" },
+      kind: "result",
+      settledAt: 6_000,
+    });
+
+    expect(
+      registry.listRecentSettledInWorkspace("w1", 5).map((dispatch) => dispatch.id),
+    ).toEqual(["hd_foreign", "hd_own"]);
+    expect(
+      registry.listRecentSettledInWorkspace("w1", 1).map((dispatch) => dispatch.id),
+    ).toEqual(["hd_foreign"]);
+    expect(registry.listRecentSettledInWorkspace("w2", 5).map((dispatch) => dispatch.id)).toEqual([
+      "hd_elsewhere",
+    ]);
+  });
 });
 
 describe("workspace dispatch lookup", () => {
