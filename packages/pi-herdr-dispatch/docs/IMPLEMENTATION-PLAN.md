@@ -15,7 +15,7 @@ The spike fixes these implementation rules:
 - only explicit `screen_detection_skipped: true` is reported integration authority;
 - V1 never calls `pane.report_metadata`; the widget and notifications are the only status display paths.
 
-No phase may add coordinator takeover, revision cursors, automatic resend, cross-workspace targeting, model-callable or raw Agent/pane creation, model wait tools, or autonomous continuation. ADR 0013 permits only the typed, user-initiated TUI Agent Launch path in the captured workspace and cwd.
+No phase may add coordinator takeover, revision cursors, automatic resend, cross-workspace targeting, model-callable or raw Agent/pane creation, or model wait tools. ADR 0013 permits only the typed, user-initiated TUI Agent Launch path in the captured workspace and cwd. Autonomous continuation is forbidden except as the user-armed, depth-bounded Auto Run path defined by ADR 0014 and implemented in Phase 8.
 
 ## Proposed module seams and test surfaces
 
@@ -406,6 +406,49 @@ U15–U16; verifies I19 and all L1–L12 end to end.
 - cancelling any wizard step before submission creates nothing;
 - every post-creation failure names the failure and never closes the created resource;
 - full default verification and the Herdr live contract suite pass.
+
+## Phase 8 — Auto Run: settlement-triggered continuation
+
+### Scope
+
+Implement [ADR 0014](./adr/0014-auto-run-settlement-continuation.md) exactly; every numbered decision there is normative.
+
+- Registry schema v5: per-Origin-Session Auto Run switch state and `auto_run_depth` on dispatches (backfill 0), under the existing backup/transactional-migration/fail-closed policy;
+- `/hd-auto` (`/herdr-dispatch-auto`), TUI-only: no argument reports armed state and remaining depth budget; `on`/`off` toggles; `off` performs no queue manipulation;
+- settlement-time wake decision: armed switch, exact Origin TUI session, depth below `maxAutoRunDepth`, and no per-proposal `wakeOnSettle: false` downgrade → send the sanitized-result message with `triggerTurn: true` when idle or `deliverAs: "followUp"` while streaming; every other case keeps today's `nextTurn`/`triggerTurn: false` path byte-for-byte;
+- depth-exhausted settlement degrades to the quiet queue and emits one review notification;
+- fixed English wake preamble (protocol-boundary string, outside the ui-copy catalog) with dynamic remaining budget, wrapping the existing untrusted envelope;
+- process-local Auto Run turn marker (set on wake trigger/enqueue, cleared at `agent_end`) feeding depth attribution in proposal creation, batched settlements contributing max depth + 1;
+- `wakeOnSettle` parameter on `herdr_dispatch_propose` (downgrade only);
+- `maxAutoRunDepth` config field (default 5, range 1–20) through the existing range/ordered validation;
+- visibility: persistent `⚡自动` widget segment, Dispatch Manager top-border state, resume-into-armed notification;
+- `result_seen_at` write paths untouched — auto delivery never marks seen;
+- documentation in the same change: DESIGN.md boundary split and new Auto Run section, CONTEXT.md terminology (Auto Run / 自动运行, Auto Run Depth / 自动运行深度) and zh-CN table rows, README behavior and recovery notes, ui-copy catalog entries for the new human-facing strings.
+
+### New test traceability entries
+
+Added to DESIGN.md's checklists in this phase's documentation commit:
+
+- **U18** Auto Run wake decision: armed/disarmed, outcome coverage (all four Final Outcomes), depth attribution and max-of-batch inheritance, depth exhaustion, `wakeOnSettle` downgrade, preamble content and budget arithmetic, config validation;
+- **I21** settlement wake end-to-end: idle triggers a turn, streaming defers to `followUp`, burst coalescing, off-mid-flight fires at most the already-enqueued wake, resume restores the armed switch and notifies, depth-exhausted settlement queues quietly with one notification, foreign emergency settlement wakes through the Origin path, unseen state survives auto delivery, non-TUI and foreign sessions never wake;
+- **L14** live: armed session runs a two-hop dispatch chain unattended (settle → wake → follow-up dispatch → settle), depth limit halts the chain into the queued path, `/hd-auto off` plus Esc stops cleanly, widget/Manager/resume visibility verified.
+
+### Acceptance criteria
+
+- U18, I21, and L14 pass; existing suites stay green, including L9's assertion recast as "no result starts a model turn **unless Auto Run is armed and within budget**";
+- with the switch off (the default), runtime behavior is byte-identical to Phase 7 — the feature is invisible until armed;
+- every degradation edge (depth exhausted, switch off, downgraded proposal, non-TUI, Origin closed) lands in the existing verified queued path with no result lost;
+- the model cannot arm Auto Run through any tool, command, or crafted result content;
+- ID-leak (`hd_`) and attention-priority assertions remain passing; the wake preamble contains the dispatch ID only as machine-facing data, consistent with existing model-facing strings.
+
+### Approximate commits
+
+1. `feat(registry): persist auto run state and dispatch depth in schema v5`
+2. `feat(dispatch): decide settlement wake and attribute auto run depth`
+3. `feat(settlement): trigger origin turns with framed auto run preamble`
+4. `feat(ui): add hd-auto command and armed-state visibility`
+5. `docs(pi-herdr-dispatch): record Auto Run vocabulary and boundary split`
+6. `test(pi-herdr-dispatch): cover auto run wake, depth, and degradation`
 
 ## Cross-phase quality gates
 
