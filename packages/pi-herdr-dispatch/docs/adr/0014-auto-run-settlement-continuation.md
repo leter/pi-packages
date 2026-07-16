@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-07-17). Implementation scheduled as Phase 8; until that phase lands, runtime behavior remains the ADR-less V1 (`triggerTurn: false` everywhere).
+Accepted (2026-07-17). Phase 8 implemented at the coordinator and Registry-guard seams (unit/integration tested); the end-to-end DispatchRuntime wiring and the exactly-once behavior of a triggered wake remain gated on live acceptance L14 and are not yet verified. With the switch off — the default — runtime behavior is the ADR-less V1 (`triggerTurn: false` everywhere).
 
 ## Context
 
