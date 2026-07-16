@@ -36,6 +36,9 @@ export default function piHerdrDispatch(pi: ExtensionAPI): void {
   pi.on("agent_end", async (_event, ctx) => {
     await runtime.deliverPendingContext(ctx);
   });
+  pi.on("agent_settled", () => {
+    runtime.clearAutoRunTurnMarker();
+  });
   pi.on("session_shutdown", () => {
     runtime.stop();
   });

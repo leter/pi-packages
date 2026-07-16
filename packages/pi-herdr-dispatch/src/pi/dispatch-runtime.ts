@@ -7,9 +7,14 @@ import {
   DEFAULT_DISPATCH_CONFIG,
   defaultConfigPath,
   loadDispatchConfig,
+  type DispatchConfig,
 } from "../domain/config.js";
 import { HerdrAdapter } from "../herdr/adapter.js";
 import { OriginMonitor } from "../monitor/origin-monitor.js";
+import {
+  buildAutoRunPreamble,
+  decideSettlementWake,
+} from "../settlement/auto-run.js";
 import {
   OriginContextDelivery,
   type OriginContextPort,
@@ -20,6 +25,7 @@ import {
   outcomeNotification,
   updateDispatchWidget,
 } from "./live-presentation.js";
+import { agentDisplayName, taskSummary } from "./dispatch-view-model.js";
 import { RegistryRuntime } from "./registry-runtime.js";
 import { UI_COPY } from "./ui-copy.js";
 
@@ -44,6 +50,9 @@ export class DispatchRuntime {
   #ui?: ExtensionContext["ui"];
   #originSessionId?: string;
   #workspaceId?: string;
+  #config: DispatchConfig = { ...DEFAULT_DISPATCH_CONFIG };
+  /** Auto Run Depth for proposals in the currently triggered turn; cleared when the agent run settles. */
+  #autoRunTurnDepth?: number;
   #mutationUnavailableReason = UI_COPY.runtime.dispatchSessionNotStarted();
   readonly #stateListeners = new Set<() => void>();
 
@@ -88,6 +97,7 @@ export class DispatchRuntime {
     const registryReady = await this.registryRuntime.start();
     const configState = await loadDispatchConfig(this.#configPath);
     const config = configState.status === "ready" ? configState.config : { ...DEFAULT_DISPATCH_CONFIG };
+    this.#config = config;
     if (!registryReady) {
       this.#mutationUnavailableReason =
         this.registryRuntime.unavailableReason ?? UI_COPY.runtime.registryUnavailable();
@@ -148,6 +158,7 @@ export class DispatchRuntime {
           herdr: this.#adapter,
           workspaceId,
           originTerminalId: originPane.terminalId,
+          currentAutoRunDepth: () => this.#autoRunTurnDepth ?? 0,
           ...(this.#monitor === undefined
             ? {}
             : {
@@ -169,6 +180,7 @@ export class DispatchRuntime {
         }
         await this.#monitor?.start();
         this.#updateWidget();
+        if (this.autoRunState()?.armed) await this.#notifyAutoRunArmedOnStart();
         await this.deliverPendingContext(ctx);
       }
       return this.#application !== undefined;
@@ -187,13 +199,58 @@ export class DispatchRuntime {
     const registry = this.registryRuntime.registry;
     if (!registry) return;
     const context = this.#contextPort(ctx);
+    const sessionId = ctx.sessionManager.getSessionId();
+    const armed =
+      this.#mutationUnavailableReason === "" && registry.isAutoRunArmed(sessionId);
     const pending = onlyDispatchId
       ? [registry.getDispatch(onlyDispatchId)].filter((item) => item !== undefined)
-      : registry.listPendingContextDelivery(ctx.sessionManager.getSessionId());
+      : registry.listPendingContextDelivery(sessionId);
     for (const dispatch of pending) {
-      if (dispatch.originSessionId !== ctx.sessionManager.getSessionId()) continue;
-      this.#contextDelivery.deliver(dispatch.id, context);
+      if (dispatch.originSessionId !== sessionId) continue;
+      const decision = decideSettlementWake({
+        armed,
+        dispatch,
+        maxAutoRunDepth: this.#config.maxAutoRunDepth,
+      });
+      if (decision.wake) {
+        // The marker outlives this delivery until the triggered run settles, so
+        // proposals created in the woken turn inherit max(settled depths) + 1.
+        this.#autoRunTurnDepth = Math.max(this.#autoRunTurnDepth ?? 0, decision.nextDepth);
+        this.#contextDelivery.deliver(dispatch.id, context, {
+          preamble: buildAutoRunPreamble(decision.remainingBudget),
+        });
+        continue;
+      }
+      const delivered = this.#contextDelivery.deliver(dispatch.id, context);
+      if (decision.reason === "depth-exhausted" && delivered === "delivered") {
+        await this.#notifyAutoRunDepthExhausted(dispatch.id);
+      }
     }
+  }
+
+  /** Clears the Auto Run turn marker; wired to agent_settled, when queued continuations are drained. */
+  clearAutoRunTurnMarker(): void {
+    this.#autoRunTurnDepth = undefined;
+  }
+
+  autoRunState(): { armed: boolean; maxDepth: number } | undefined {
+    const registry = this.registryRuntime.registry;
+    if (!registry || !this.#originSessionId) return undefined;
+    return {
+      armed: registry.isAutoRunArmed(this.#originSessionId),
+      maxDepth: this.#config.maxAutoRunDepth,
+    };
+  }
+
+  setAutoRunArmed(armed: boolean): void {
+    if (this.#mutationUnavailableReason) throw new Error(this.#mutationUnavailableReason);
+    const registry = this.registryRuntime.registry;
+    if (!registry || !this.#originSessionId) {
+      throw new Error(UI_COPY.command.runtimeUnavailable());
+    }
+    if (armed) registry.armAutoRun(this.#originSessionId, Date.now());
+    else registry.disarmAutoRun(this.#originSessionId, Date.now());
+    this.#updateWidget();
   }
 
   stop(): void {
@@ -201,6 +258,7 @@ export class DispatchRuntime {
     this.#ui = undefined;
     this.#originSessionId = undefined;
     this.#workspaceId = undefined;
+    this.#autoRunTurnDepth = undefined;
     this.#monitor?.stop();
     this.#monitor = undefined;
     this.#contextDelivery = undefined;
@@ -212,6 +270,35 @@ export class DispatchRuntime {
     this.registryRuntime.stop();
     if (!this.#mutationUnavailableReason) {
       this.#mutationUnavailableReason = UI_COPY.runtime.dispatchSessionStopped();
+    }
+  }
+
+  async #notifyAutoRunDepthExhausted(dispatchId: string): Promise<void> {
+    const dispatch = this.registryRuntime.registry?.getDispatch(dispatchId);
+    if (!dispatch || !this.#adapter) return;
+    try {
+      await this.#adapter.showNotification({
+        title: UI_COPY.notification.autoRunDepthExhaustedTitle(
+          agentDisplayName(dispatch),
+        ),
+        body: UI_COPY.notification.autoRunDepthExhaustedBody(taskSummary(dispatch.task, 80)),
+        sound: "request",
+      });
+    } catch {
+      // The queued result and widget counts remain authoritative.
+    }
+  }
+
+  async #notifyAutoRunArmedOnStart(): Promise<void> {
+    if (!this.#adapter) return;
+    try {
+      await this.#adapter.showNotification({
+        title: UI_COPY.notification.autoRunActiveTitle(),
+        body: UI_COPY.notification.autoRunActiveBody(this.#config.maxAutoRunDepth),
+        sound: "none",
+      });
+    } catch {
+      // The persistent widget segment remains the authoritative signal.
     }
   }
 

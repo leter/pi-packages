@@ -169,6 +169,10 @@ export interface HumanUiCopy {
     outcomeTitle(agent: string, outcome: FinalOutcome): string;
     attentionTitle(agent: string): string;
     attentionBody(task: string, condition: string): string;
+    autoRunActiveTitle(): string;
+    autoRunActiveBody(maxDepth: number): string;
+    autoRunDepthExhaustedTitle(agent: string): string;
+    autoRunDepthExhaustedBody(task: string): string;
   };
   readonly tool: {
     label(tool: "propose" | "agents" | "inspect" | "status"): string;
@@ -501,6 +505,11 @@ export const UI_COPY = Object.freeze({
     outcomeTitle: (agent, outcome) => `${agent} ${outcomeLabels[outcome] ?? outcome}`,
     attentionTitle: (agent) => `${agent} 需要处理`,
     attentionBody: (task, condition) => `${task} · ${condition}`,
+    autoRunActiveTitle: () => "自动运行已启用",
+    autoRunActiveBody: (maxDepth) =>
+      `本会话的结算结果会自动唤醒模型;深度上限 ${maxDepth}。用 /hd-auto off 关闭。`,
+    autoRunDepthExhaustedTitle: (agent) => `${agent} 完成 · 自动运行深度已达上限`,
+    autoRunDepthExhaustedBody: (task) => `${task} · 结果已排队,等待人工查看`,
   },
   tool: {
     label: (tool) => ({
