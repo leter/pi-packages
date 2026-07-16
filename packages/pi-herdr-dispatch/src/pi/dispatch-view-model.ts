@@ -21,6 +21,7 @@ export interface ViewSpan {
 export interface ViewLine {
   spans: readonly ViewSpan[];
   selected?: boolean;
+  align?: "center";
 }
 
 export interface UnsettledEntry {
@@ -158,8 +159,16 @@ export function buildListLines(
   const lines: ViewLine[] = [];
 
   if (entries.length === 0) {
-    lines.push({ spans: [span(UI_COPY.manager.noActiveDispatches(), "muted")] });
-    lines.push({ spans: [span(UI_COPY.manager.startWithCommand(), "dim")] });
+    lines.push({ spans: [] });
+    lines.push({
+      align: "center",
+      spans: [
+        span(UI_COPY.manager.noActiveDispatches(), "muted"),
+        span(" · ", "dim"),
+        span(UI_COPY.manager.startWithCommand(), "dim"),
+      ],
+    });
+    lines.push({ spans: [] });
   } else {
     appendGroup(lines, UI_COPY.manager.groupAttention(), visibleEntries(attention, visibleIds), selectedId, snapshot.originSessionId, now);
     appendGroup(lines, UI_COPY.manager.groupRunning(), visibleEntries(active, visibleIds), selectedId, snapshot.originSessionId, now);

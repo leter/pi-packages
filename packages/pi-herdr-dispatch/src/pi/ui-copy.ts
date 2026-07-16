@@ -356,8 +356,8 @@ export const UI_COPY = Object.freeze({
       ]
         .filter(Boolean)
         .join(" · "),
-    noActiveDispatches: () => "没有活跃的派发。",
-    startWithCommand: () => "用 /hd-new 发起一个。",
+    noActiveDispatches: () => "没有活跃的派发",
+    startWithCommand: () => "用 /hd-new 发起一个",
     groupAttention: () => "待处理",
     groupRunning: () => "运行中",
     groupDelivering: () => "投递中",

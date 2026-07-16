@@ -107,7 +107,7 @@ describe("dispatch view model", () => {
   it("teaches the next step in the empty state", () => {
     const snapshot = { originSessionId: "session_origin", unsettled: [], settled: [] };
     const lines = plainAll(buildListLines(snapshot, undefined, false, 0));
-    expect(lines.join("\n")).toBe("没有活跃的派发。\n用 /hd-new 发起一个。");
+    expect(lines.join("\n")).toBe("\n没有活跃的派发 · 用 /hd-new 发起一个\n");
     expect(listChrome(snapshot, false)).toEqual({
       title: "Herdr 派发",
       hint: "enter 详情 · s 显示已结算",

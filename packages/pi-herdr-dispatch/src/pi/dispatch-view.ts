@@ -369,7 +369,8 @@ export class DispatchViewComponent implements Component {
       const colored = this.#theme.fg(part.color, text);
       painted += part.bold ? this.#theme.bold(colored) : colored;
     }
-    const padded = `${painted}${" ".repeat(Math.max(0, remaining))}`;
+    const leftPad = line.align === "center" ? Math.floor(Math.max(0, remaining) / 2) : 0;
+    const padded = `${" ".repeat(leftPad)}${painted}${" ".repeat(Math.max(0, remaining - leftPad))}`;
     return line.selected ? this.#theme.bg("selectedBg", padded) : padded;
   }
 }
