@@ -6,9 +6,11 @@ import type { AttentionRecord, StoredDispatch } from "../registry/types.js";
 import {
   ATTENTION_GLYPH,
   agentRow,
+  displayWidth,
   dispatchRow,
   lifecycleMark,
   outcomeMark,
+  padToDisplayWidth,
   parseResultCard,
   relativeAge,
   relativeDeadline,
@@ -61,19 +63,21 @@ export function renderAgentsResult(
     );
   }
   const rows = targets.map(agentRow);
-  const labelWidth = Math.max(...rows.map((row) => row.label.length));
-  const statusWidth = Math.max(...rows.map((row) => `${row.status} ${row.provenance}`.length));
-  const cwdWidth = Math.max(...rows.map((row) => row.cwd.length));
+  const labelWidth = Math.max(...rows.map((row) => displayWidth(row.label)));
+  const statusWidth = Math.max(...rows.map((row) => displayWidth(`${row.status} ${row.provenance}`)));
+  const cwdWidth = Math.max(...rows.map((row) => displayWidth(row.cwd)));
   const lines = rows.map((row) => {
     const provenance =
       row.provenance === UI_COPY.state.provenance(true)
         ? paint("accent", UI_COPY.state.provenance(true))
         : paint("dim", row.provenance);
-    const statusPad = " ".repeat(statusWidth - `${row.status} ${row.provenance}`.length);
+    const statusPad = " ".repeat(
+      statusWidth - displayWidth(`${row.status} ${row.provenance}`),
+    );
     return [
-      ` ${mark(theme, row.mark)} ${theme.bold(row.label.padEnd(labelWidth))}`,
+      ` ${mark(theme, row.mark)} ${theme.bold(padToDisplayWidth(row.label, labelWidth))}`,
       `${paint(row.mark.color, row.status)} ${provenance}${statusPad}`,
-      paint("muted", row.cwd.padEnd(cwdWidth)),
+      paint("muted", padToDisplayWidth(row.cwd, cwdWidth)),
       paint("dim", row.terminalId),
     ].join("  ");
   });
@@ -108,17 +112,17 @@ export function renderStatusResult(
     const rows = details.list.map((dispatch) =>
       dispatchRow(dispatch, details.listAttention?.[dispatch.id] ?? [], now),
     );
-    const targetWidth = Math.max(...rows.map((row) => row.target.length));
-    const taskWidth = Math.max(...rows.map((row) => row.task.length));
-    const stateWidth = Math.max(...rows.map((row) => row.state.length));
-    const modeWidth = Math.max(...rows.map((row) => row.mode.length));
+    const targetWidth = Math.max(...rows.map((row) => displayWidth(row.target)));
+    const taskWidth = Math.max(...rows.map((row) => displayWidth(row.task)));
+    const stateWidth = Math.max(...rows.map((row) => displayWidth(row.state)));
+    const modeWidth = Math.max(...rows.map((row) => displayWidth(row.mode)));
     const lines = rows.map((row) =>
       [
-        ` ${mark(theme, row.mark)} ${theme.bold(row.target.padEnd(targetWidth))}`,
-        paint("text", row.task.padEnd(taskWidth)),
-        paint(row.mark.color, row.state.padEnd(stateWidth)),
-        paint("muted", row.mode.padEnd(modeWidth)),
-        paint(row.deadline.includes("overdue") ? "warning" : "dim", row.deadline),
+        ` ${mark(theme, row.mark)} ${theme.bold(padToDisplayWidth(row.target, targetWidth))}`,
+        paint("text", padToDisplayWidth(row.task, taskWidth)),
+        paint(row.mark.color, padToDisplayWidth(row.state, stateWidth)),
+        paint("muted", padToDisplayWidth(row.mode, modeWidth)),
+        paint(row.overdue ? "warning" : "dim", row.deadline),
         row.attention.length > 0
           ? paint("warning", `${ATTENTION_GLYPH} ${row.attention.join(", ")}`)
           : "",
@@ -144,19 +148,19 @@ export function renderStatusResult(
     `${mark(theme, state)} ${theme.bold(sanitizeLine(dispatch.targetAgentLabel, 24))}`,
     paint("text", task),
     paint(state.color, state.label),
-    paint("muted", dispatch.mode),
+    paint("muted", UI_COPY.state.mode(dispatch.mode)),
   ].join("  ");
   const deadline = relativeDeadline(dispatch.deadlineAt, now);
   const lines = [
     header,
-    `   ${paint(deadline.includes("overdue") ? "warning" : "dim", UI_COPY.common.deadline(deadline))}  ${paint(
+    `   ${paint(now > dispatch.deadlineAt ? "warning" : "dim", UI_COPY.common.deadline(deadline))}  ${paint(
       "muted",
       shortenPath(dispatch.targetCwd, 44),
     )}`,
   ];
   for (const record of details.attention ?? []) {
     lines.push(
-      `   ${paint("warning", `${ATTENTION_GLYPH} ${record.condition}`)}  ${paint(
+      `   ${paint("warning", `${ATTENTION_GLYPH} ${UI_COPY.state.attention(record.condition)}`)}  ${paint(
         "dim",
         relativeAge(record.addedAt, now),
       )}`,

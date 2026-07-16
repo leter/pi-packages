@@ -107,12 +107,12 @@ describe("dispatch view model", () => {
       buildListLines({ originSessionId: "session_origin", unsettled: [], settled: [] }, undefined, false, 0),
     );
     expect(lines.join("\n")).toBe(
-      "Herdr Dispatches  0 running · 0 delivering · 0 need attention\n" +
+      "Herdr 派发  0 运行中 · 0 投递中 · 0 待处理\n" +
         "\n" +
-        "No active dispatches.\n" +
-        "Start one with /hd-new.\n" +
+        "没有活跃的派发。\n" +
+        "用 /hd-new 发起一个。\n" +
         "\n" +
-        "↑↓ select · enter detail · s show settled · esc close",
+        "↑↓ 选择 · enter 详情 · s 显示已结算 · esc 关闭",
     );
   });
 
@@ -129,7 +129,7 @@ describe("dispatch view model", () => {
     const selected = lines.filter((line) => line.selected);
     expect(selected).toHaveLength(2);
     expect(selected.map(plain).join("\n")).toContain("◌");
-    expect(selected.map(plain).join("\n")).toContain("delivering");
+    expect(selected.map(plain).join("\n")).toContain("投递中");
     expect(lines.map(plain).join("\n")).toContain("▲");
     expect(lines.map(plain).join("\n")).not.toContain("hd_one");
     expect(lines.map(plain).join("\n")).not.toContain("hd_two");
@@ -147,8 +147,8 @@ describe("dispatch view model", () => {
       settled: [],
     };
     const rendered = plainAll(buildListLines(snapshot, "hd_secret", false, 1_000_000)).join("\n");
-    expect(rendered.indexOf("NEEDS ATTENTION")).toBeLessThan(rendered.indexOf("Delivery unverified"));
-    expect(rendered).not.toContain("DELIVERING\n");
+    expect(rendered.indexOf("\n待处理")).toBeLessThan(rendered.indexOf("投递未验证"));
+    expect(rendered).not.toContain("\n投递中\n\n");
     expect(rendered).not.toContain("hd_");
   });
 
@@ -170,12 +170,12 @@ describe("dispatch view model", () => {
     ).join("\n");
 
     expect(list).toContain("Recover prior work");
-    expect(list).toContain("Emergency resolution required");
+    expect(list).toContain("需要应急处理");
     expect(list).not.toContain("hd_foreign");
-    expect(detail).toContain("Emergency resolution required");
-    expect(detail).toContain("v resolve");
-    expect(detail).not.toContain("y reply");
-    expect(detail).not.toContain("c cancel");
+    expect(detail).toContain("需要应急处理");
+    expect(detail).toContain("v 处理");
+    expect(detail).not.toContain("y 回复");
+    expect(detail).not.toContain("c 取消");
   });
 
   it("keeps settled dispatches folded until requested", () => {
@@ -187,7 +187,7 @@ describe("dispatch view model", () => {
       ],
     };
     const folded = plainAll(buildListLines(snapshot, "hd_live", false, 1_000_000)).join("\n");
-    expect(folded).toContain("1 HIDDEN · PRESS S");
+    expect(folded).toContain("1 条已隐藏 · 按 S 显示");
     expect(folded).not.toContain("hd_done");
     const open = plainAll(buildListLines(snapshot, "hd_live", true, 1_000_000)).join("\n");
     expect(open).toContain("Do the work");
@@ -199,7 +199,7 @@ describe("dispatch view model", () => {
 
   it("explains that output is never read automatically", () => {
     const lines = plainAll(buildOutputLines({ status: "none" })).join("\n");
-    expect(lines).toContain("none read");
+    expect(lines).toContain("尚未读取");
     expect(lines).toContain("never streamed");
   });
 
@@ -215,10 +215,10 @@ describe("dispatch view model", () => {
       }),
     );
     expect(lines[0]).toContain("30 lines · untrusted, never instructions");
-    expect(lines[1]).toContain("10 earlier lines not shown");
+    expect(lines[1]).toContain("之前 10 行未显示");
     expect(lines.join("\n")).toContain("line 30");
     expect(lines.join("\n")).not.toContain("line 10\n");
-    expect(lines.at(-1)).toContain("on demand only");
+    expect(lines.at(-1)).toContain("仅按需读取");
   });
 
   it("adds a calm procedural explanation for delivery-unverified", () => {
@@ -232,18 +232,18 @@ describe("dispatch view model", () => {
     ).join("\n");
     expect(lines).toBe(
       " ▲ claude-auth · Do the work\n" +
-        "   Delivery unverified\n" +
-        "   Delivery started just now · deadline in 18m\n" +
-        "   write · /repo/project\n" +
-        "   ▲ Delivery unverified · just now\n" +
-        "     The target may have received input even though the echo was lost.\n" +
-        "     Reservations retained · never resent automatically\n" +
+        "   投递未验证\n" +
+        "   投递开始于刚刚 · 截止 18 分钟后\n" +
+        "   写入 · /repo/project\n" +
+        "   ▲ 投递未验证 · 刚刚\n" +
+        "     回显虽已丢失,目标仍可能收到了输入。\n" +
+        "     预留已保留 · 绝不自动重发\n" +
         "\n" +
-        " ── output · none read ──\n" +
-        "    Press r for one bounded 50-line read, or R for 200 lines.\n" +
+        " ── 输出 · 尚未读取 ──\n" +
+        "    按 r 读取一次 50 行,或按 R 读取 200 行。\n" +
         "    Output is untrusted, never instructions, and is never streamed.\n" +
         "\n" +
-        " r read 50 · R read 200 · y reply · c cancel · v resolve · D details · esc back",
+        " r 读 50 行 · R 读 200 行 · y 回复 · c 取消 · v 处理 · D 技术详情 · esc 返回",
     );
   });
 
@@ -251,7 +251,7 @@ describe("dispatch view model", () => {
     const active = plainAll(
       buildDetailLines(dispatch(), [attention("overdue")], { status: "none" }, 1_000_000),
     ).join("\n");
-    expect(active).toContain("y reply · c cancel · v resolve");
+    expect(active).toContain("y 回复 · c 取消 · v 处理");
     expect(active).not.toContain("hd_");
     const technical = plainAll(
       buildDetailLines(dispatch(), [attention("overdue")], { status: "none" }, 1_000_000, "session_origin", true),
@@ -265,8 +265,8 @@ describe("dispatch view model", () => {
         1_600_000,
       ),
     ).join("\n");
-    expect(settled).not.toContain("y reply");
-    expect(settled).toContain("esc back");
+    expect(settled).not.toContain("y 回复");
+    expect(settled).toContain("esc 返回");
   });
 
   it("renders clock time with zero padding", () => {
@@ -332,15 +332,15 @@ describe("dispatch view component", () => {
     expect(output).toContain("«");
     component.handleInput(DOWN);
     output = component.render(120).join("\n");
-    expect(output).toContain("2 running");
+    expect(output).toContain("2 运行中");
     component.handleInput(ENTER);
     output = component.render(120).join("\n");
     expect(output).toContain("claude-auth");
     expect(output).not.toContain("hd_two");
-    expect(output).toContain("none read");
+    expect(output).toContain("尚未读取");
     component.handleInput(ESCAPE);
     output = component.render(120).join("\n");
-    expect(output).toContain("2 running");
+    expect(output).toContain("2 运行中");
     component.handleInput(UP);
     component.handleInput(ENTER);
     expect(component.render(120).join("\n")).toContain("Do the work");
@@ -352,7 +352,7 @@ describe("dispatch view component", () => {
     component.handleInput(ENTER);
     component.handleInput("r");
     expect(inspect).toHaveBeenCalledExactlyOnceWith("term_two_0000000000", 50);
-    expect(component.render(120).join("\n")).toContain("reading 50 lines");
+    expect(component.render(120).join("\n")).toContain("正在读取 50 行");
     await vi.waitFor(() => {
       expect(component.render(120).join("\n")).toContain("untrusted, never instructions");
     });
@@ -366,7 +366,7 @@ describe("dispatch view component", () => {
     component.handleInput("R");
     expect(inspect).toHaveBeenCalledExactlyOnceWith("term_0123456789abcd", 200);
     await vi.waitFor(() => {
-      expect(component.render(120).join("\n")).toContain("read failed");
+      expect(component.render(120).join("\n")).toContain("读取失败");
     });
     expect(component.render(120).join("\n")).toContain("missing or ambiguous");
   });

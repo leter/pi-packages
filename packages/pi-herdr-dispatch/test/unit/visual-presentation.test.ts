@@ -9,7 +9,9 @@ import {
   renderStatusResult,
 } from "../../src/pi/renderers.js";
 import {
+  agentRow,
   alignColumns,
+  dispatchRow,
   formatAgentTable,
   formatDispatchTable,
   formatInspectionText,
@@ -54,9 +56,9 @@ const dispatch: StoredDispatch = {
 
 describe("visual vocabulary", () => {
   it("formats relative deadlines in both directions", () => {
-    expect(relativeDeadline(1_000_000 + 22 * 60_000, 1_000_000)).toBe("in 22m");
-    expect(relativeDeadline(1_000_000, 1_000_000 + 8 * 60_000)).toBe("8m overdue");
-    expect(relativeDeadline(1_000_000 + 125 * 60_000, 1_000_000)).toBe("in 2h 05m");
+    expect(relativeDeadline(1_000_000 + 22 * 60_000, 1_000_000)).toBe("22 分钟后");
+    expect(relativeDeadline(1_000_000, 1_000_000 + 8 * 60_000)).toBe("超期 8 分钟");
+    expect(relativeDeadline(1_000_000 + 125 * 60_000, 1_000_000)).toBe("2 小时 05 分后");
   });
 
   it("shortens ids and home-relative paths", () => {
@@ -74,10 +76,85 @@ describe("visual vocabulary", () => {
     expect(lines[1]).toBe("dddd  e   f");
   });
 
+  it("aligns eligible Agent columns by CJK display width", () => {
+    const table = formatAgentTable([
+      {
+        terminalId: "term_chinese",
+        paneId: "w1:p2",
+        workspaceId: "w1",
+        agentLabel: "codex",
+        displayName: "调度助手",
+        cwd: "/repo",
+        status: "idle",
+        statusProvenance: "screen-detected",
+      },
+      {
+        terminalId: "term_ascii",
+        paneId: "w1:p3",
+        workspaceId: "w1",
+        agentLabel: "claude",
+        cwd: "/repo",
+        status: "idle",
+        statusProvenance: "screen-detected",
+      },
+    ]);
+
+    expect(table).toBe(
+      "2 个可用 Agent\n" +
+        "  ○ 调度助手  空闲 ~屏测  /repo  term_chinese\n" +
+        "  ○ claude    空闲 ~屏测  /repo  term_ascii",
+    );
+  });
+
+  it("truncates Agent display names by terminal columns", () => {
+    expect(agentRow({
+      terminalId: "term_chinese",
+      paneId: "w1:p2",
+      workspaceId: "w1",
+      agentLabel: "codex",
+      displayName: "调".repeat(13),
+      cwd: "/repo",
+      status: "idle",
+      statusProvenance: "screen-detected",
+    }).label).toBe("调".repeat(12));
+  });
+
+  it("truncates CJK dispatch-row cells by terminal columns", () => {
+    const row = dispatchRow(
+      {
+        ...dispatch,
+        targetAgentLabel: "调".repeat(11),
+        task: "检".repeat(25),
+      },
+      [],
+      1_000_000,
+    );
+
+    expect(row.target).toBe("调".repeat(10));
+    expect(row.task).toBe("检".repeat(24));
+  });
+
+  it("aligns dispatch rows containing CJK target names and tasks", () => {
+    const table = formatDispatchTable(
+      [
+        { ...dispatch, id: "hd_chinese", targetAgentLabel: "调度助手", task: "检查登录状态" },
+        { ...dispatch, id: "hd_ascii" },
+      ],
+      () => [],
+      1_000_000,
+    );
+
+    expect(table).toBe(
+      "2 条未结算派发\n" +
+        "  ● 调度助手  检查登录状态  运行中  写入  22 分钟后\n" +
+        "  ● claude    Do work       运行中  写入  22 分钟后",
+    );
+  });
+
   it("renders human agent and dispatch tables with teaching empty states", () => {
     expect(formatAgentTable([])).toBe(
-      "No eligible Agents right now — the others are working, blocked, or occupied.\n" +
-        "Agents become eligible when their status is idle or done.",
+      "当前没有可用 Agent——其余的正在工作、受阻或已被占用。\n" +
+        "Agent 的状态为空闲或完成时即成为可用 Agent。",
     );
     expect(formatAgentTable([
       {
@@ -89,10 +166,10 @@ describe("visual vocabulary", () => {
         status: "idle",
         statusProvenance: "screen-detected",
       },
-    ])).toBe("1 eligible Agent\n  ○ claude  idle ~screen  /repo  term_6569…9324");
+    ])).toBe("1 个可用 Agent\n  ○ claude  空闲 ~屏测  /repo  term_6569…9324");
     expect(formatDispatchTable([], () => [], 0)).toBe(
-      "No unsettled dispatches.\n" +
-        "Start one with /hd-new, or just ask for work to be dispatched.",
+      "没有未结算的派发。\n" +
+        "用 /hd-new 发起一个,或直接让模型派发工作。",
     );
     const table = formatDispatchTable(
       [dispatch],
@@ -100,7 +177,7 @@ describe("visual vocabulary", () => {
       1_000_000,
     );
     expect(table).toBe(
-      "1 unsettled dispatch\n  ● claude  Do work  active  write  in 22m  ▲ overdue",
+      "1 条未结算派发\n  ● claude  Do work  运行中  写入  22 分钟后  ▲ 已超期",
     );
   });
 
@@ -144,7 +221,39 @@ describe("themed renderers", () => {
     const rendered = text!.render(120).join("\n");
     expect(rendered).toContain("<success>○</success>");
     expect(rendered).toContain("<b>claude");
-    expect(rendered).toContain("<dim>~screen</dim>");
+    expect(rendered).toContain("<dim>~屏测</dim>");
+  });
+
+  it("pads themed eligible Agent labels by CJK display width", () => {
+    const rendered = renderAgentsResult(
+      {
+        targets: [
+          {
+            terminalId: "term_chinese",
+            paneId: "w1:p2",
+            workspaceId: "w1",
+            agentLabel: "codex",
+            displayName: "调度助手",
+            cwd: "/repo",
+            status: "idle",
+            statusProvenance: "screen-detected",
+          },
+          {
+            terminalId: "term_ascii",
+            paneId: "w1:p3",
+            workspaceId: "w1",
+            agentLabel: "claude",
+            cwd: "/repo",
+            status: "idle",
+            statusProvenance: "screen-detected",
+          },
+        ],
+      },
+      fakeTheme,
+    )!.render(120).join("\n");
+
+    expect(rendered).toContain("<b>调度助手</b>");
+    expect(rendered).toContain("<b>claude  </b>");
   });
 
   it("renders dispatch status with attention and overdue emphasis", () => {
@@ -159,8 +268,8 @@ describe("themed renderers", () => {
     );
     const rendered = text!.render(120).join("\n");
     expect(rendered).toContain("<accent>●</accent>");
-    expect(rendered).toContain("<warning>▲ blocked-runtime</warning>");
-    expect(rendered).toContain("deadline in 22m");
+    expect(rendered).toContain("<warning>▲ 运行时受阻</warning>");
+    expect(rendered).toContain("截止 22 分钟后");
     expect(rendered).not.toContain("hd_view");
     expect(rendered).not.toContain("term_6569");
     const expanded = renderStatusResult(
@@ -168,8 +277,8 @@ describe("themed renderers", () => {
       fakeTheme,
       true,
     )!.render(120).join("\n");
-    expect(expanded).toContain("dispatch hd_view");
-    expect(expanded).toContain("terminal term_6569");
+    expect(expanded).toContain("派发 hd_view");
+    expect(expanded).toContain("终端 term_6569");
   });
 
   it("renders settled result cards by outcome", () => {
@@ -186,14 +295,14 @@ describe("themed renderers", () => {
     const collapsed = renderDispatchResultMessage(message, false, fakeTheme).render(120).join("\n");
     expect(collapsed).toContain("<error>✗</error>");
     expect(collapsed).toContain("Broke");
-    expect(collapsed).toContain("claude failed");
+    expect(collapsed).toContain("claude 失败");
     expect(collapsed).toContain("Fix login state");
     expect(collapsed).not.toContain("hd_1");
-    expect(collapsed).toContain("expand for details");
+    expect(collapsed).toContain("展开查看详情");
     const expanded = renderDispatchResultMessage(message, true, fakeTheme).render(120).join("\n");
     expect(expanded).toContain("a.ts");
     expect(expanded).toContain("untrusted data");
-    expect(expanded).toContain("dispatch hd_1");
+    expect(expanded).toContain("派发 hd_1");
   });
 
   it("renders confirmation outcomes and the widget", () => {
@@ -205,14 +314,14 @@ describe("themed renderers", () => {
     const widget = renderDispatchWidget(
       { delivering: 1, active: 2, attention: 1 },
       fakeTheme,
-    ).render(120).join("\n");
-    expect(widget).toContain("<warning>◌ 1 delivering</warning>");
-    expect(widget).toContain("<accent>● 2 running</accent>");
-    expect(widget).toContain("<warning>▲ 1 attention</warning>");
+    ).render(200).join("\n");
+    expect(widget).toContain("<warning>◌ 1 投递中</warning>");
+    expect(widget).toContain("<accent>● 2 运行中</accent>");
+    expect(widget).toContain("<warning>▲ 1 待处理</warning>");
     const quiet = renderDispatchWidget({ delivering: 0, active: 0, attention: 0 }, fakeTheme)
-      .render(120)
+      .render(200)
       .join("\n");
-    expect(quiet).toContain("<dim>● 0 running</dim>");
-    expect(quiet).toContain("<dim>no attention</dim>");
+    expect(quiet).toContain("<dim>● 0 运行中</dim>");
+    expect(quiet).toContain("<dim>无待处理</dim>");
   });
 });

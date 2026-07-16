@@ -78,7 +78,7 @@ describe("dispatch command selection", () => {
     expect(actionCandidates("cancel", [candidate], "session_origin", attentionFor)).toEqual([]);
     expect(actionCandidates("resolve", [candidate], "session_origin", attentionFor)).toEqual([candidate]);
     expect(actionIneligibility("cancel", candidate, "session_origin", [targetLost])).toContain(
-      "only be resolved manually",
+      "只能手动处理",
     );
   });
 
@@ -90,8 +90,8 @@ describe("dispatch command selection", () => {
         "session_origin",
         [],
       ),
-    ).toContain("already settled done");
-    expect(actionIneligibility("reply", dispatch(), "session_origin", [])).toContain("Attention Condition");
+    ).toContain("该派发已结算:完成");
+    expect(actionIneligibility("reply", dispatch(), "session_origin", [])).toContain("待处理状况");
   });
 
   it("completes canonical IDs with human-readable labels", () => {

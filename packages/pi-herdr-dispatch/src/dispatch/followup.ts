@@ -22,7 +22,7 @@ export interface FollowupProposal {
 }
 
 export const FOLLOWUP_FOCUS_WARNING =
-  "Focused-input warning: this text is sent to whatever prompt or dialog currently owns the target pane. It may be consumed as dialog keystrokes; there is no compare-and-send primitive.";
+  "聚焦输入警告:这段文字会被发送到当前拥有目标 pane 焦点的任何提示符或对话框,可能被当作对话框按键消费;不存在比较后再发送的原语。";
 
 export class DispatchFollowupService {
   readonly #registry: DispatchRegistry;

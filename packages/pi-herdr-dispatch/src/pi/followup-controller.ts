@@ -53,12 +53,13 @@ export class FollowupController {
       );
       if (!attested) return UI_COPY.followup.emergencyCancelledBeforeAttestation();
     }
-    const outcome = await context.ui.select(UI_COPY.followup.manualFinalOutcome(), [
-      UI_COPY.state.outcome("blocked"),
-      UI_COPY.state.outcome("failed"),
-      UI_COPY.state.outcome("cancelled"),
-    ]);
-    if (outcome !== "blocked" && outcome !== "failed" && outcome !== "cancelled") {
+    const outcomes = ["blocked", "failed", "cancelled"] as const;
+    const choice = await context.ui.select(
+      UI_COPY.followup.manualFinalOutcome(),
+      outcomes.map((value) => UI_COPY.state.outcome(value)),
+    );
+    const outcome = outcomes.find((value) => UI_COPY.state.outcome(value) === choice);
+    if (outcome === undefined) {
       return UI_COPY.followup.resolutionCancelled();
     }
     const summary = await context.ui.editor(UI_COPY.followup.resolutionSummaryEditor());

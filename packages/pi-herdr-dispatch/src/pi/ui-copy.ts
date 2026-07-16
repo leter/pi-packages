@@ -194,291 +194,316 @@ export interface HumanUiCopy {
 }
 
 const attentionLabels: Readonly<Record<AttentionCondition, string>> = Object.freeze({
-  "target-lost": "Target lost",
-  "delivery-unverified": "Delivery unverified",
-  "malformed-result": "Malformed result",
-  "result-missing": "Result missing",
-  "blocked-runtime": "Runtime blocked",
-  "monitoring-paused": "Monitoring paused",
-  overdue: "Overdue",
-  unacknowledged: "Unacknowledged",
+  "target-lost": "目标丢失",
+  "delivery-unverified": "投递未验证",
+  "malformed-result": "结果格式错误",
+  "result-missing": "结果缺失",
+  "blocked-runtime": "运行时受阻",
+  "monitoring-paused": "监控已暂停",
+  overdue: "已超期",
+  unacknowledged: "未应答",
+});
+
+const outcomeLabels: Readonly<Record<string, string>> = Object.freeze({
+  done: "完成",
+  blocked: "受阻",
+  failed: "失败",
+  cancelled: "已取消",
+});
+
+const lifecycleLabels: Readonly<Record<string, string>> = Object.freeze({
+  proposed: "已提议",
+  delivering: "投递中",
+  active: "运行中",
+  settled: "已结算",
+});
+
+const agentStatusLabels: Readonly<Record<string, string>> = Object.freeze({
+  idle: "空闲",
+  done: "完成",
+  working: "工作中",
+  blocked: "受阻",
+  unknown: "未知",
+});
+
+const modeLabels: Readonly<Record<string, string>> = Object.freeze({
+  write: "写入",
+  "non-mutating": "非变更",
 });
 
 const commandDescriptions: Readonly<Record<HumanCommand, string>> = Object.freeze({
-  agents: "List Eligible Agents in the current Herdr workspace",
-  new: "Create and immediately send a Herdr dispatch",
-  manager: "Open the Herdr Dispatch Manager",
-  reply: "Preview and confirm a reply to an Active Dispatch with attention",
-  cancel: "Preview and confirm a normal cancellation request",
-  resolve: "Manually or emergently resolve a dispatch with confirmation",
-  setup: "Explicitly install one Herdr Agent status integration",
-  output: "Read one bounded current-workspace Agent output tail",
+  agents: "列出当前 Herdr 工作区的可用 Agent",
+  new: "创建并立即发送一个 Herdr 派发",
+  manager: "打开 Herdr 派发管理器",
+  reply: "预览并确认对一个有待处理状况的运行中派发的回复",
+  cancel: "预览并确认一次常规取消请求",
+  resolve: "经确认后手动或应急处理一个派发",
+  setup: "显式安装一个 Herdr Agent 状态集成",
+  output: "读取一次有界的当前工作区 Agent 输出尾部",
 });
 
 function duration(minutes: number): string {
   return minutes < 60
-    ? `${minutes}m`
-    : `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
+    ? `${minutes} 分钟`
+    : `${Math.floor(minutes / 60)} 小时 ${String(minutes % 60).padStart(2, "0")} 分`;
+}
+
+function followupKind(kind: "reply" | "cancel"): string {
+  return kind === "reply" ? "回复" : "取消请求";
 }
 
 export const UI_COPY = Object.freeze({
   state: {
-    outcome: (outcome) => String(outcome),
-    lifecycle: (lifecycle) => String(lifecycle),
-    agentStatus: (status) => status,
+    outcome: (outcome) => outcomeLabels[String(outcome)] ?? String(outcome),
+    lifecycle: (lifecycle) => lifecycleLabels[String(lifecycle)] ?? String(lifecycle),
+    agentStatus: (status) => agentStatusLabels[status] ?? status,
     attention: (condition) => attentionLabels[condition],
-    mode: (mode) => mode,
-    provenance: (reported) => (reported ? "reported" : "~screen"),
+    mode: (mode) => modeLabels[mode] ?? mode,
+    provenance: (reported) => (reported ? "已上报" : "~屏测"),
   },
   time: {
     relativeDeadline: (deadlineAt, now) => {
       const delta = deadlineAt - now;
       const magnitude = Math.abs(delta);
-      if (magnitude < 60_000) return delta >= 0 ? "in <1m" : "just overdue";
+      if (magnitude < 60_000) return delta >= 0 ? "不足 1 分钟" : "刚刚超期";
       const text = duration(Math.round(magnitude / 60_000));
-      return delta >= 0 ? `in ${text}` : `${text} overdue`;
+      return delta >= 0 ? `${text}后` : `超期 ${text}`;
     },
     relativeAge: (timestamp, now) => {
       const magnitude = Math.max(0, now - timestamp);
-      if (magnitude < 60_000) return "just now";
-      return `${duration(Math.round(magnitude / 60_000))} ago`;
+      if (magnitude < 60_000) return "刚刚";
+      return `${duration(Math.round(magnitude / 60_000))}前`;
     },
   },
   count: {
-    eligibleAgents: (count) => `${count} eligible ${count === 1 ? "Agent" : "Agents"}`,
-    unsettledDispatches: (count) =>
-      `${count} unsettled ${count === 1 ? "dispatch" : "dispatches"}`,
-    lines: (count) => `${count} lines`,
-    earlierLines: (count) => `${count} earlier lines`,
-    moreConditions: (count) => `${count} more conditions`,
-    files: (count) => `${count} files`,
-    tests: (count) => `${count} tests`,
-    delivering: (count) => `${count} delivering`,
-    running: (count) => `${count} running`,
-    attention: (count) => `${count} attention`,
+    eligibleAgents: (count) => `${count} 个可用 Agent`,
+    unsettledDispatches: (count) => `${count} 条未结算派发`,
+    lines: (count) => `${count} 行`,
+    earlierLines: (count) => `之前还有 ${count} 行`,
+    moreConditions: (count) => `另有 ${count} 项状况`,
+    files: (count) => `${count} 个文件`,
+    tests: (count) => `${count} 个测试`,
+    delivering: (count) => `${count} 投递中`,
+    running: (count) => `${count} 运行中`,
+    attention: (count) => `${count} 待处理`,
   },
   common: {
-    untitledDispatch: () => "Untitled dispatch",
-    dispatchFallback: () => "Dispatch",
-    deadline: (value) => `deadline ${value}`,
+    untitledDispatch: () => "未命名派发",
+    dispatchFallback: () => "派发",
+    deadline: (value) => `截止 ${value}`,
     worktree: (value) => `worktree ${value}`,
-    dispatch: (value) => `dispatch ${value}`,
-    terminal: (value) => `terminal ${value}`,
+    dispatch: (value) => `派发 ${value}`,
+    terminal: (value) => `终端 ${value}`,
   },
   command: {
     description: (command) => commandDescriptions[command],
-    dispatchTuiOnly: () => "Dispatch delivery is available only in TUI mode",
-    proposalTuiOnly: () => "Herdr dispatch delivery is available only in TUI mode",
-    managerTuiOnly: () => "The Dispatch Manager is available only in TUI mode",
-    setupTuiOnly: () => "Integration setup is available only in TUI mode",
-    followupTuiOnly: () => "Dispatch follow-up actions are available only in TUI mode",
-    noEligibleAgents: () => "No Eligible Agents are available",
-    chooseEligibleAgent: () => "Choose an Eligible Agent",
-    selectedAgentUnavailable: () => "Selected Agent is no longer available",
-    completeTask: () => "Complete dispatch task",
-    mutationMode: () => "Dispatch mutation mode",
-    deadlineMinutes: () => "Deadline in minutes",
-    dependencyInstallTitle: () => "Project dependency installation",
-    dependencyInstallQuestion: () => "Explicitly allow project-local dependency installation?",
-    selectedDispatchUnavailable: () =>
-      "The selected dispatch is no longer available in this workspace",
-    runtimeUnavailable: () => "Dispatch runtime unavailable",
-    followupRuntimeUnavailable: () => "Dispatch follow-up runtime is unavailable",
-    invalidDispatchSelector: () => "Invalid dispatch ID or prefix",
+    dispatchTuiOnly: () => "派发投递仅在 TUI 模式下可用",
+    proposalTuiOnly: () => "Herdr 派发投递仅在 TUI 模式下可用",
+    managerTuiOnly: () => "派发管理器仅在 TUI 模式下可用",
+    setupTuiOnly: () => "集成安装仅在 TUI 模式下可用",
+    followupTuiOnly: () => "派发后续操作仅在 TUI 模式下可用",
+    noEligibleAgents: () => "当前没有可用 Agent",
+    chooseEligibleAgent: () => "选择一个可用 Agent",
+    selectedAgentUnavailable: () => "所选 Agent 已不可用",
+    completeTask: () => "填写派发任务",
+    mutationMode: () => "派发变更模式",
+    deadlineMinutes: () => "截止时间(分钟)",
+    dependencyInstallTitle: () => "项目依赖安装",
+    dependencyInstallQuestion: () => "是否显式允许在项目内安装依赖?",
+    selectedDispatchUnavailable: () => "所选派发已不在当前工作区",
+    runtimeUnavailable: () => "派发运行时不可用",
+    followupRuntimeUnavailable: () => "派发后续操作运行时不可用",
+    invalidDispatchSelector: () => "无效的派发 ID 或前缀",
     dispatchNotFound: (selector) =>
-      `No current-workspace dispatch matches ${selector}. Open /hd-manager.`,
-    chooseMatchingDispatch: () => "Choose the matching dispatch",
+      `当前工作区没有匹配 ${selector} 的派发。请打开 /hd-manager。`,
+    chooseMatchingDispatch: () => "选择匹配的派发",
     noDispatchForAction: (action) => {
       switch (action) {
         case "reply":
-          return "No dispatch currently needs a reply.";
+          return "当前没有需要回复的派发。";
         case "cancel":
-          return "No unsettled dispatch from this session can be cancelled.";
+          return "本会话没有可取消的未结算派发。";
         case "resolve":
-          return "No dispatch currently requires manual resolution.";
+          return "当前没有需要手动处理的派发。";
       }
     },
-    alreadySettled: (outcome) => `This dispatch already settled ${outcome ?? "with a final outcome"}.`,
-    originOnlyFollowup: () => "Only the exact Origin Session may reply or request cancellation.",
-    lostOrMovedResolutionOnly: () => "A lost or moved target can only be resolved manually.",
-    replyRequiresActive: () => "Replies require an Active Dispatch.",
-    replyRequiresAttention: () =>
-      "Replies require an Active Dispatch with an Attention Condition.",
-    setupNoStatusOutput: () => "No integration status output.",
-    setupChooseIntegration: () => "Install one Herdr integration",
-    setupCancel: () => "Cancel",
-    setupConfirmTitle: (integration) => `Install Herdr ${integration} integration?`,
+    alreadySettled: (outcome) =>
+      `该派发已结算${outcome ? `:${outcomeLabels[outcome] ?? outcome}` : ""}。`,
+    originOnlyFollowup: () => "只有确切的源会话才能回复或请求取消。",
+    lostOrMovedResolutionOnly: () => "目标丢失的派发只能手动处理。",
+    replyRequiresActive: () => "回复要求派发处于运行中。",
+    replyRequiresAttention: () => "回复要求运行中的派发存在待处理状况。",
+    setupNoStatusOutput: () => "没有集成状态输出。",
+    setupChooseIntegration: () => "安装一个 Herdr 集成",
+    setupCancel: () => "取消",
+    setupConfirmTitle: (integration) => `安装 Herdr ${integration} 集成?`,
     setupConfirmBody: () =>
-      "This explicitly modifies that Agent's local integration configuration. Nothing is installed automatically and only this one selected integration will be changed.",
-    setupInstallFailed: (code) => `Herdr integration install exited ${code}`,
-    setupInstalled: (integration) => `Installed Herdr ${integration} integration.`,
-    outputUsage: () => "Usage: /hd-output <target> [lines]",
+      "此操作会显式修改该 Agent 的本地集成配置。不会自动安装任何东西,只会更改这一个所选集成。",
+    setupInstallFailed: (code) => `Herdr 集成安装退出码 ${code}`,
+    setupInstalled: (integration) => `已安装 Herdr ${integration} 集成。`,
+    outputUsage: () => "用法:/hd-output <目标> [行数]",
   },
   manager: {
-    title: () => "Herdr Dispatches",
+    title: () => "Herdr 派发",
     heading: (running, delivering, attention) =>
-      `  ${running} running · ${delivering} delivering · ${attention} need attention`,
-    noActiveDispatches: () => "No active dispatches.",
-    startWithCommand: () => "Start one with /hd-new.",
-    groupAttention: () => "NEEDS ATTENTION",
-    groupRunning: () => "RUNNING",
-    groupDelivering: () => "DELIVERING",
+      `  ${running} 运行中 · ${delivering} 投递中 · ${attention} 待处理`,
+    noActiveDispatches: () => "没有活跃的派发。",
+    startWithCommand: () => "用 /hd-new 发起一个。",
+    groupAttention: () => "待处理",
+    groupRunning: () => "运行中",
+    groupDelivering: () => "投递中",
     settledHeading: (count, shown) =>
-      shown ? `SETTLED · LAST ${count}` : `SETTLED · ${count} HIDDEN · PRESS S`,
+      shown ? `已结算 · 最近 ${count} 条` : `已结算 · ${count} 条已隐藏 · 按 S 显示`,
     listKeybar: (settledShown) =>
-      `↑↓ select · enter detail · s ${settledShown ? "hide" : "show"} settled · esc close`,
-    emergencyResolutionRequired: () => "Emergency resolution required",
-    activeSince: (age) => `Active since ${age}`,
-    deliveryStarted: (age) => `Delivery started ${age}`,
-    targetMayHaveReceivedInput: () =>
-      "The target may have received input even though the echo was lost.",
-    reservationsRetained: () => "Reservations retained · never resent automatically",
-    outputNoneRead: () => " ── output · none read ──",
-    outputReadInstructions: () =>
-      "    Press r for one bounded 50-line read, or R for 200 lines.",
-    outputReading: (lines) => ` ── output · reading ${lines} lines… ──`,
-    outputReadFailed: () => " ── output · read failed ──",
-    outputEarlierLinesNotShown: (count) => ` … ${count} earlier lines not shown`,
-    outputReadEnd: (time) => ` ── end · read at ${time} · on demand only ──`,
+      `↑↓ 选择 · enter 详情 · s ${settledShown ? "隐藏" : "显示"}已结算 · esc 关闭`,
+    emergencyResolutionRequired: () => "需要应急处理",
+    activeSince: (age) => `运行开始于${age}`,
+    deliveryStarted: (age) => `投递开始于${age}`,
+    targetMayHaveReceivedInput: () => "回显虽已丢失,目标仍可能收到了输入。",
+    reservationsRetained: () => "预留已保留 · 绝不自动重发",
+    outputNoneRead: () => " ── 输出 · 尚未读取 ──",
+    outputReadInstructions: () => "    按 r 读取一次 50 行,或按 R 读取 200 行。",
+    outputReading: (lines) => ` ── 输出 · 正在读取 ${lines} 行… ──`,
+    outputReadFailed: () => " ── 输出 · 读取失败 ──",
+    outputEarlierLinesNotShown: (count) => ` … 之前 ${count} 行未显示`,
+    outputReadEnd: (time) => ` ── 结束 · 读取于 ${time} · 仅按需读取 ──`,
     detailKeybar: (actions) => {
       const labels = [
-        actions.includes("reply") ? "y reply" : "",
-        actions.includes("cancel") ? "c cancel" : "",
-        actions.includes("resolve") ? "v resolve" : "",
+        actions.includes("reply") ? "y 回复" : "",
+        actions.includes("cancel") ? "c 取消" : "",
+        actions.includes("resolve") ? "v 处理" : "",
       ].filter(Boolean);
-      return ` r read 50 · R read 200${labels.length > 0 ? ` · ${labels.join(" · ")}` : ""} · D details · esc back`;
+      return ` r 读 50 行 · R 读 200 行${labels.length > 0 ? ` · ${labels.join(" · ")}` : ""} · D 技术详情 · esc 返回`;
     },
-    technicalHeading: () => " TECHNICAL DETAILS",
+    technicalHeading: () => " 技术详情",
     technicalLabel: (label) => ({
-      dispatch: "Dispatch ID",
-      terminal: "Terminal",
-      origin: "Origin",
-      workspace: "Workspace",
+      dispatch: "派发 ID",
+      terminal: "终端",
+      origin: "源会话",
+      workspace: "工作区",
     })[label],
-    viewUnavailable: (reason) => ` dispatch view unavailable: ${reason}`,
-    closeKeybar: () => " esc close",
-    missingRegistryDispatch: () => " dispatch is no longer in the Registry",
-    backKeybar: () => " esc back",
+    viewUnavailable: (reason) => ` 派发视图不可用:${reason}`,
+    closeKeybar: () => " esc 关闭",
+    missingRegistryDispatch: () => " 该派发已不在注册表中",
+    backKeybar: () => " esc 返回",
   },
   presentation: {
-    noEligibleAgents: () =>
-      "No eligible Agents right now — the others are working, blocked, or occupied.",
-    eligibleAgentHelp: () => "Agents become eligible when their status is idle or done.",
-    noUnsettledDispatches: () => "No unsettled dispatches.",
-    noUnsettledDispatchesHelp: () =>
-      "Start one with /hd-new, or just ask for work to be dispatched.",
-    inspectionEarlierLines: (count) => `… ${count} earlier lines (expand to view)`,
-    dispatchActive: () => "dispatch active",
-    deliveryEchoVerified: () => "· delivery echo verified",
-    dispatchDeliveryUnverified: () => "dispatch delivery unverified",
-    reservationsNeverResent: () => "   reservations retained · never resent automatically",
-    dispatchNotSent: () => "dispatch not sent",
-    deliveryRejected: () => "delivery rejected",
-    dispatchAlreadySettled: (outcome) => `dispatch already settled ${outcome}`,
-    proposalCancelled: () => "○ proposal cancelled — nothing was sent",
-    dispatchResultFallback: () => "dispatch result",
+    noEligibleAgents: () => "当前没有可用 Agent——其余的正在工作、受阻或已被占用。",
+    eligibleAgentHelp: () => "Agent 的状态为空闲或完成时即成为可用 Agent。",
+    noUnsettledDispatches: () => "没有未结算的派发。",
+    noUnsettledDispatchesHelp: () => "用 /hd-new 发起一个,或直接让模型派发工作。",
+    inspectionEarlierLines: (count) => `… 之前还有 ${count} 行(展开查看)`,
+    dispatchActive: () => "派发运行中",
+    deliveryEchoVerified: () => "· 投递回显已验证",
+    dispatchDeliveryUnverified: () => "派发投递未验证",
+    reservationsNeverResent: () => "   预留已保留 · 绝不自动重发",
+    dispatchNotSent: () => "派发未发送",
+    deliveryRejected: () => "投递被拒绝",
+    dispatchAlreadySettled: (outcome) => `派发已结算:${outcome}`,
+    proposalCancelled: () => "○ 提议已取消——未发送任何内容",
+    dispatchResultFallback: () => "派发结果",
     confirmationResult: (status, outcome) => {
-      if (status === "active") return "Dispatch is active; delivery echo was verified.";
+      if (status === "active") return "派发正在运行;投递回显已验证。";
       if (status === "delivery-unverified") {
-        return "Dispatch delivery is unverified. Reservations are retained and no automatic resend will occur.";
+        return "派发投递未验证。预留已保留,绝不会自动重发。";
       }
-      if (status === "failed") return "Dispatch was proven not sent and recorded failed.";
+      if (status === "failed") return "已证实派发未发送,记录为失败。";
       if (status === "already-settled") {
-        return `Dispatch was already settled; the recorded outcome is ${String(outcome)}.`;
+        return `派发此前已结算;记录的最终结果为${String(outcome)}。`;
       }
-      return "Dispatch proposal was cancelled without delivery.";
+      return "派发提议已取消,未进行投递。";
     },
-    blocker: (value) => `blocker: ${value}`,
-    resultListLabel: (kind) => kind,
+    blocker: (value) => `阻碍:${value}`,
+    resultListLabel: (kind) =>
+      ({ tests: "测试", files: "文件", artifacts: "产物" })[kind],
     resultCounts: (files, tests) =>
-      [files > 0 ? `${files} files` : "", tests > 0 ? `${tests} tests` : ""]
+      [files > 0 ? `${files} 个文件` : "", tests > 0 ? `${tests} 个测试` : ""]
         .filter(Boolean)
-        .join(" · ") + " (expand for details)",
-    widgetLabel: () => "dispatches",
+        .join(" · ") + "(展开查看详情)",
+    widgetLabel: () => "派发",
     widgetSeparator: () => "  ·  ",
-    widgetManagerHint: () => "  ·  alt+h manager",
+    widgetManagerHint: () => "  ·  alt+h 管理器",
     widget: (counts) => {
-      const delivering = counts.delivering > 0 ? `${counts.delivering} delivering` : undefined;
-      const running = `${counts.active} running`;
-      const attention = counts.attention > 0 ? `${counts.attention} attention` : "no attention";
+      const delivering = counts.delivering > 0 ? `${counts.delivering} 投递中` : undefined;
+      const running = `${counts.active} 运行中`;
+      const attention = counts.attention > 0 ? `${counts.attention} 待处理` : "无待处理";
       const plainSegments = [
-        counts.delivering > 0 ? `${counts.delivering} delivering` : undefined,
-        `${counts.active} running`,
-        `${counts.attention} attention`,
+        counts.delivering > 0 ? `${counts.delivering} 投递中` : undefined,
+        `${counts.active} 运行中`,
+        `${counts.attention} 待处理`,
       ].filter((segment): segment is string => segment !== undefined);
-      return { delivering, running, attention, plain: `dispatches: ${plainSegments.join(" · ")}` };
+      return { delivering, running, attention, plain: `派发: ${plainSegments.join(" · ")}` };
     },
   },
   notification: {
-    outcomeTitle: (agent, outcome) => `${agent} ${outcome}`,
-    attentionTitle: (agent) => `${agent} needs attention`,
+    outcomeTitle: (agent, outcome) => `${agent} ${outcomeLabels[outcome] ?? outcome}`,
+    attentionTitle: (agent) => `${agent} 需要处理`,
     attentionBody: (task, condition) => `${task} · ${condition}`,
   },
   tool: {
     label: (tool) => ({
-      propose: "Propose Herdr Dispatch",
-      agents: "List Herdr Agents",
-      inspect: "Inspect Herdr Agent Output",
-      status: "Herdr Dispatch Status",
+      propose: "提议 Herdr 派发",
+      agents: "列出 Herdr Agent",
+      inspect: "查看 Herdr Agent 输出",
+      status: "Herdr 派发状态",
     })[tool],
   },
   runtime: {
-    dispatchSessionNotStarted: () => "Dispatch runtime session has not started",
-    dispatchSessionStopped: () => "Dispatch runtime session is stopped",
-    registrySessionNotStarted: () => "Dispatch Registry session has not started",
-    registrySessionStopped: () => "Dispatch Registry session is stopped",
-    registryUnavailable: () => "Dispatch Registry unavailable",
-    invalidConfiguration: (reason) => `Invalid dispatch configuration: ${reason}`,
-    herdrIdentityUnavailable: () =>
-      "Herdr socket, workspace, or current pane identity is unavailable",
-    currentPaneAbsent: () => "current Pi pane is absent from the captured Herdr workspace",
-    adapterUnavailable: (reason) => `Herdr Adapter unavailable: ${reason}`,
+    dispatchSessionNotStarted: () => "派发运行时会话尚未启动",
+    dispatchSessionStopped: () => "派发运行时会话已停止",
+    registrySessionNotStarted: () => "派发注册表会话尚未启动",
+    registrySessionStopped: () => "派发注册表会话已停止",
+    registryUnavailable: () => "派发注册表不可用",
+    invalidConfiguration: (reason) => `派发配置无效:${reason}`,
+    herdrIdentityUnavailable: () => "Herdr 套接字、工作区或当前 pane 身份不可用",
+    currentPaneAbsent: () => "当前 Pi pane 不在捕获的 Herdr 工作区中",
+    adapterUnavailable: (reason) => `Herdr 适配器不可用:${reason}`,
   },
   followup: {
-    replyEditor: () => "Reply to the dispatch target",
-    replyCancelled: () => "Reply cancelled.",
+    replyEditor: () => "回复派发目标",
+    replyCancelled: () => "回复已取消。",
     resolutionEvidence: (identity, tail, targetStatus, worktree) =>
-      `${identity}\n\n${tail}\nTarget status: ${targetStatus}\nWorktree: ${worktree ?? "none"}`,
-    emergencyAttestationTitle: () => "Emergency resolution attestation",
+      `${identity}\n\n${tail}\n目标状态:${targetStatus}\nWorktree:${worktree ?? "无"}`,
+    emergencyAttestationTitle: () => "应急处理声明",
     emergencyAttestationBody: (evidence, originSessionId) =>
-      `${evidence}\n\nOrigin Session: ${originSessionId}\nAttest that you have personally judged the Origin Session unavailable. No process-liveness inference was performed.`,
-    emergencyCancelledBeforeAttestation: () =>
-      "Emergency resolution cancelled before attestation.",
-    manualFinalOutcome: () => "Manual Final Outcome",
-    resolutionCancelled: () => "Resolution cancelled.",
-    resolutionSummaryEditor: () => "Bounded resolution summary",
+      `${evidence}\n\n源会话:${originSessionId}\n请声明:你已亲自判断该源会话不可用。系统未做任何进程存活推断。`,
+    emergencyCancelledBeforeAttestation: () => "应急处理在声明前已取消。",
+    manualFinalOutcome: () => "手动最终结果",
+    resolutionCancelled: () => "处理已取消。",
+    resolutionSummaryEditor: () => "有界的处理摘要",
     reservationReleaseTitle: (emergency) =>
-      emergency ? "Confirm emergency reservation release" : "Confirm manual reservation release",
+      emergency ? "确认应急释放预留" : "确认手动释放预留",
     reservationReleaseBody: (evidence, outcome, emergency) =>
-      `${evidence}\n\nRecord ${outcome}, atomically release reservations, and accept first-wins settlement?${
-        emergency ? " This does not transfer monitoring or inject context into this resolver." : ""
+      `${evidence}\n\n记录${outcome},原子释放全部预留,并接受先到先赢的结算?${
+        emergency ? "此操作不会转移监控,也不会向本处理会话注入上下文。" : ""
       }`,
-    resolutionCancelledAtConfirmation: () => "Resolution cancelled at final confirmation.",
-    settled: (agent, outcome) => `${agent} dispatch settled ${outcome}.`,
+    resolutionCancelledAtConfirmation: () => "处理在最终确认时已取消。",
+    settled: (agent, outcome) =>
+      `${agent} 的派发已结算:${outcomeLabels[outcome] ?? outcome}。`,
     alreadySettled: (agent, outcome) =>
-      `${agent} dispatch was already settled ${outcome}; first settlement won.`,
+      `${agent} 的派发此前已结算:${outcomeLabels[outcome] ?? outcome};以先完成的结算为准。`,
     preview: (identity, tail, focusWarning, kind) =>
       `${identity}\n\n${tail}\n\n${focusWarning}\n\n${
         kind === "reply"
-          ? "A confirmed reply retains all reservations."
-          : "This sends a normal cancellation request, never Ctrl+C. Reservations remain until settlement."
+          ? "确认后的回复不会释放任何预留。"
+          : "这只发送一次常规取消请求,绝不发送 Ctrl+C。预留将保留至结算。"
       }`,
     previewWithTechnical: (preview, dispatchId, terminalId, payload) =>
-      `${preview}\n\nTechnical details:\nDispatch ID: ${dispatchId}\nTarget terminal: ${terminalId}\n\nExact outbound bytes:\n${payload}`,
+      `${preview}\n\n技术详情:\n派发 ID:${dispatchId}\n目标终端:${terminalId}\n\n确切的出站字节:\n${payload}`,
     previewWithoutTechnical: (preview) =>
-      `${preview}\n\nTechnical details are hidden. Choose Technical details to inspect exact protocol bytes.`,
+      `${preview}\n\n技术详情已隐藏。选择"技术详情"可查看确切的协议字节。`,
     approvalOptions: (technical) => [
-      "Approve",
-      technical ? "Hide technical details" : "Technical details",
-      "Cancel",
+      "批准",
+      technical ? "隐藏技术详情" : "技术详情",
+      "取消",
     ],
-    approveOption: () => "Approve",
-    technicalOption: () => "Technical details",
-    hideTechnicalOption: () => "Hide technical details",
-    cancelOption: () => "Cancel",
-    cancelled: (kind) => `${kind === "reply" ? "Reply" : "Cancellation request"} cancelled.`,
-    deliveryVerified: (kind) => `${kind} request delivery echo verified.`,
-    deliveryAmbiguous: (kind) => `${kind} request delivery is ambiguous; it was not resent.`,
-    deliveryNotSent: (kind, reason) => `${kind} request was proven not sent: ${reason}.`,
+    approveOption: () => "批准",
+    technicalOption: () => "技术详情",
+    hideTechnicalOption: () => "隐藏技术详情",
+    cancelOption: () => "取消",
+    cancelled: (kind) => `${followupKind(kind)}已取消。`,
+    deliveryVerified: (kind) => `${followupKind(kind)}的投递回显已验证。`,
+    deliveryAmbiguous: (kind) => `${followupKind(kind)}的投递不明确;未重发。`,
+    deliveryNotSent: (kind, reason) => `已证实${followupKind(kind)}未发送:${reason}。`,
   },
 } satisfies HumanUiCopy);

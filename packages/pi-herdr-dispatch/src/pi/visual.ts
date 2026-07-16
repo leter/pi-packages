@@ -77,6 +77,22 @@ export function agentStatusMark(status: string): StateMark {
 
 export const ATTENTION_GLYPH = "▲";
 
+const ZERO_WIDTH_CHARACTER = /[\p{Default_Ignorable_Code_Point}\p{Mark}]/u;
+
+/** Terminal columns occupied by plain text, including East Asian wide characters. */
+export function displayWidth(value: string): number {
+  let width = 0;
+  for (const character of value) {
+    if (ZERO_WIDTH_CHARACTER.test(character)) continue;
+    width += isWideCodePoint(character.codePointAt(0)!) ? 2 : 1;
+  }
+  return width;
+}
+
+export function padToDisplayWidth(value: string, width: number): string {
+  return value + " ".repeat(Math.max(0, width - displayWidth(value)));
+}
+
 /** `in 25m`, `in 2h 05m`, `8m overdue`, `just now`. */
 export function relativeDeadline(deadlineAt: number, now: number): string {
   return UI_COPY.time.relativeDeadline(deadlineAt, now);
@@ -93,15 +109,17 @@ export function shortenPath(path: string, maximum = 40, home = homedir()): strin
   if (home && (shown === home || shown.startsWith(`${home}/`))) {
     shown = `~${shown.slice(home.length)}`;
   }
-  if (shown.length <= maximum) return shown;
+  if (displayWidth(shown) <= maximum) return shown;
   const segments = shown.split("/");
-  while (segments.length > 3 && segments.join("/").length > maximum - 2) {
+  while (segments.length > 3 && displayWidth(segments.join("/")) > maximum - 2) {
     segments.splice(Math.ceil(segments.length / 2), 1);
   }
   const collapsed = [...segments];
   collapsed.splice(Math.ceil(collapsed.length / 2), 0, "…");
   const joined = collapsed.join("/");
-  return joined.length < shown.length ? joined : `…${shown.slice(-(maximum - 1))}`;
+  return displayWidth(joined) <= maximum && displayWidth(joined) < displayWidth(shown)
+    ? joined
+    : `…${takeEndByDisplayWidth(shown, maximum - 1)}`;
 }
 
 /** `term_6569653c7869324` → `term_6569…9324`. */
@@ -110,25 +128,71 @@ export function shortenId(id: string, head = 9, tail = 4): string {
 }
 
 export function sanitizeLine(value: string, maximum = 200): string {
-  return value
+  const sanitized = value
     .replace(/[\u0000-\u001f\u007f-\u009f]/gu, "�")
-    .replace(/\n/gu, " ")
-    .slice(0, maximum);
+    .replace(/\n/gu, " ");
+  return takeStartByDisplayWidth(sanitized, maximum);
 }
 
-/** Left-pad rows of cells into aligned columns joined by two spaces. */
+/** Right-pad rows of cells into aligned columns joined by two spaces. */
 export function alignColumns(rows: readonly (readonly string[])[]): string[] {
   const widths: number[] = [];
   for (const row of rows) {
     row.forEach((cell, index) => {
-      widths[index] = Math.max(widths[index] ?? 0, cell.length);
+      widths[index] = Math.max(widths[index] ?? 0, displayWidth(cell));
     });
   }
   return rows.map((row) =>
     row
-      .map((cell, index) => (index === row.length - 1 ? cell : cell.padEnd(widths[index] ?? 0)))
+      .map((cell, index) =>
+        index === row.length - 1 ? cell : padToDisplayWidth(cell, widths[index] ?? 0),
+      )
       .join("  ")
       .trimEnd(),
+  );
+}
+
+function takeStartByDisplayWidth(value: string, maximum: number): string {
+  let result = "";
+  let width = 0;
+  for (const character of value) {
+    const characterWidth = displayWidth(character);
+    if (width + characterWidth > maximum) break;
+    result += character;
+    width += characterWidth;
+  }
+  return result;
+}
+
+function takeEndByDisplayWidth(value: string, maximum: number): string {
+  const characters = [...value];
+  let result = "";
+  let width = 0;
+  for (let index = characters.length - 1; index >= 0; index -= 1) {
+    const character = characters[index]!;
+    const characterWidth = displayWidth(character);
+    if (width + characterWidth > maximum) break;
+    result = character + result;
+    width += characterWidth;
+  }
+  return result;
+}
+
+function isWideCodePoint(codePoint: number): boolean {
+  return codePoint >= 0x1100 && (
+    codePoint <= 0x115f ||
+    codePoint === 0x2329 ||
+    codePoint === 0x232a ||
+    (codePoint >= 0x2e80 && codePoint <= 0xa4cf && codePoint !== 0x303f) ||
+    (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+    (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+    (codePoint >= 0xfe10 && codePoint <= 0xfe19) ||
+    (codePoint >= 0xfe30 && codePoint <= 0xfe6f) ||
+    (codePoint >= 0xff00 && codePoint <= 0xff60) ||
+    (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
+    (codePoint >= 0x1b000 && codePoint <= 0x1b2ff) ||
+    (codePoint >= 0x1f200 && codePoint <= 0x1f251) ||
+    (codePoint >= 0x20000 && codePoint <= 0x3fffd)
   );
 }
 
@@ -176,6 +240,7 @@ export interface DispatchRow {
   task: string;
   mode: string;
   deadline: string;
+  overdue: boolean;
   attention: readonly string[];
 }
 
@@ -193,7 +258,8 @@ export function dispatchRow(
     task: taskDisplaySummary(dispatch.task, 48),
     mode: UI_COPY.state.mode(dispatch.mode),
     deadline: relativeDeadline(dispatch.deadlineAt, now),
-    attention: attention.map((record) => record.condition),
+    overdue: now > dispatch.deadlineAt,
+    attention: attention.map((record) => UI_COPY.state.attention(record.condition)),
   };
 }
 

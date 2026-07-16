@@ -16,16 +16,16 @@ describe("human UI copy catalog", () => {
       UI_COPY.state.agentStatus("working"),
       UI_COPY.state.agentStatus("blocked"),
     ]).toEqual([
-      "done",
-      "blocked",
-      "failed",
-      "cancelled",
-      "delivering",
-      "active",
-      "idle",
-      "done",
-      "working",
-      "blocked",
+      "完成",
+      "受阻",
+      "失败",
+      "已取消",
+      "投递中",
+      "运行中",
+      "空闲",
+      "完成",
+      "工作中",
+      "受阻",
     ]);
     expect([
       "target-lost",
@@ -37,67 +37,63 @@ describe("human UI copy catalog", () => {
       "overdue",
       "unacknowledged",
     ].map((condition) => UI_COPY.state.attention(condition as never))).toEqual([
-      "Target lost",
-      "Delivery unverified",
-      "Malformed result",
-      "Result missing",
-      "Runtime blocked",
-      "Monitoring paused",
-      "Overdue",
-      "Unacknowledged",
+      "目标丢失",
+      "投递未验证",
+      "结果格式错误",
+      "结果缺失",
+      "运行时受阻",
+      "监控已暂停",
+      "已超期",
+      "未应答",
     ]);
   });
 
-  it("builds exact relative-time and pluralized count copy", () => {
-    expect(UI_COPY.time.relativeDeadline(1_000_000 + 22 * 60_000, 1_000_000)).toBe("in 22m");
-    expect(UI_COPY.time.relativeDeadline(1_000_000, 1_000_000 + 8 * 60_000)).toBe("8m overdue");
-    expect(UI_COPY.time.relativeDeadline(1_000_000 + 125 * 60_000, 1_000_000)).toBe("in 2h 05m");
-    expect(UI_COPY.time.relativeAge(1_000_000, 1_000_000)).toBe("just now");
-    expect(UI_COPY.time.relativeAge(1_000_000, 1_000_000 + 125 * 60_000)).toBe("2h 05m ago");
-    expect(UI_COPY.count.eligibleAgents(1)).toBe("1 eligible Agent");
-    expect(UI_COPY.count.eligibleAgents(2)).toBe("2 eligible Agents");
-    expect(UI_COPY.count.unsettledDispatches(1)).toBe("1 unsettled dispatch");
-    expect(UI_COPY.count.unsettledDispatches(2)).toBe("2 unsettled dispatches");
-    expect(UI_COPY.count.files(2)).toBe("2 files");
-    expect(UI_COPY.count.tests(3)).toBe("3 tests");
+  it("builds exact relative-time and count copy", () => {
+    expect(UI_COPY.time.relativeDeadline(1_000_000 + 22 * 60_000, 1_000_000)).toBe("22 分钟后");
+    expect(UI_COPY.time.relativeDeadline(1_000_000, 1_000_000 + 8 * 60_000)).toBe("超期 8 分钟");
+    expect(UI_COPY.time.relativeDeadline(1_000_000 + 125 * 60_000, 1_000_000)).toBe(
+      "2 小时 05 分后",
+    );
+    expect(UI_COPY.time.relativeAge(1_000_000, 1_000_000)).toBe("刚刚");
+    expect(UI_COPY.time.relativeAge(1_000_000, 1_000_000 + 125 * 60_000)).toBe("2 小时 05 分前");
+    expect(UI_COPY.count.eligibleAgents(1)).toBe("1 个可用 Agent");
+    expect(UI_COPY.count.eligibleAgents(2)).toBe("2 个可用 Agent");
+    expect(UI_COPY.count.unsettledDispatches(1)).toBe("1 条未结算派发");
+    expect(UI_COPY.count.unsettledDispatches(2)).toBe("2 条未结算派发");
+    expect(UI_COPY.count.files(2)).toBe("2 个文件");
+    expect(UI_COPY.count.tests(3)).toBe("3 个测试");
   });
 
   it("contains exact command and Dispatch Manager messages", () => {
-    expect(UI_COPY.command.description("manager")).toBe("Open the Herdr Dispatch Manager");
-    expect(UI_COPY.command.chooseEligibleAgent()).toBe("Choose an Eligible Agent");
-    expect(UI_COPY.command.noDispatchForAction("reply")).toBe("No dispatch currently needs a reply.");
+    expect(UI_COPY.command.description("manager")).toBe("打开 Herdr 派发管理器");
+    expect(UI_COPY.command.chooseEligibleAgent()).toBe("选择一个可用 Agent");
+    expect(UI_COPY.command.noDispatchForAction("reply")).toBe("当前没有需要回复的派发。");
     expect(UI_COPY.command.noDispatchForAction("cancel")).toBe(
-      "No unsettled dispatch from this session can be cancelled.",
+      "本会话没有可取消的未结算派发。",
     );
     expect(UI_COPY.command.noDispatchForAction("resolve")).toBe(
-      "No dispatch currently requires manual resolution.",
+      "当前没有需要手动处理的派发。",
     );
-    expect(UI_COPY.manager.heading(2, 1, 3)).toBe(
-      "  2 running · 1 delivering · 3 need attention",
-    );
-    expect(UI_COPY.manager.settledHeading(2, false)).toBe("SETTLED · 2 HIDDEN · PRESS S");
-    expect(UI_COPY.manager.settledHeading(2, true)).toBe("SETTLED · LAST 2");
+    expect(UI_COPY.manager.heading(2, 1, 3)).toBe("  2 运行中 · 1 投递中 · 3 待处理");
+    expect(UI_COPY.manager.settledHeading(2, false)).toBe("已结算 · 2 条已隐藏 · 按 S 显示");
+    expect(UI_COPY.manager.settledHeading(2, true)).toBe("已结算 · 最近 2 条");
     expect(UI_COPY.manager.listKeybar(false)).toBe(
-      "↑↓ select · enter detail · s show settled · esc close",
+      "↑↓ 选择 · enter 详情 · s 显示已结算 · esc 关闭",
     );
-    expect(UI_COPY.manager.technicalLabel("workspace")).toBe("Workspace");
+    expect(UI_COPY.manager.technicalLabel("workspace")).toBe("工作区");
   });
 
   it("contains exact human renderer, notification, and follow-up copy", () => {
     expect(UI_COPY.presentation.noEligibleAgents()).toBe(
-      "No eligible Agents right now — the others are working, blocked, or occupied.",
+      "当前没有可用 Agent——其余的正在工作、受阻或已被占用。",
     );
-    expect(UI_COPY.presentation.dispatchActive()).toBe("dispatch active");
-    expect(UI_COPY.presentation.deliveryEchoVerified()).toBe("· delivery echo verified");
-    expect(UI_COPY.presentation.resultCounts(2, 3)).toBe("2 files · 3 tests (expand for details)");
-    expect(UI_COPY.notification.outcomeTitle("claude", "done")).toBe("claude done");
-    expect(UI_COPY.notification.attentionTitle("claude")).toBe("claude needs attention");
-    expect(UI_COPY.followup.replyCancelled()).toBe("Reply cancelled.");
-    expect(UI_COPY.followup.deliveryVerified("reply")).toBe(
-      "reply request delivery echo verified.",
-    );
-    expect(UI_COPY.followup.settled("claude", "blocked")).toBe(
-      "claude dispatch settled blocked.",
-    );
+    expect(UI_COPY.presentation.dispatchActive()).toBe("派发运行中");
+    expect(UI_COPY.presentation.deliveryEchoVerified()).toBe("· 投递回显已验证");
+    expect(UI_COPY.presentation.resultCounts(2, 3)).toBe("2 个文件 · 3 个测试(展开查看详情)");
+    expect(UI_COPY.notification.outcomeTitle("claude", "done")).toBe("claude 完成");
+    expect(UI_COPY.notification.attentionTitle("claude")).toBe("claude 需要处理");
+    expect(UI_COPY.followup.replyCancelled()).toBe("回复已取消。");
+    expect(UI_COPY.followup.deliveryVerified("reply")).toBe("回复的投递回显已验证。");
+    expect(UI_COPY.followup.settled("claude", "受阻")).toBe("claude 的派发已结算:受阻。");
   });
 });

@@ -43,7 +43,7 @@ describe("dispatch widget", () => {
     } as unknown as DispatchRegistry;
 
     expect(updateDispatchWidget(presentation, registry, "session-origin", "workspace-current")).toBe(
-      "dispatches: 1 delivering · 0 running · 1 attention",
+      "派发: 1 投递中 · 0 运行中 · 1 待处理",
     );
     expect(presentation.setWidget).toHaveBeenCalledWith(
       "pi-herdr-dispatch",
@@ -57,18 +57,18 @@ describe("dispatch widget", () => {
     const fakeTheme = { fg: (_c: string, text: string) => text, bold: (text: string) => text };
     const widget = factory(undefined, fakeTheme);
     const rendered = widget.render(120).join(" ");
-    expect(rendered).toContain("1 delivering");
-    expect(rendered).toContain("0 running");
-    expect(rendered).toContain("alt+h manager");
-    expect(rendered).toContain("1 attention");
-    expect(rendered).not.toContain("3 attention");
+    expect(rendered).toContain("1 投递中");
+    expect(rendered).toContain("0 运行中");
+    expect(rendered).toContain("alt+h 管理器");
+    expect(rendered).toContain("1 待处理");
+    expect(rendered).not.toContain("3 待处理");
     expect(presentation.setFooter).not.toHaveBeenCalled();
 
     unsettled = [];
     const refreshed = widget.render(120).join(" ");
-    expect(refreshed).toContain("0 running");
-    expect(refreshed).toContain("no attention");
-    expect(refreshed).not.toContain("1 running");
+    expect(refreshed).toContain("0 运行中");
+    expect(refreshed).toContain("无待处理");
+    expect(refreshed).not.toContain("1 运行中");
 
     clearDispatchWidget(presentation);
     expect(presentation.setWidget).toHaveBeenLastCalledWith(
@@ -98,7 +98,7 @@ describe("dispatch widget", () => {
     } as unknown as DispatchRegistry;
 
     expect(updateDispatchWidget(presentation, registry, "session-origin", "workspace-current")).toBe(
-      "dispatches: 0 running · 1 attention",
+      "派发: 0 运行中 · 1 待处理",
     );
   });
 
@@ -113,7 +113,7 @@ describe("dispatch widget", () => {
     } as unknown as DispatchRegistry;
 
     expect(updateDispatchWidget(presentation, registry, "session-origin", "workspace-current")).toBe(
-      "dispatches: 1 delivering · 1 running · 0 attention",
+      "派发: 1 投递中 · 1 运行中 · 0 待处理",
     );
   });
 
@@ -136,7 +136,7 @@ describe("dispatch widget", () => {
     );
 
     expect(listUnsettledInWorkspace).toHaveBeenCalledExactlyOnceWith("workspace-current");
-    expect(text).toBe("dispatches: 1 running · 1 attention");
+    expect(text).toBe("派发: 1 运行中 · 1 待处理");
     expect(text).not.toContain("hd_");
   });
 });
@@ -148,7 +148,7 @@ describe("notification sound policy", () => {
     expect(outcomeNotification(dispatch, "failed").sound).toBe("request");
     expect(outcomeNotification(dispatch, "cancelled").sound).toBe("none");
     expect(outcomeNotification(dispatch, "done")).toEqual({
-      title: "claude�[31m done",
+      title: "claude�[31m 完成",
       body: "Fix login state",
       sound: "done",
     });
@@ -157,14 +157,14 @@ describe("notification sound policy", () => {
 
   it("maps every Attention Condition to request", () => {
     const labels = {
-      "delivery-unverified": "Delivery unverified",
-      unacknowledged: "Unacknowledged",
-      overdue: "Overdue",
-      "blocked-runtime": "Runtime blocked",
-      "monitoring-paused": "Monitoring paused",
-      "malformed-result": "Malformed result",
-      "result-missing": "Result missing",
-      "target-lost": "Target lost",
+      "delivery-unverified": "投递未验证",
+      unacknowledged: "未应答",
+      overdue: "已超期",
+      "blocked-runtime": "运行时受阻",
+      "monitoring-paused": "监控已暂停",
+      "malformed-result": "结果格式错误",
+      "result-missing": "结果缺失",
+      "target-lost": "目标丢失",
     } as const;
     for (const [condition, label] of Object.entries(labels) as [
       keyof typeof labels,
@@ -172,7 +172,7 @@ describe("notification sound policy", () => {
     ][]) {
       const notification = attentionNotification(dispatch, condition);
       expect(notification).toEqual({
-        title: "claude�[31m needs attention",
+        title: "claude�[31m 需要处理",
         body: `Fix login state · ${label}`,
         sound: "request",
       });

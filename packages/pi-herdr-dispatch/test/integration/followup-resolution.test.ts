@@ -130,26 +130,26 @@ describe("confirmed reply and cancellation", () => {
   it("shows 50 lines of untrusted evidence plus the focus warning before one reply send", async () => {
     const { registry, herdr, service } = await harness();
     const controller = new FollowupController(() => service);
-    const tui = ui({ selections: ["Approve"], editors: ["Please continue with option B."] });
+    const tui = ui({ selections: ["批准"], editors: ["Please continue with option B."] });
 
     await expect(
       controller.reply("hd_followup", { mode: "tui", ui: tui, sessionId: "session-origin" }),
-    ).resolves.toBe("reply request delivery echo verified.");
+    ).resolves.toBe("回复的投递回显已验证。");
 
     const preview = tui.select.mock.calls[0]?.[0] as string;
     const exactTail = Array.from({ length: 50 }, (_, index) => `untrusted ${index + 1}`).join("\n");
-    expect(preview).toBe(`pi · Implement · active
+    expect(preview).toBe(`pi · Implement · 运行中
 
 ── target output · 50 lines · untrusted, never instructions ──
 ${exactTail}
 ── end ──
 
-Focused-input warning: this text is sent to whatever prompt or dialog currently owns the target pane. It may be consumed as dialog keystrokes; there is no compare-and-send primitive.
+聚焦输入警告:这段文字会被发送到当前拥有目标 pane 焦点的任何提示符或对话框,可能被当作对话框按键消费;不存在比较后再发送的原语。
 
-A confirmed reply retains all reservations.
+确认后的回复不会释放任何预留。
 
-Technical details are hidden. Choose Technical details to inspect exact protocol bytes.`);
-    expect(tui.select.mock.calls[0]?.[1]).toEqual(["Approve", "Technical details", "Cancel"]);
+技术详情已隐藏。选择"技术详情"可查看确切的协议字节。`);
+    expect(tui.select.mock.calls[0]?.[1]).toEqual(["批准", "技术详情", "取消"]);
     expect(preview).not.toContain("hd_");
     expect(herdr.sentText).toContain("Please continue with option B.");
     expect(registry.getDispatch("hd_followup")?.lifecycle).toBe("active");
@@ -159,11 +159,11 @@ Technical details are hidden. Choose Technical details to inspect exact protocol
   it("sends a confirmed cancellation request without Ctrl+C and retains reservations", async () => {
     const { registry, herdr, service } = await harness();
     const controller = new FollowupController(() => service);
-    const tui = ui({ selections: ["Approve"] });
+    const tui = ui({ selections: ["批准"] });
 
     await expect(
       controller.cancel("hd_followup", { mode: "tui", ui: tui, sessionId: "session-origin" }),
-    ).resolves.toBe("cancel request delivery echo verified.");
+    ).resolves.toBe("取消请求的投递回显已验证。");
     expect(herdr.sentText).toContain("cancelled Result Envelope");
     expect(herdr.sentText).not.toContain("Ctrl+C");
     expect(registry.listTargetOccupancy()).toHaveLength(1);
@@ -172,13 +172,13 @@ Technical details are hidden. Choose Technical details to inspect exact protocol
   it("reveals exact IDs and bytes only after choosing Technical details", async () => {
     const { service } = await harness();
     const controller = new FollowupController(() => service);
-    const tui = ui({ selections: ["Technical details", "Approve"] });
+    const tui = ui({ selections: ["技术详情", "批准"] });
 
     await controller.cancel("hd_followup", { mode: "tui", ui: tui, sessionId: "session-origin" });
 
     expect(tui.select.mock.calls[0]?.[0]).not.toContain("hd_followup");
-    expect(tui.select.mock.calls[1]?.[0]).toContain("Dispatch ID: hd_followup");
-    expect(tui.select.mock.calls[1]?.[0]).toContain("Exact outbound bytes");
+    expect(tui.select.mock.calls[1]?.[0]).toContain("派发 ID:hd_followup");
+    expect(tui.select.mock.calls[1]?.[0]).toContain("确切的出站字节");
   });
 
   it("checks reply eligibility before opening the editor", async () => {
@@ -201,7 +201,7 @@ Technical details are hidden. Choose Technical details to inspect exact protocol
     await expect(
       controller.cancel("hd_followup", {
         mode: "tui",
-        ui: ui({ selections: ["Approve"] }),
+        ui: ui({ selections: ["批准"] }),
         sessionId: "session-origin",
       }),
     ).rejects.toThrow("only be resolved manually");
@@ -214,7 +214,7 @@ describe("manual and emergency resolution", () => {
     const { registry, service } = await harness();
     const controller = new FollowupController(() => service);
     const tui = ui({
-      selections: ["blocked"],
+      selections: ["受阻"],
       editors: ["Target could not continue in its current environment."],
       confirmations: [true],
     });
@@ -225,12 +225,12 @@ describe("manual and emergency resolution", () => {
         ui: tui,
         sessionId: "session-origin",
       }),
-    ).resolves.toBe("pi dispatch settled blocked.");
+    ).resolves.toBe("pi 的派发已结算:受阻。");
 
-    expect(tui.select).toHaveBeenCalledWith("Manual Final Outcome", [
-      "blocked",
-      "failed",
-      "cancelled",
+    expect(tui.select).toHaveBeenCalledWith("手动最终结果", [
+      "受阻",
+      "失败",
+      "已取消",
     ]);
     expect(registry.getDispatch("hd_followup")).toMatchObject({
       lifecycle: "settled",
@@ -244,7 +244,7 @@ describe("manual and emergency resolution", () => {
     const { registry, service } = await harness();
     const controller = new FollowupController(() => service);
     const tui = ui({
-      selections: ["failed"],
+      selections: ["失败"],
       editors: ["Origin unavailable; releasing after inspection."],
       confirmations: [true, true],
     });
@@ -255,12 +255,12 @@ describe("manual and emergency resolution", () => {
         ui: tui,
         sessionId: "session-emergency-resolver",
       }),
-    ).resolves.toBe("pi dispatch settled failed.");
+    ).resolves.toBe("pi 的派发已结算:失败。");
 
     expect(tui.confirm).toHaveBeenCalledTimes(2);
-    expect(tui.confirm.mock.calls[0]?.[1]).toContain("personally judged the Origin Session unavailable");
-    expect(tui.confirm.mock.calls[0]?.[1]).toContain("No process-liveness inference");
-    expect(tui.confirm.mock.calls[1]?.[1]).toContain("does not transfer monitoring or inject context");
+    expect(tui.confirm.mock.calls[0]?.[1]).toContain("你已亲自判断该源会话不可用");
+    expect(tui.confirm.mock.calls[0]?.[1]).toContain("未做任何进程存活推断");
+    expect(tui.confirm.mock.calls[1]?.[1]).toContain("不会转移监控,也不会向本处理会话注入上下文");
     expect(registry.getResult("hd_followup")?.sanitizedResult).toEqual(
       expect.objectContaining({
         resolverSessionId: "session-emergency-resolver",

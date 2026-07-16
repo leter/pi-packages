@@ -52,10 +52,10 @@ describe("Pi extension Phase 4 registration", () => {
       "herdr_dispatch_status",
     ]);
     expect(tools.map((tool) => tool.label)).toEqual([
-      "Propose Herdr Dispatch",
-      "List Herdr Agents",
-      "Inspect Herdr Agent Output",
-      "Herdr Dispatch Status",
+      "提议 Herdr 派发",
+      "列出 Herdr Agent",
+      "查看 Herdr Agent 输出",
+      "Herdr 派发状态",
     ]);
     expect(commands).toEqual([
       "herdr-agents",
@@ -77,22 +77,22 @@ describe("Pi extension Phase 4 registration", () => {
     ]);
     expect(shortcuts).toEqual(["alt+h"]);
     expect(Object.fromEntries(descriptions)).toEqual({
-      "herdr-agents": "List Eligible Agents in the current Herdr workspace",
-      "hd-agents": "List Eligible Agents in the current Herdr workspace",
-      "herdr-dispatch": "Create and immediately send a Herdr dispatch",
-      "hd-new": "Create and immediately send a Herdr dispatch",
-      "herdr-dispatches": "Open the Herdr Dispatch Manager",
-      "hd-manager": "Open the Herdr Dispatch Manager",
-      "herdr-dispatch-reply": "Preview and confirm a reply to an Active Dispatch with attention",
-      "hd-reply": "Preview and confirm a reply to an Active Dispatch with attention",
-      "herdr-dispatch-cancel": "Preview and confirm a normal cancellation request",
-      "hd-cancel": "Preview and confirm a normal cancellation request",
-      "herdr-dispatch-resolve": "Manually or emergently resolve a dispatch with confirmation",
-      "hd-resolve": "Manually or emergently resolve a dispatch with confirmation",
-      "herdr-dispatch-setup": "Explicitly install one Herdr Agent status integration",
-      "hd-setup": "Explicitly install one Herdr Agent status integration",
-      "herdr-agent-output": "Read one bounded current-workspace Agent output tail",
-      "hd-output": "Read one bounded current-workspace Agent output tail",
+      "herdr-agents": "列出当前 Herdr 工作区的可用 Agent",
+      "hd-agents": "列出当前 Herdr 工作区的可用 Agent",
+      "herdr-dispatch": "创建并立即发送一个 Herdr 派发",
+      "hd-new": "创建并立即发送一个 Herdr 派发",
+      "herdr-dispatches": "打开 Herdr 派发管理器",
+      "hd-manager": "打开 Herdr 派发管理器",
+      "herdr-dispatch-reply": "预览并确认对一个有待处理状况的运行中派发的回复",
+      "hd-reply": "预览并确认对一个有待处理状况的运行中派发的回复",
+      "herdr-dispatch-cancel": "预览并确认一次常规取消请求",
+      "hd-cancel": "预览并确认一次常规取消请求",
+      "herdr-dispatch-resolve": "经确认后手动或应急处理一个派发",
+      "hd-resolve": "经确认后手动或应急处理一个派发",
+      "herdr-dispatch-setup": "显式安装一个 Herdr Agent 状态集成",
+      "hd-setup": "显式安装一个 Herdr Agent 状态集成",
+      "herdr-agent-output": "读取一次有界的当前工作区 Agent 输出尾部",
+      "hd-output": "读取一次有界的当前工作区 Agent 输出尾部",
     });
   });
 
@@ -148,7 +148,7 @@ describe("Pi extension Phase 4 registration", () => {
           undefined,
           ctx,
         ),
-      ).rejects.toThrow("only in TUI mode");
+      ).rejects.toThrow("仅在 TUI 模式下可用");
       expect(ctx.ui.select).not.toHaveBeenCalled();
       expect(ctx.ui.confirm).not.toHaveBeenCalled();
     },
