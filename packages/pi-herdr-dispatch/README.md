@@ -107,6 +107,8 @@ Dispatch is automatic by default in TUI mode. `herdr_dispatch_propose` and a com
 
 ## Auto Run (自动运行)
 
+> **⚠️ Not yet verified — do not rely on for unattended runs.** Auto Run's wake→deliver core uses a `followUp`+`triggerTurn` message whose exactly-once behavior against a real Pi is unverified until live acceptance **L14** passes. A known risk (a triggered wake whose context-delivery claim never completes, causing repeated wakes) can only be confirmed or fixed on a live Herdr/Pi. Until L14 is run and green, treat Auto Run as experimental and do not arm it for real unattended work. It is off by default.
+
 By default a settled result only queues quietly and enters the model's context on your next message. `/hd-auto on` arms **Auto Run** for the current session: every settlement (done, blocked, failed, or cancelled) that occurs after you arm it then wakes the model automatically. Only one Auto Run turn ever runs at a time — results that settle while a turn is in flight are held and woken one after another as each turn finishes, never piling up into concurrent turns. The woken model receives the sanitized result in its usual untrusted framing plus a fixed preamble stating the remaining chain budget and its job: aggregate, verify, and decide whether one follow-up dispatch is warranted.
 
 The chain always terminates: dispatches created during an automatic turn carry an **Auto Run Depth** one deeper than the settlement that triggered the turn, and at `maxAutoRunDepth` (default 5) the settlement queues quietly with one review notification instead of waking the model. Speaking to Pi yourself resets the chain — your own proposals are always depth 0.
