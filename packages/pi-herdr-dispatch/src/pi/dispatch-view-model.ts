@@ -155,20 +155,9 @@ export function buildListLines(
   const delivering = entries.filter(
     (entry) => entry.attention.length === 0 && entry.dispatch.lifecycle === "delivering",
   );
-  const lines: ViewLine[] = [
-    {
-      spans: [
-        span(UI_COPY.manager.title(), "text", true),
-        span(
-          UI_COPY.manager.heading(active.length, delivering.length, attention.length),
-          attention.length > 0 ? "warning" : "muted",
-        ),
-      ],
-    },
-  ];
+  const lines: ViewLine[] = [];
 
   if (entries.length === 0) {
-    lines.push({ spans: [] });
     lines.push({ spans: [span(UI_COPY.manager.noActiveDispatches(), "muted")] });
     lines.push({ spans: [span(UI_COPY.manager.startWithCommand(), "dim")] });
   } else {
@@ -197,7 +186,7 @@ export function buildListLines(
         lines.push({
           selected,
           spans: [
-            span(selected ? " > " : "   ", "accent", selected),
+            span(selected ? " → " : "   ", "accent", selected),
             span(`${state.glyph} `, state.color),
             span(agentDisplayName(dispatch), "text", true),
             span(` · ${taskSummary(dispatch.task)}`, "text"),
@@ -218,16 +207,42 @@ export function buildListLines(
     }
   }
 
-  lines.push({ spans: [] });
-  lines.push({
-    spans: [
-      span(
-        UI_COPY.manager.listKeybar(showSettled),
-        "dim",
-      ),
-    ],
-  });
   return lines;
+}
+
+export interface ViewChrome {
+  title: string;
+  counts?: string;
+  countsColor?: SemanticColor;
+  hint: string;
+}
+
+export function listChrome(snapshot: DispatchViewSnapshot, showSettled: boolean): ViewChrome {
+  const entries = sortUnsettled(snapshot.unsettled);
+  const attention = entries.filter((entry) => entry.attention.length > 0).length;
+  const active = entries.filter(
+    (entry) => entry.attention.length === 0 && entry.dispatch.lifecycle === "active",
+  ).length;
+  const delivering = entries.filter(
+    (entry) => entry.attention.length === 0 && entry.dispatch.lifecycle === "delivering",
+  ).length;
+  const counts = UI_COPY.manager.heading(active, delivering, attention);
+  return {
+    title: UI_COPY.manager.title(),
+    ...(counts === "" ? {} : { counts, countsColor: attention > 0 ? "warning" : "muted" }),
+    hint: UI_COPY.manager.listKeybar(showSettled),
+  };
+}
+
+export function detailChrome(
+  dispatch: StoredDispatch,
+  attention: readonly AttentionRecord[],
+  originSessionId = dispatch.originSessionId,
+): ViewChrome {
+  return {
+    title: UI_COPY.manager.detailTitle(),
+    hint: detailKeybar(dispatch, attention, originSessionId).trim(),
+  };
 }
 
 export function buildDetailLines(
@@ -264,7 +279,7 @@ export function buildDetailLines(
   lines.push({
     spans: [
       span(`   ${timing}`, "dim"),
-      span(` · ${UI_COPY.common.deadline(deadline)}`, deadline.includes("overdue") ? "warning" : "dim"),
+      span(` · ${UI_COPY.common.deadline(deadline)}`, now > dispatch.deadlineAt ? "warning" : "dim"),
     ],
   });
   lines.push({
@@ -294,8 +309,6 @@ export function buildDetailLines(
   if (showTechnical) lines.push(...technicalLines(dispatch));
   lines.push({ spans: [] });
   lines.push(...buildOutputLines(output));
-  lines.push({ spans: [] });
-  lines.push({ spans: [span(detailKeybar(dispatch, attention, originSessionId), "dim")] });
   return lines;
 }
 
@@ -377,7 +390,7 @@ function appendGroup(
     lines.push({
       selected,
       spans: [
-        span(selected ? " > " : "   ", "accent", selected),
+        span(selected ? " → " : "   ", "accent", selected),
         span(`${state.glyph} `, state.color),
         span(agentDisplayName(entry.dispatch), "text", true),
         span(` · ${taskSummary(entry.dispatch.task)}`, "text"),

@@ -43,7 +43,7 @@ describe("dispatch widget", () => {
     } as unknown as DispatchRegistry;
 
     expect(updateDispatchWidget(presentation, registry, "session-origin", "workspace-current")).toBe(
-      "派发: 1 投递中 · 0 运行中 · 1 待处理",
+      "派发: 1 投递中 · 1 待处理",
     );
     expect(presentation.setWidget).toHaveBeenCalledWith(
       "pi-herdr-dispatch",
@@ -58,16 +58,16 @@ describe("dispatch widget", () => {
     const widget = factory(undefined, fakeTheme);
     const rendered = widget.render(120).join(" ");
     expect(rendered).toContain("1 投递中");
-    expect(rendered).toContain("0 运行中");
-    expect(rendered).toContain("alt+h 管理器");
+    expect(rendered).not.toContain("0 运行中");
+    expect(rendered).toContain("alt+h");
     expect(rendered).toContain("1 待处理");
     expect(rendered).not.toContain("3 待处理");
     expect(presentation.setFooter).not.toHaveBeenCalled();
 
     unsettled = [];
     const refreshed = widget.render(120).join(" ");
-    expect(refreshed).toContain("0 运行中");
-    expect(refreshed).toContain("无待处理");
+    expect(refreshed).toContain("派发 · alt+h");
+    expect(refreshed).not.toContain("待处理");
     expect(refreshed).not.toContain("1 运行中");
 
     clearDispatchWidget(presentation);
@@ -98,7 +98,7 @@ describe("dispatch widget", () => {
     } as unknown as DispatchRegistry;
 
     expect(updateDispatchWidget(presentation, registry, "session-origin", "workspace-current")).toBe(
-      "派发: 0 运行中 · 1 待处理",
+      "派发: 1 待处理",
     );
   });
 
@@ -113,7 +113,7 @@ describe("dispatch widget", () => {
     } as unknown as DispatchRegistry;
 
     expect(updateDispatchWidget(presentation, registry, "session-origin", "workspace-current")).toBe(
-      "派发: 1 投递中 · 1 运行中 · 0 待处理",
+      "派发: 1 投递中 · 1 运行中",
     );
   });
 

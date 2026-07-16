@@ -74,12 +74,11 @@ describe("human UI copy catalog", () => {
     expect(UI_COPY.command.noDispatchForAction("resolve")).toBe(
       "当前没有需要手动处理的派发。",
     );
-    expect(UI_COPY.manager.heading(2, 1, 3)).toBe("  2 运行中 · 1 投递中 · 3 待处理");
+    expect(UI_COPY.manager.heading(2, 1, 3)).toBe("2 运行中 · 1 投递中 · 3 待处理");
     expect(UI_COPY.manager.settledHeading(2, false)).toBe("已结算 · 2 条已隐藏 · 按 S 显示");
     expect(UI_COPY.manager.settledHeading(2, true)).toBe("已结算 · 最近 2 条");
-    expect(UI_COPY.manager.listKeybar(false)).toBe(
-      "↑↓ 选择 · enter 详情 · s 显示已结算 · esc 关闭",
-    );
+    expect(UI_COPY.manager.listKeybar(false)).toBe("enter 详情 · s 显示已结算");
+    expect(UI_COPY.manager.heading(0, 0, 0)).toBe("");
     expect(UI_COPY.manager.technicalLabel("workspace")).toBe("工作区");
   });
 

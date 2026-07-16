@@ -88,6 +88,7 @@ export interface HumanUiCopy {
   };
   readonly manager: {
     title(): string;
+    detailTitle(): string;
     heading(running: number, delivering: number, attention: number): string;
     noActiveDispatches(): string;
     startWithCommand(): string;
@@ -137,10 +138,11 @@ export interface HumanUiCopy {
     widgetLabel(): string;
     widgetSeparator(): string;
     widgetManagerHint(): string;
+    widgetQuiet(): string;
     widget(counts: { delivering: number; active: number; attention: number }): {
       delivering?: string;
-      running: string;
-      attention: string;
+      running?: string;
+      attention?: string;
       plain: string;
     };
   };
@@ -345,8 +347,15 @@ export const UI_COPY = Object.freeze({
   },
   manager: {
     title: () => "Herdr 派发",
+    detailTitle: () => "派发详情",
     heading: (running, delivering, attention) =>
-      `  ${running} 运行中 · ${delivering} 投递中 · ${attention} 待处理`,
+      [
+        running > 0 ? `${running} 运行中` : "",
+        delivering > 0 ? `${delivering} 投递中` : "",
+        attention > 0 ? `${attention} 待处理` : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
     noActiveDispatches: () => "没有活跃的派发。",
     startWithCommand: () => "用 /hd-new 发起一个。",
     groupAttention: () => "待处理",
@@ -355,7 +364,7 @@ export const UI_COPY = Object.freeze({
     settledHeading: (count, shown) =>
       shown ? `已结算 · 最近 ${count} 条` : `已结算 · ${count} 条已隐藏 · 按 S 显示`,
     listKeybar: (settledShown) =>
-      `↑↓ 选择 · enter 详情 · s ${settledShown ? "隐藏" : "显示"}已结算 · esc 关闭`,
+      `enter 详情 · s ${settledShown ? "隐藏" : "显示"}已结算`,
     emergencyResolutionRequired: () => "需要应急处理",
     activeSince: (age) => `运行开始于${age}`,
     deliveryStarted: (age) => `投递开始于${age}`,
@@ -373,7 +382,7 @@ export const UI_COPY = Object.freeze({
         actions.includes("cancel") ? "c 取消" : "",
         actions.includes("resolve") ? "v 处理" : "",
       ].filter(Boolean);
-      return ` r 读 50 行 · R 读 200 行${labels.length > 0 ? ` · ${labels.join(" · ")}` : ""} · D 技术详情 · esc 返回`;
+      return ` r/R 读输出${labels.length > 0 ? ` · ${labels.join(" · ")}` : ""} · D 详情`;
     },
     technicalHeading: () => " 技术详情",
     technicalLabel: (label) => ({
@@ -422,17 +431,21 @@ export const UI_COPY = Object.freeze({
         .join(" · ") + "(展开查看详情)",
     widgetLabel: () => "派发",
     widgetSeparator: () => "  ·  ",
-    widgetManagerHint: () => "  ·  alt+h 管理器",
+    widgetManagerHint: () => "  ·  alt+h",
+    widgetQuiet: () => "派发 · alt+h",
     widget: (counts) => {
       const delivering = counts.delivering > 0 ? `${counts.delivering} 投递中` : undefined;
-      const running = `${counts.active} 运行中`;
-      const attention = counts.attention > 0 ? `${counts.attention} 待处理` : "无待处理";
-      const plainSegments = [
-        counts.delivering > 0 ? `${counts.delivering} 投递中` : undefined,
-        `${counts.active} 运行中`,
-        `${counts.attention} 待处理`,
-      ].filter((segment): segment is string => segment !== undefined);
-      return { delivering, running, attention, plain: `派发: ${plainSegments.join(" · ")}` };
+      const running = counts.active > 0 ? `${counts.active} 运行中` : undefined;
+      const attention = counts.attention > 0 ? `${counts.attention} 待处理` : undefined;
+      const plainSegments = [delivering, running, attention].filter(
+        (segment): segment is string => segment !== undefined,
+      );
+      return {
+        delivering,
+        running,
+        attention,
+        plain: plainSegments.length === 0 ? "派发 · alt+h" : `派发: ${plainSegments.join(" · ")}`,
+      };
     },
   },
   notification: {

@@ -321,7 +321,7 @@ describe("themed renderers", () => {
     const quiet = renderDispatchWidget({ delivering: 0, active: 0, attention: 0 }, fakeTheme)
       .render(200)
       .join("\n");
-    expect(quiet).toContain("<dim>● 0 运行中</dim>");
-    expect(quiet).toContain("<dim>无待处理</dim>");
+    expect(quiet).toContain("<dim>派发 · alt+h</dim>");
+    expect(quiet).not.toContain("运行中");
   });
 });

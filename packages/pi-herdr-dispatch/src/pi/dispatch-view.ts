@@ -13,10 +13,13 @@ import {
   buildDetailLines,
   buildListLines,
   availableActions,
+  detailChrome,
+  listChrome,
   selectableIds,
   type DispatchAction,
   type DispatchViewSnapshot,
   type OutputReadState,
+  type ViewChrome,
   type ViewLine,
 } from "./dispatch-view-model.js";
 import { sanitizeLine } from "./visual.js";
@@ -101,16 +104,20 @@ export class DispatchViewComponent implements Component {
   }
 
   render(width: number): string[] {
-    let lines: ViewLine[];
+    let body: ViewLine[];
+    let chrome: ViewChrome;
     try {
-      lines = this.#screen.kind === "list" ? this.#listLines() : this.#detailLines();
+      if (this.#screen.kind === "list") {
+        body = this.#listLines();
+        chrome = listChrome(this.#ports.snapshot(), this.#showSettled);
+      } else {
+        ({ body, chrome } = this.#detailView());
+      }
     } catch (error) {
-      lines = [
-        { spans: [{ text: UI_COPY.manager.viewUnavailable(errorText(error)), color: "warning" }] },
-        { spans: [{ text: UI_COPY.manager.closeKeybar(), color: "dim" }] },
-      ];
+      body = [{ spans: [{ text: UI_COPY.manager.viewUnavailable(errorText(error)), color: "warning" }] }];
+      chrome = { title: UI_COPY.manager.title(), hint: UI_COPY.manager.closeKeybar().trim() };
     }
-    return lines.map((line) => this.#paint(line, width));
+    return this.#frame(body, chrome, width);
   }
 
   handleInput(data: string): void {
@@ -199,23 +206,27 @@ export class DispatchViewComponent implements Component {
     return buildListLines(snapshot, this.#selectedId, this.#showSettled, this.#now(), visibleIds);
   }
 
-  #detailLines(): ViewLine[] {
+  #detailView(): { body: ViewLine[]; chrome: ViewChrome } {
     const dispatch = this.#currentDispatch();
     if (!dispatch) {
-      return [
-        { spans: [{ text: UI_COPY.manager.missingRegistryDispatch(), color: "warning" }] },
-        { spans: [{ text: UI_COPY.manager.backKeybar(), color: "dim" }] },
-      ];
+      return {
+        body: [{ spans: [{ text: UI_COPY.manager.missingRegistryDispatch(), color: "warning" }] }],
+        chrome: { title: UI_COPY.manager.detailTitle(), hint: UI_COPY.manager.backKeybar().trim() },
+      };
     }
     const snapshot = this.#ports.snapshot();
-    return buildDetailLines(
-      dispatch,
-      this.#ports.listAttention(dispatch.id),
-      this.#output,
-      this.#now(),
-      snapshot.originSessionId,
-      this.#showTechnical,
-    );
+    const attention = this.#ports.listAttention(dispatch.id);
+    return {
+      body: buildDetailLines(
+        dispatch,
+        attention,
+        this.#output,
+        this.#now(),
+        snapshot.originSessionId,
+        this.#showTechnical,
+      ),
+      chrome: detailChrome(dispatch, attention, snapshot.originSessionId),
+    };
   }
 
   #currentDispatch(): StoredDispatch | undefined {
@@ -313,6 +324,40 @@ export class DispatchViewComponent implements Component {
     this.#done(result);
   }
 
+  /** Wrap body lines in the rounded frame; title/counts live in the top border, the keybar in the bottom border. */
+  #frame(body: ViewLine[], chrome: ViewChrome, width: number): string[] {
+    const safeWidth = Math.max(24, width);
+    const inner = safeWidth - 4;
+    const border = (text: string) => this.#theme.fg("accent", text);
+    const rows = body.map(
+      (line) => `${border("│ ")}${this.#paint(line, inner)}${border(" │")}`,
+    );
+    return [this.#frameTop(chrome, inner, border), ...rows, this.#frameBottom(chrome.hint, inner, border)];
+  }
+
+  #frameTop(chrome: ViewChrome, inner: number, border: (text: string) => string): string {
+    const title = truncateToWidth(` ${chrome.title} `, inner, "");
+    const counts = chrome.counts === undefined ? "" : ` ${chrome.counts} `;
+    const titleWidth = visibleWidth(title);
+    const countsWidth = visibleWidth(counts);
+    const dashes = inner - titleWidth - countsWidth;
+    if (dashes < 0) {
+      return border(`╭─${"─".repeat(Math.max(0, inner))}─╮`);
+    }
+    const paintedTitle = this.#theme.bold(this.#theme.fg("text", title));
+    const paintedCounts =
+      counts === "" ? "" : this.#theme.fg(chrome.countsColor ?? "muted", counts);
+    return (
+      border("╭─") + paintedTitle + border("─".repeat(dashes)) + paintedCounts + border("─╮")
+    );
+  }
+
+  #frameBottom(hint: string, inner: number, border: (text: string) => string): string {
+    const label = truncateToWidth(` ${hint} `, inner, "");
+    const dashes = inner - visibleWidth(label);
+    return border("╰─") + this.#theme.fg("dim", label) + border(`${"─".repeat(Math.max(0, dashes))}─╯`);
+  }
+
   #paint(line: ViewLine, width: number): string {
     const safeWidth = Math.max(1, width);
     let remaining = safeWidth;
@@ -324,8 +369,8 @@ export class DispatchViewComponent implements Component {
       const colored = this.#theme.fg(part.color, text);
       painted += part.bold ? this.#theme.bold(colored) : colored;
     }
-    if (!line.selected) return painted;
-    return this.#theme.bg("selectedBg", `${painted}${" ".repeat(Math.max(0, remaining))}`);
+    const padded = `${painted}${" ".repeat(Math.max(0, remaining))}`;
+    return line.selected ? this.#theme.bg("selectedBg", padded) : padded;
   }
 }
 

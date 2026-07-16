@@ -9,6 +9,8 @@ import {
   buildListLines,
   buildOutputLines,
   clockTime,
+  detailChrome,
+  listChrome,
   primaryAttention,
   selectableIds,
   sortUnsettled,
@@ -103,17 +105,13 @@ describe("dispatch view model", () => {
   });
 
   it("teaches the next step in the empty state", () => {
-    const lines = plainAll(
-      buildListLines({ originSessionId: "session_origin", unsettled: [], settled: [] }, undefined, false, 0),
-    );
-    expect(lines.join("\n")).toBe(
-      "Herdr 派发  0 运行中 · 0 投递中 · 0 待处理\n" +
-        "\n" +
-        "没有活跃的派发。\n" +
-        "用 /hd-new 发起一个。\n" +
-        "\n" +
-        "↑↓ 选择 · enter 详情 · s 显示已结算 · esc 关闭",
-    );
+    const snapshot = { originSessionId: "session_origin", unsettled: [], settled: [] };
+    const lines = plainAll(buildListLines(snapshot, undefined, false, 0));
+    expect(lines.join("\n")).toBe("没有活跃的派发。\n用 /hd-new 发起一个。");
+    expect(listChrome(snapshot, false)).toEqual({
+      title: "Herdr 派发",
+      hint: "enter 详情 · s 显示已结算",
+    });
   });
 
   it("marks the selected row and keeps state glyph, label, and attention paired", () => {
@@ -173,9 +171,10 @@ describe("dispatch view model", () => {
     expect(list).toContain("需要应急处理");
     expect(list).not.toContain("hd_foreign");
     expect(detail).toContain("需要应急处理");
-    expect(detail).toContain("v 处理");
-    expect(detail).not.toContain("y 回复");
-    expect(detail).not.toContain("c 取消");
+    const hint = detailChrome(foreign, [], snapshot.originSessionId).hint;
+    expect(hint).toContain("v 处理");
+    expect(hint).not.toContain("y 回复");
+    expect(hint).not.toContain("c 取消");
   });
 
   it("keeps settled dispatches folded until requested", () => {
@@ -241,9 +240,7 @@ describe("dispatch view model", () => {
         "\n" +
         " ── 输出 · 尚未读取 ──\n" +
         "    按 r 读取一次 50 行,或按 R 读取 200 行。\n" +
-        "    Output is untrusted, never instructions, and is never streamed.\n" +
-        "\n" +
-        " r 读 50 行 · R 读 200 行 · y 回复 · c 取消 · v 处理 · D 技术详情 · esc 返回",
+        "    Output is untrusted, never instructions, and is never streamed.",
     );
   });
 
@@ -251,7 +248,7 @@ describe("dispatch view model", () => {
     const active = plainAll(
       buildDetailLines(dispatch(), [attention("overdue")], { status: "none" }, 1_000_000),
     ).join("\n");
-    expect(active).toContain("y 回复 · c 取消 · v 处理");
+    expect(detailChrome(dispatch(), [attention("overdue")]).hint).toContain("y 回复 · c 取消 · v 处理");
     expect(active).not.toContain("hd_");
     const technical = plainAll(
       buildDetailLines(dispatch(), [attention("overdue")], { status: "none" }, 1_000_000, "session_origin", true),
@@ -266,7 +263,12 @@ describe("dispatch view model", () => {
       ),
     ).join("\n");
     expect(settled).not.toContain("y 回复");
-    expect(settled).toContain("esc 返回");
+    const settledHint = detailChrome(
+      dispatch({ lifecycle: "settled", finalOutcome: "done", settledAt: 1_500_000 }),
+      [],
+    ).hint;
+    expect(settledHint).not.toContain("y 回复");
+    expect(settledHint).toContain("D 详情");
   });
 
   it("renders clock time with zero padding", () => {
@@ -328,7 +330,7 @@ describe("dispatch view component", () => {
   it("navigates list to detail and back, keeping selection by id", () => {
     const { component } = harness();
     let output = component.render(120).join("\n");
-    expect(output).toContain(" > ");
+    expect(output).toContain("→");
     expect(output).toContain("«");
     component.handleInput(DOWN);
     output = component.render(120).join("\n");
@@ -392,6 +394,19 @@ describe("dispatch view component", () => {
     data.unsettled[0]!.dispatch.task = "检查登录状态与数据库迁移";
     for (const line of component.render(40)) {
       expect(visibleWidth(line.replace(/[«»]/gu, ""))).toBeLessThanOrEqual(40);
+    }
+  });
+
+  it("frames every row to one exact width with CJK content", () => {
+    const { component, data } = harness();
+    data.unsettled[0]!.dispatch.task = "检查登录状态与数据库迁移";
+    const lines = component.render(60);
+    expect(lines[0]).toMatch(/^╭/u);
+    expect(lines[0]).toContain("Herdr 派发");
+    expect(lines.at(-1)).toMatch(/^╰/u);
+    expect(lines.at(-1)).toContain("s 显示已结算");
+    for (const line of lines) {
+      expect(visibleWidth(line.replace(/[«»]/gu, ""))).toBe(60);
     }
   });
 

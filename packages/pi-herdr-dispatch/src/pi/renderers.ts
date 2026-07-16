@@ -322,11 +322,12 @@ export function renderDispatchWidget(counts: WidgetCounts, theme: Theme): Text {
   const copy = UI_COPY.presentation.widget(counts);
   const segments = [
     copy.delivering ? paint("warning", `◌ ${copy.delivering}`) : "",
-    paint(counts.active > 0 ? "accent" : "dim", `● ${copy.running}`),
-    counts.attention > 0
-      ? paint("warning", `${ATTENTION_GLYPH} ${copy.attention}`)
-      : paint("dim", copy.attention),
+    copy.running ? paint("accent", `● ${copy.running}`) : "",
+    copy.attention ? paint("warning", `${ATTENTION_GLYPH} ${copy.attention}`) : "",
   ].filter(Boolean);
+  if (segments.length === 0) {
+    return new Text(paint("dim", UI_COPY.presentation.widgetQuiet()), 0, 0);
+  }
   return new Text(
     `${paint("dim", UI_COPY.presentation.widgetLabel())}  ${segments.join(
       paint("dim", UI_COPY.presentation.widgetSeparator()),
