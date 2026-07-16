@@ -27,11 +27,11 @@ describe("dispatch widget", () => {
   it("uses belowEditor, reads live Registry state on every render, and never replaces the footer", () => {
     const presentation = ui();
     let unsettled = [
-      { id: "hd_1", lifecycle: "active" },
-      { id: "hd_2", lifecycle: "delivering" },
+      { id: "hd_1", lifecycle: "active", originSessionId: "session-origin" },
+      { id: "hd_2", lifecycle: "delivering", originSessionId: "session-origin" },
     ];
     const registry = {
-      listUnsettled: () => unsettled,
+      listUnsettledInWorkspace: () => unsettled,
       listAttention: (id: string) =>
         id === "hd_1"
           ? [
@@ -42,7 +42,7 @@ describe("dispatch widget", () => {
           : [],
     } as unknown as DispatchRegistry;
 
-    expect(updateDispatchWidget(presentation, registry, "session-origin")).toBe(
+    expect(updateDispatchWidget(presentation, registry, "session-origin", "workspace-current")).toBe(
       "dispatches: 1 delivering · 0 running · 1 attention",
     );
     expect(presentation.setWidget).toHaveBeenCalledWith(
@@ -91,11 +91,13 @@ describe("dispatch widget", () => {
   ] as const)("groups an active dispatch with %s under attention, not running", (condition) => {
     const presentation = ui();
     const registry = {
-      listUnsettled: () => [{ id: "hd_1", lifecycle: "active" }],
+      listUnsettledInWorkspace: () => [
+        { id: "hd_1", lifecycle: "active", originSessionId: "session-origin" },
+      ],
       listAttention: () => [{ condition }],
     } as unknown as DispatchRegistry;
 
-    expect(updateDispatchWidget(presentation, registry, "session-origin")).toBe(
+    expect(updateDispatchWidget(presentation, registry, "session-origin", "workspace-current")).toBe(
       "dispatches: 0 running · 1 attention",
     );
   });
@@ -103,16 +105,39 @@ describe("dispatch widget", () => {
   it("keeps clean delivering and active lifecycle counts distinct", () => {
     const presentation = ui();
     const registry = {
-      listUnsettled: () => [
-        { id: "hd_delivering", lifecycle: "delivering" },
-        { id: "hd_active", lifecycle: "active" },
+      listUnsettledInWorkspace: () => [
+        { id: "hd_delivering", lifecycle: "delivering", originSessionId: "session-origin" },
+        { id: "hd_active", lifecycle: "active", originSessionId: "session-origin" },
       ],
       listAttention: () => [],
     } as unknown as DispatchRegistry;
 
-    expect(updateDispatchWidget(presentation, registry, "session-origin")).toBe(
+    expect(updateDispatchWidget(presentation, registry, "session-origin", "workspace-current")).toBe(
       "dispatches: 1 delivering · 1 running · 0 attention",
     );
+  });
+
+  it("counts a foreign-Origin unsettled record as attention without exposing its ID", () => {
+    const presentation = ui();
+    const listUnsettledInWorkspace = vi.fn(() => [
+      { id: "hd_foreign_secret", lifecycle: "active", originSessionId: "session-earlier" },
+      { id: "hd_current", lifecycle: "active", originSessionId: "session-origin" },
+    ]);
+    const registry = {
+      listUnsettledInWorkspace,
+      listAttention: () => [],
+    } as unknown as DispatchRegistry;
+
+    const text = updateDispatchWidget(
+      presentation,
+      registry,
+      "session-origin",
+      "workspace-current",
+    );
+
+    expect(listUnsettledInWorkspace).toHaveBeenCalledExactlyOnceWith("workspace-current");
+    expect(text).toBe("dispatches: 1 running · 1 attention");
+    expect(text).not.toContain("hd_");
   });
 });
 

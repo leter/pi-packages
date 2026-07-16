@@ -41,6 +41,7 @@ export class DispatchRuntime {
   #application?: DispatchApplication;
   #ui?: ExtensionContext["ui"];
   #originSessionId?: string;
+  #workspaceId?: string;
   #mutationUnavailableReason = UI_COPY.runtime.dispatchSessionNotStarted();
   readonly #stateListeners = new Set<() => void>();
 
@@ -106,6 +107,7 @@ export class DispatchRuntime {
       if (ctx.mode === "tui") {
         this.#ui = ctx.ui;
         this.#originSessionId = ctx.sessionManager.getSessionId();
+        this.#workspaceId = workspaceId;
       }
       if (this.registryRuntime.registry) {
         const registry = this.registryRuntime.registry;
@@ -183,6 +185,7 @@ export class DispatchRuntime {
     if (this.#ui) clearDispatchWidget(this.#ui);
     this.#ui = undefined;
     this.#originSessionId = undefined;
+    this.#workspaceId = undefined;
     this.#monitor?.stop();
     this.#monitor = undefined;
     this.#contextDelivery = undefined;
@@ -227,8 +230,13 @@ export class DispatchRuntime {
 
   #updateWidget(): void {
     for (const listener of this.#stateListeners) listener();
-    if (!this.#ui || !this.#originSessionId || !this.registryRuntime.registry) return;
-    updateDispatchWidget(this.#ui, this.registryRuntime.registry, this.#originSessionId);
+    if (!this.#ui || !this.#originSessionId || !this.#workspaceId || !this.registryRuntime.registry) return;
+    updateDispatchWidget(
+      this.#ui,
+      this.registryRuntime.registry,
+      this.#originSessionId,
+      this.#workspaceId,
+    );
   }
 
   #contextPort(ctx: ExtensionContext): OriginContextPort {

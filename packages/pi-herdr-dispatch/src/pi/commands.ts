@@ -172,7 +172,7 @@ export function registerDispatchCommands(
         const app = application(runtime);
         ctx.ui.notify(
           formatDispatchTable(
-            app.listUnsettled(ctx.sessionManager.getSessionId()),
+            app.listUnsettledInWorkspace(),
             (dispatchId) => app.listAttention(dispatchId),
             Date.now(),
           ),

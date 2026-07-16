@@ -14,14 +14,18 @@ export function updateDispatchWidget(
   ui: Pick<ExtensionUIContext, "setWidget">,
   registry: DispatchRegistry,
   originSessionId: string,
+  targetWorkspaceId: string,
 ): string {
-  const counts = readWidgetCounts(registry, originSessionId);
+  const counts = readWidgetCounts(registry, originSessionId, targetWorkspaceId);
   const text = UI_COPY.presentation.widget(counts).plain;
   ui.setWidget(
     DISPATCH_WIDGET_KEY,
     (_tui, theme) => ({
       render(width: number): string[] {
-        return renderDispatchWidget(readWidgetCounts(registry, originSessionId), theme).render(width);
+        return renderDispatchWidget(
+          readWidgetCounts(registry, originSessionId, targetWorkspaceId),
+          theme,
+        ).render(width);
       },
       invalidate(): void {},
     }),
@@ -30,10 +34,15 @@ export function updateDispatchWidget(
   return text;
 }
 
-function readWidgetCounts(registry: DispatchRegistry, originSessionId: string) {
-  const entries = registry.listUnsettled(originSessionId).map((dispatch) => ({
+function readWidgetCounts(
+  registry: DispatchRegistry,
+  originSessionId: string,
+  targetWorkspaceId: string,
+) {
+  const entries = registry.listUnsettledInWorkspace(targetWorkspaceId).map((dispatch) => ({
     dispatch,
-    needsAttention: registry.listAttention(dispatch.id).length > 0,
+    needsAttention:
+      dispatch.originSessionId !== originSessionId || registry.listAttention(dispatch.id).length > 0,
   }));
   return {
     delivering: entries.filter(
