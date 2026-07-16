@@ -15,7 +15,7 @@ Read these files completely:
 
 ## Intended V1
 
-Pi coordinates coding agents that already exist on one local Herdr server. It may propose tasks for idle agents, but every dispatch and ordinary follow-up requires human confirmation. It cannot create agents, panes, workspaces, or worktrees. Dispatches are asynchronous; results never trigger an autonomous parent-model turn.
+Pi coordinates coding agents that already exist on one local Herdr server. Typed TUI dispatch is automatic by default without confirmation or authorization setup, while every ordinary follow-up still requires human confirmation. It cannot create agents, panes, workspaces, or worktrees. Dispatches are asynchronous; results never trigger an autonomous parent-model turn.
 
 The design uses:
 

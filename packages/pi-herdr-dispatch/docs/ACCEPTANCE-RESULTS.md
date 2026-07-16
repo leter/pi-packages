@@ -1,11 +1,32 @@
 # Phase 6 Acceptance Results
 
-Date: 2026-07-15  
-Result: **PASS**
+Date: 2026-07-15
+
+Original result: **PASS**
+
+Invalidated: **2026-07-16**, after the original checklist failed to prove cross-Agent delivery
+
+Current result: **PASS restored for automatic-default dispatch on 2026-07-16**
+
+The original checklist did not prove the core delivery contract across supported Agent TUIs. A later confirmed dispatch to a real Claude Code target returned a successful `pane.send_input` response but produced no target echo, no visible task, and no execution acknowledgement. The application nevertheless changed the Registry to `active` while adding `delivery-unverified`, contradicting the package's own lifecycle vocabulary. That PASS was correctly withdrawn.
+
+After staged text/Enter delivery, exact-echo activation, startup-window Result Envelope re-reads, temporary scoped Automation Grants, and live Registry widget rendering were implemented, a fresh real-Agent matrix passed without manual Enter or per-dispatch confirmation. Each target rendered its exact Dispatch Correlation ID and task, returned `done`, settled with no Attention Conditions, and left zero unsettled records:
+
+| Agent | Dispatch | Result | Attention | Target evidence |
+|---|---|---|---|---|
+| Pi | `hd_mrmzlgsg_WycYBV3gD4iIbd34` | `settled / done` | none | Exact prompt/result visible; widget rendered `0 running · no attention` afterward |
+| Claude Code | `hd_mrmzmcs9_pVTe3BIsZSStVBox` | `settled / done` | none | Exact prompt/result visible; no manual Enter |
+| Codex | `hd_mrmzngte_snbgUehycDWOIj_g` | `settled / done` | none | Delayed hard-wrapped result accepted automatically inside the bounded re-read window |
+| OpenCode | `hd_mrmzo1eo_hyjXkiB5KOMo1R9q` | `settled / done` | none | Bordered hard-wrapped prompt/result accepted |
+| Droid | `hd_mrn2uj3j_Y-QdLHOBkr62kyDG` | `settled / done` | none | Hook-decorated prompt/result accepted |
+| Amp | `hd_mrn2vcni_6xDAYymlVryheWO3` | `settled / done` | none | Bordered, hard-wrapped prefix and JSON accepted |
+| Grok | `hd_mrn2wpsu_5U6bfN9MCOSjUiRH` | `settled / done` | none | Timestamp-decorated bare prefix plus hard-wrapped JSON accepted after regression fix |
+
+That historical matrix consumed the remaining four uses of a five-use Automation Grant. At the user's explicit request, schema version 3 removes grant state and makes typed TUI dispatch automatic by default ([ADR 0009](./adr/0009-automatic-dispatch-by-default.md)). After reload, the real Registry migrated to version 3, the `automation_grants` table was absent, `integrity_check` remained `ok`, and zero unsettled records or Attention Conditions remained. A fresh no-prompt Pi dispatch (`hd_mrn2p0r3_OFvK4ZshIsL0cO3Q`) reached exact delivery echo, settled `done`, had no Attention Conditions, and rendered `0 running · no attention`. Default verification passed 312 tests with one intentional skip, and the formal real-server contract passed separately through `bash scripts/verify.sh live`.
 
 ## Environment
 
-- Pi `0.80.6`
+- Pi `0.80.7` for the post-repair matrix (`0.80.6` for the original checklist)
 - Herdr `0.7.3`, protocol `16`
 - Node.js `24.18.0`
 - Package remained `private` at `0.0.0-development`
@@ -17,7 +38,7 @@ The live checklist ran in one named, disposable Herdr session with one disposabl
 
 | Check | Result | Evidence |
 |---|---|---|
-| Widget placement | PASS | A real Pi TUI showed `dispatches: 0 active · 0 attention` below the editor. Source and unit tests require `placement: "belowEditor"`. |
+| Widget placement | PASS | A real Pi TUI showed `dispatches: 0 running · no attention` below the editor. Source and unit tests require `placement: "belowEditor"`. |
 | Custom footer coexistence | PASS | The machine's `clean-footer.ts` remained visible as `gpt-5.5 high · content 0%` before and after `/reload`, at the same time as the dispatch widget. The extension never called `setFooter`. |
 | Notification sounds | PASS | Outcome/attention tests observed only `done`, `request`, and `none`; no other sound value is produced. |
 | Pane metadata | PASS | Adapter traces and source audit contained no `pane.report_metadata` request. |
@@ -106,7 +127,7 @@ A real `pi --fork` process opened the Origin's session history under a distinct 
 
 ### L11 — natural-language and raw-CLI bypass attempts
 
-**PASS.** In a real model turn, asking Pi naturally to use Herdr caused it to read the official Herdr skill, call `herdr_agents_list`, and call `herdr_dispatch_propose`. The TUI displayed Approve/Edit/Cancel; selecting Cancel created no dispatch. An adversarial natural-language request to bypass confirmation with raw `herdr pane run` was refused without a tool call.
+**PASS.** In a real model turn, asking Pi naturally to use Herdr caused it to call `herdr_agents_list` and `herdr_dispatch_propose`. The typed tool now sends automatically without Approve/Edit/Cancel or authorization setup. A post-migration probe verified this no-prompt behavior end to end. An adversarial natural-language request to bypass the typed path with raw `herdr pane run` was still refused without a tool call.
 
 Direct `!` and `!!` attempts then verified that:
 
@@ -143,6 +164,9 @@ The file was restored and the disposable repository ended clean.
 1. **Narrow Pi TUI hard-wrapping:** Pi can render the result prefix and JSON across multiple terminal rows. Result scanning now reconstructs at most eight adjacent unfenced rows before strict schema/source validation; it does not accept an unbounded multiline result.
 2. **Idle/done equivalence:** final target revalidation now treats `idle` and `done` as equivalent idle-like states while still checking identity, workspace, cwd, Agent label, and provenance.
 3. **Same-pane tab moves:** Herdr can emit `pane_moved` with identical previous/current pane IDs. The adapter no longer treats that unchanged route as invalid, while genuinely changed pane IDs remain invalidated.
+4. **Delayed Codex Result rendering:** the first output match is the dispatched prompt's correlation ID, while Codex may render its hard-wrapped result several seconds later without another useful match event. The monitor now performs bounded re-reads through the startup window, ignores the exact outbound contract template, and defers `malformed-result` until the final read.
+5. **Stale and misleading widget counts:** the widget factory captured counts when `setWidget` ran, and it counted every Active Dispatch as `running` plus every Attention Condition separately. The widget now reads the Registry on every render, counts only clean Active Dispatches as `running`, and counts affected dispatches under attention. One stopped Grok record with three conditions therefore renders `0 running · 1 attention`, matching the Manager grouping.
+6. **Grok timestamp decoration:** Grok renders a right-aligned timestamp after a bare `DISPATCH_RESULT` prefix and hard-wraps the following JSON key. The scanner now strips decoration from prefix-only rows before bounded reconstruction.
 
 Each finding has a deterministic regression test.
 

@@ -1,6 +1,6 @@
 # Agent Workspace Orchestration
 
-This context coordinates confirmed work sent to existing coding agents in one local Herdr workspace. It does not create agents, panes, workspaces, or worktrees.
+This context coordinates automatically dispatched work sent to existing coding agents in one local Herdr workspace. It does not create agents, panes, workspaces, or worktrees.
 
 ## Actors and scope
 
@@ -31,23 +31,19 @@ _Avoid_: concurrent assignment
 ## Proposal and delivery
 
 **Dispatch Proposal**:
-An immutable preview of the complete outbound message, Dispatch Target, mutation contract, confirmed location, deadline, constraints, correlation ID, and result contract.
-_Avoid_: task, hidden wrapper, batch
+An immutable complete outbound message binding the Dispatch Target, mutation contract, target location, deadline, constraints, correlation ID, and result contract. The typed TUI path automatically delivers it after revalidation without authorization state or a confirmation prompt.
+_Avoid_: mutable task, hidden wrapper, authorization request
 
-**Dispatch Confirmation**:
-The user's approval of one current Dispatch Proposal, authorizing delivery exactly as previewed after revalidation.
-_Avoid_: automatic dispatch, stale approval
-
-**Revised Proposal**:
-A new Dispatch Proposal produced after any confirmed field is edited; it requires another complete preview and confirmation.
-_Avoid_: edit-and-send
+**Automatic Dispatch**:
+The default delivery of one immutable Dispatch Proposal through the typed TUI path without per-dispatch confirmation, grant setup, count limit, or expiry. Target identity, workspace, cwd/worktree, occupancy, leases, concurrency, durable intent, delivery echo, and result validation remain enforced.
+_Avoid_: raw Herdr bypass, best-effort retargeting, skipped revalidation
 
 **Stale Proposal**:
 A Dispatch Proposal invalidated because its target, location, availability, occupancy, or lease state changed before delivery.
 _Avoid_: best-effort delivery
 
 **Dispatch Correlation ID**:
-A unique machine identifier binding a confirmed outbound message, delivery evidence, Registry record, follow-up, and Result Envelope to one dispatch. It is an internal correlation detail in ordinary human interaction; users select dispatches by sanitized Agent/task context, while full IDs remain available in explicit technical details and command completion.
+A unique machine identifier binding an immutable outbound message, delivery evidence, Registry record, follow-up, and Result Envelope to one dispatch. It is an internal correlation detail in ordinary human interaction; users select dispatches by sanitized Agent/task context, while full IDs remain available in explicit technical details and command completion.
 _Avoid_: human task label, required manual input, pane status
 
 **Delivery Evidence**:
@@ -61,7 +57,7 @@ The primary progression of one dispatch: proposed, delivering, active, then sett
 _Avoid_: combinatorial state enum
 
 **Delivering Dispatch**:
-A confirmed dispatch whose Target Occupancy and any Worktree Write Lease are held while delivery remains incomplete or uncertain.
+An automatically created dispatch whose Target Occupancy and any Worktree Write Lease are held while delivery remains incomplete or uncertain.
 _Avoid_: active dispatch, safe-to-resend dispatch
 
 **Active Dispatch**:
@@ -131,7 +127,7 @@ The explicit disclosure that target constraints depend on Agent compliance and o
 _Avoid_: guarded target, sandbox guarantee
 
 **Dispatch Bypass**:
-Any path that tasks or waits on another Agent outside a confirmed dispatch, leaving the Dispatch Registry unaware. This includes skill-guided raw Herdr commands from the Origin Pi as well as external shells and uncovered tools.
+Any path that tasks or waits on another Agent outside a typed Registry-backed dispatch, leaving the Dispatch Registry unaware. This includes skill-guided raw Herdr commands from the Origin Pi as well as external shells and uncovered tools.
 _Avoid_: manual shell only, harmless command
 
 **Herdr Command Gate**:
@@ -141,7 +137,7 @@ _Avoid_: shell sandbox, target-side enforcement
 ## Results and resolution
 
 **Final Outcome**:
-The result status that settles a dispatch: done, blocked, failed, or cancelled. Continuing after blocked requires a new confirmed dispatch.
+The result status that settles a dispatch: done, blocked, failed, or cancelled. Continuing after blocked requires a new automatic dispatch.
 _Avoid_: terminal status, free-form status, paused blocked state
 
 **Result Envelope**:
@@ -173,7 +169,7 @@ A confirmed request asking the Dispatch Target to stop and issue a cancelled Res
 _Avoid_: forced interrupt, immediate release
 
 **Manual Resolution**:
-A double-confirmed Final Outcome recorded when automatic settlement is unsafe or impossible, after presenting current target and worktree evidence. It is the only manual way to release reservations.
+A double-confirmed `blocked`, `failed`, or `cancelled` Final Outcome recorded when automatic settlement is unsafe or impossible, after presenting current target and worktree evidence. It never claims `done` and is the only manual way to release reservations.
 _Avoid_: standalone lease release, inferred outcome
 
 **Emergency Resolution**:

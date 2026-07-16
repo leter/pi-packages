@@ -11,7 +11,7 @@ The spike fixes these implementation rules:
 - a Herdr restart changes terminal IDs; missing stored identity becomes `target-lost`, never heuristic retargeting;
 - pane movement requires route re-resolution; closed pane/tab IDs are never reused;
 - output reads request at most 200 lines even though Herdr clamps at 1000;
-- delivery uses one `pane.send_input` with `keys: ["enter"]`, never split text/key calls;
+- multiline delivery stages text, revalidates the route, then submits `keys: ["Enter"]` separately; exact target echo is required for `active`;
 - only explicit `screen_detection_skipped: true` is reported integration authority;
 - V1 never calls `pane.report_metadata`; the widget and notifications are the only status display paths.
 
@@ -23,7 +23,7 @@ These are the seams to approve before TDD begins. Tests exercise behavior throug
 
 1. **Safety Policy module** — accepts a Pi operation plus current-pane/worktree/lease context and returns `allow` or a structured denial with redirect guidance. Shell tokenization and command tables remain hidden implementation details.
 2. **Dispatch Registry module** — opens one configured database and exposes transactional domain operations for proposals, durable delivery intent, reservations, attention, first-wins settlement, context claims, audit, and retention. SQL is not exposed to callers or tests.
-3. **Herdr Adapter module** — validates protocol 16 responses and exposes current-workspace discovery, terminal-to-pane resolution, atomic delivery, bounded tail reads, subscriptions, and notifications. Tests swap the real Unix socket for a protocol-faithful fake.
+3. **Herdr Adapter module** — validates protocol 16 responses and exposes current-workspace discovery, terminal-to-pane resolution, staged-and-revalidated delivery, bounded tail reads, subscriptions, and notifications. Tests swap the real Unix socket for a protocol-faithful fake.
 4. **Dispatch Application module** — creates immutable proposals and executes confirmed commands against the Registry and Herdr Adapter. Pi dialogs/tools are adapters at this seam rather than domain logic.
 5. **Origin Monitor module** — starts for one exact Origin Session ID, consumes events/polls/catch-up reads, and requests domain transitions/settlement. Clock and timers are injected.
 6. **Pi Extension adapter** — registers tools, commands, lifecycle hooks, `tool_call`, `tool_result`, `user_bash`, context delivery, widget, and notifications. It contains minimal policy.
@@ -101,7 +101,7 @@ The identifiers below name the existing `DESIGN.md` checklist entries.
 
 ### Integration checklist
 
-- **I1** atomic `pane.send_input` and fail-closed protocol mismatch
+- **I1** staged `pane.send_input`, route revalidation before Enter, exact echo activation, and fail-closed protocol mismatch
 - **I2** crashes before/during/after send and before `active` commit
 - **I3** resume `delivering`: result present, echo present, or neither
 - **I4** pane close/move during final delivery window and closed-ID non-reuse
@@ -228,7 +228,7 @@ Implement one session-scoped Unix-socket adapter:
 - `session.snapshot` bootstrap restricted to current Workspace Scope;
 - terminal-ID lookup and immediate route revalidation through tightly adjacent one-request unary connections;
 - status provenance mapping (`screen_detection_skipped === true` only), idle/`done` equivalence, and `PaneInfo.cwd` use;
-- one atomic `pane.send_input` request with `keys: ["enter"]`;
+- one text-staging `pane.send_input`, route revalidation, then one `keys: ["Enter"]` submission request;
 - close/move/status/output-matched subscriptions;
 - bounded 50/200-line `recent_unwrapped` reads, accepting shorter/clamped history and ignoring revision as a cursor;
 - delivery echo verification and typed ambiguous-delivery result;
@@ -253,12 +253,12 @@ U4–U5, U7, U11, U16; I1, I4, I7, I12–I15; prepares L1, L4–L8, L10.
 
 1. `feat(herdr): validate protocol 16 socket envelopes`
 2. `feat(herdr): discover current-workspace agents and provenance`
-3. `feat(herdr): revalidate routes and deliver atomically`
+3. `feat(herdr): stage multiline input and revalidate before Enter`
 4. `feat(herdr): subscribe to lifecycle and output events`
 5. `feat(herdr): read bounded tails and verify delivery echoes`
 6. `feat(herdr): reconnect and notify without pane metadata`
 
-## Phase 4 — Proposal and confirmation flow
+## Phase 4 — Proposal and automatic delivery flow
 
 ### Scope
 
@@ -270,7 +270,7 @@ Implement the first usable confirmed-dispatch vertical slice:
 - `herdr_dispatch_propose` plus `/herdr-dispatch` sharing one application path;
 - Approve/Edit/Cancel UI; Edit produces a new immutable proposal;
 - final target/status/workspace/cwd/reservation/concurrency revalidation;
-- durable intent transaction followed by atomic Herdr delivery and bounded startup-window echo re-reads;
+- durable intent transaction followed by staged Herdr delivery, route revalidation, and bounded startup-window echo re-reads;
 - `delivery-unverified` on ambiguity and no automatic resend;
 - `herdr_dispatch_status` and text dispatch listing;
 - sanitize all model-visible metadata and output.
@@ -283,7 +283,7 @@ U3–U7, U10–U11; I1, I4–I8, I19; begins L1–L3, L10–L11.
 
 ### Acceptance criteria
 
-- Every manual/model proposal shows the exact bytes to be sent and requires TUI confirmation.
+- Every manual/model proposal is immutable and TUI-only, and dispatches automatically without authorization setup or a proposal confirmation. Durable intent and reservations remain atomic.
 - Non-TUI modes can list/inspect only and cannot reserve or deliver.
 - Stale proposals cannot be approved after target/worktree/status drift.
 - One Registry transaction durably records intent and reservations before send.
@@ -293,9 +293,9 @@ U3–U7, U10–U11; I1, I4–I8, I19; begins L1–L3, L10–L11.
 ### Approximate commits
 
 1. `feat(dispatch): validate config and build immutable proposals`
-2. `feat(dispatch): render outbound payload and advisory confirmation`
+2. `feat(dispatch): build immutable outbound payload for automatic delivery`
 3. `feat(dispatch): expose scoped listing and one-shot inspection tools`
-4. `feat(dispatch): confirm durable intent and atomic delivery`
+4. `feat(dispatch): require target echo before activation`
 5. `feat(dispatch): surface delivery ambiguity and dispatch status`
 6. `feat(dispatch): add slash-command proposal flow`
 

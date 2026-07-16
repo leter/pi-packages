@@ -6,7 +6,7 @@ Make dispatch IDs an internal correlation detail rather than something users mus
 
 This plan preserves the package's confirmed-dispatch contract:
 
-- every state-changing action remains TUI-only and confirmed;
+- dispatch send is automatic by default through the typed TUI-only path, while reply, cancellation, and resolution retain their per-action confirmation;
 - no action guesses an ambiguous target;
 - delivery ambiguity is never automatically resent;
 - current Workspace Scope, Origin Session, Target Occupancy, Worktree Write Lease, and first-wins settlement rules remain authoritative;

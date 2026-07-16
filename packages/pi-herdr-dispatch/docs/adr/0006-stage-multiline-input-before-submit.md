@@ -1,0 +1,7 @@
+# Stage multiline input before submitting Enter
+
+A real Claude Code dispatch showed that Herdr 0.7.3 can accept one `pane.send_input` request containing multiline text plus `keys: ["Enter"]` while the target TUI only stages the paste and does not submit it. The API response was `ok`, the task remained visible in Claude's editor, no correlation echo appeared in bounded output, and the old application incorrectly advanced the dispatch to `active`. Disposable shell and Pi probes had not covered this Agent-TUI behavior.
+
+Dispatch delivery now uses two fresh unary `pane.send_input` requests: first stage the complete confirmed text, wait briefly for the Agent TUI to consume the paste, re-resolve and revalidate the same terminal-to-pane route, then submit `keys: ["Enter"]`. Any failure after text staging is ambiguous because text may remain in the target editor; the extension never resends automatically. The Registry remains `delivering` until bounded target output contains the exact correlation marker, so neither an `ok` response nor a staged paste can produce `active`.
+
+This supersedes ADR 0002's one-request text-plus-Enter decision while retaining its terminal identity checks, close/move observation, fresh unary connections, bounded echo verification, and no-resend rule. Staged delivery reintroduces a text/Enter interval, but route revalidation immediately before Enter and immutable non-reused pane IDs bound the risk. A target change after staging prevents Enter and leaves explicit `delivery-unverified` attention for manual resolution.

@@ -2,14 +2,14 @@
 
 English | [简体中文](./README.zh-CN.md)
 
-A Pi extension under staged development for safely dispatching explicitly confirmed work to coding Agents that already exist in one local Herdr workspace.
+A Pi extension under staged development for automatically dispatching work through a typed, Registry-backed path to coding Agents that already exist in one local Herdr workspace.
 
-> **Status:** Phase 6 implementation and disposable-topology acceptance are complete. The package is ready for reviewed local development use, but remains `private` at version `0.0.0-development`; publishing requires a separate user decision.
+> **Status:** Experimental, with Phase 6 acceptance restored. The delivery, result, and widget fixes passed a fresh real Pi/Claude Code/Codex/OpenCode/Droid/Amp/Grok matrix, and automatic-default dispatch passed a post-schema-v3 no-prompt live probe. The package remains `private` at `0.0.0-development`; no package has been published.
 
 ## Requirements
 
 - Node.js 24 or newer (`node:sqlite` is required)
-- Pi `0.80.6`
+- Pi `0.80.6` or newer (post-repair matrix validated on `0.80.7`)
 - Herdr `0.7.3`, socket protocol `16`
 - Pi running inside Herdr with `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID`, and `HERDR_PANE_ID`
 
@@ -49,11 +49,11 @@ Reinstalling is only needed when the checkout moves, on another machine, or to r
 The readable `hd-*` aliases are the recommended interactive commands; the original names remain available for compatibility.
 
 - `/hd-agents` (`/herdr-agents`) — list current-workspace Eligible Agents.
-- `/hd-new` (`/herdr-dispatch`) — create and confirm a manual proposal.
+- `/hd-new` (`/herdr-dispatch`) — complete a manual dispatch wizard and send immediately without a final confirmation prompt.
 - `/hd-manager` (`/herdr-dispatches`, or `alt+h`) — open the current-workspace Dispatch Manager, browse human-readable tasks, and perform explicit bounded output reads (`r` for 50 lines, `R` for 200).
 - `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — choose, preview, and confirm a reply when an Active Dispatch has attention.
 - `/hd-cancel [id-or-prefix]` (`/herdr-dispatch-cancel`) — choose and confirm a normal cancellation request; this never sends `Ctrl+C`.
-- `/hd-resolve [id-or-prefix]` (`/herdr-dispatch-resolve`) — choose and manually or emergently settle after evidence and confirmation.
+- `/hd-resolve [id-or-prefix]` (`/herdr-dispatch-resolve`) — choose and manually or emergently settle as `blocked`, `failed`, or `cancelled` after evidence and confirmation; manual resolution never claims `done`.
 - `/hd-output <target> [lines]` (`/herdr-agent-output`) — perform one explicitly requested bounded output read.
 - `/hd-setup` (`/herdr-dispatch-setup`) — explicitly install one selected Herdr status integration.
 
@@ -91,7 +91,7 @@ Action keys only appear when the record's lifecycle, attention state, and Origin
 
 Typical flow: dispatch work with `/hd-new`, watch the widget counts below the editor, press `alt+h` when something needs attention, open the record, read its recent output with `r`, then choose reply, cancel, or resolve from the detail screen.
 
-Every dispatch proposal previews the complete outbound bytes and requires TUI confirmation. Editing creates a new immutable proposal and requires another preview. Non-TUI modes may list and inspect but cannot reserve, send, reply, cancel, resolve, or monitor.
+Dispatch is automatic by default in TUI mode. `herdr_dispatch_propose` and a completed `/hd-new` wizard build one immutable outbound message and send it without a proposal confirmation, grant setup, count limit, expiry, or renewal. The typed path still revalidates current-workspace target identity, status provenance, cwd/canonical worktree, occupancy, leases, and concurrency before durable intent and delivery. Non-TUI modes cannot reserve, send, reply, cancel, resolve, or monitor.
 
 ## Configuration
 
@@ -129,7 +129,7 @@ The extension provides:
 - globally unique Target Occupancy and Worktree Write Leases;
 - a Pi-side guard for identifiable built-in `edit`, `write`, `bash`, `!`, and `!!` mutations;
 - a raw Herdr CLI gate that blocks ordinary tasking, waits, creation, control, foreign reads, and cross-workspace snapshots;
-- exact TUI confirmation, immutable payload hashes, current-workspace scope, terminal identity, close/move observation, and delivery-echo verification;
+- automatic typed dispatch with immutable payload hashes, current-workspace scope, terminal identity, close/move observation, and delivery-echo verification;
 - bounded, explicitly untrusted framing for Agent metadata, output, and results;
 - no automatic resend after ambiguous delivery.
 
@@ -171,7 +171,7 @@ State-changing behavior fails closed and never falls back to an empty or in-memo
 
 ## UI and notifications
 
-The extension adds one compact widget below the editor and never replaces Pi's footer. `/hd-manager` (long form `/herdr-dispatches`; shortcut `alt+h`, TUI only) opens the Dispatch Manager: a current-workspace, attention-first list with recently settled current-Origin records folded away. Dispatch IDs are internal correlation details and appear only in explicit technical details. The manager re-reads the Registry on every render, refreshes relative times, and performs output reads only as explicit one-shot bounded tails (`r` 50 lines, `R` 200 lines, timestamped and framed as untrusted). Reply, cancellation, and resolution selections still pass through their existing preview, eligibility revalidation, and confirmation gates.
+The extension adds one compact widget below the editor and never replaces Pi's footer. `/hd-manager` (long form `/herdr-dispatches`; shortcut `alt+h`, TUI only) opens the Dispatch Manager: a current-workspace, attention-first list with recently settled current-Origin records folded away. Dispatch IDs are internal correlation details and appear only in explicit technical details. The widget and manager re-read the Registry on every render instead of caching status. `running` excludes dispatches grouped under attention, and the attention count is the number of affected dispatches—not the number of concurrent conditions. The manager also refreshes relative times, and performs output reads only as explicit one-shot bounded tails (`r` 50 lines, `R` 200 lines, timestamped and framed as untrusted). Reply, cancellation, and resolution selections still pass through their existing preview, eligibility revalidation, and confirmation gates.
 
 The optional command selector supports exact IDs and unambiguous prefixes for advanced use, with full-ID argument completion. Ambiguous prefixes open a human-readable picker and are never guessed. A foreign-Origin record is discoverable only within the current Workspace Scope and exposes emergency resolution, not reply or cancellation. Herdr notification sounds are restricted to:
 

@@ -4,20 +4,20 @@ Status: implementation plan approved; Phase 5 Origin monitoring and settlement c
 
 ## Purpose
 
-`pi-herdr-dispatch` is a global Pi package for dispatching confirmed work to coding agents that already exist in the Origin Pi's current workspace on one local Herdr server. It may inspect Agent metadata, propose work for an idle-like Agent, and monitor work confirmed by its Origin Session. It cannot create panes, Agents, workspaces, or worktrees.
+`pi-herdr-dispatch` is a global Pi package for automatically dispatching work through a typed, Registry-backed path to coding agents that already exist in the Origin Pi's current workspace on one local Herdr server. It may inspect Agent metadata, dispatch work to an idle-like Agent, and monitor work from its Origin Session. It cannot create panes, Agents, workspaces, or worktrees.
 
 ## V1 boundaries
 
 - Local Herdr server/socket only; no SSH remote sessions.
 - Current Herdr workspace only; no cross-workspace dispatch.
 - Existing Agents only; the Origin Pi cannot dispatch to itself.
-- One dispatch per proposal and confirmation.
+- One automatic dispatch per immutable proposal; no authorization setup or proposal confirmation.
 - Every target-side safety instruction is advisory in V1.
 - No model wait tool and no autonomous continuation when a result arrives.
 - Raw Herdr tasking, pane-control, Agent-start, and blocking-wait commands issued through this Pi's `bash` or `user_bash` paths are gated; Agent inspection remains available.
 - No recursive delegation by a Dispatch Target.
 - Dispatch, reply, cancellation, and manual resolution are TUI-only. Print, JSON, and RPC modes are read-only.
-- Only the TUI Origin Session monitors and settles the dispatches it confirmed. There is no coordinator election or takeover.
+- Only the TUI Origin Session monitors and settles the dispatches it created. There is no coordinator election or takeover.
 - Default limits: four Active Dispatches per target workspace and eight globally.
 
 ## Explicit V1 scope cuts
@@ -33,23 +33,23 @@ The following are intentionally deferred:
 - model-callable reply and cancellation tools;
 - a custom interactive dispatch dashboard (V1 uses a text list plus commands).
 
-These cuts preserve the core confirmed-dispatch workflow while removing the least verifiable distributed-state behavior.
+These cuts preserve the core typed-dispatch workflow while removing the least verifiable distributed-state behavior.
 
 ## Components
 
-1. **Pi extension** — commands, model proposal tools, confirmation UI, status widget, Origin Session monitoring, result delivery, a best-effort Pi-side lease guard, and a raw Herdr CLI gate shared by `tool_call` and `user_bash`.
+1. **Pi extension** — commands, automatic model dispatch tools, status widget, Origin Session monitoring, result delivery, a best-effort Pi-side lease guard, and a raw Herdr CLI gate shared by `tool_call` and `user_bash`.
 2. **Herdr adapter** — one exclusive, reconnecting Unix-socket subscription stream per monitoring Origin Session, plus a fresh connection for every unary request because Herdr 0.7.3 closes unary sockets after one response. It bootstraps from `session.snapshot`, subscribes to supported events, reads bounded pane tails, posts notifications, and delivers input with `pane.send_input`.
-3. **Dispatch Registry** — global SQLite storage in WAL mode, with transactions and unique constraints for target occupancy and worktree write leases.
+3. **Dispatch Registry** — global SQLite storage in WAL mode, with transactions and unique constraints for target occupancy and worktree write leases. Schema version 3 removes the obsolete Automation Grant table.
 4. **Origin Monitor** — a TUI Pi session monitors only records whose persisted Origin Session ID equals its own session ID. Monitoring stops when that session is not running and resumes when the exact session resumes.
-5. **Origin-side Safety Gate** — every Pi process loading the package reads global leases, guards covered Pi mutation paths, and prevents recognized raw Herdr commands from bypassing confirmed dispatch, regardless of whether that process is an Origin Monitor.
+5. **Origin-side Safety Gate** — every Pi process loading the package reads global leases, guards covered Pi mutation paths, and prevents recognized raw Herdr commands from bypassing the typed dispatch path, regardless of whether that process is an Origin Monitor.
 
 ## Identity and workspace scope
 
-The Origin Session is identified by Pi's stable session ID (`ctx.sessionManager.getSessionId()`), with the session file stored only as diagnostic metadata. A fork or clone has a different session ID and is not the Origin Session, even when its history contains the original confirmation.
+The Origin Session is identified by Pi's stable session ID (`ctx.sessionManager.getSessionId()`), with the session file stored only as diagnostic metadata. A fork or clone has a different session ID and is not the Origin Session, even when its history contains the original automatic dispatch.
 
 The extension identifies its Herdr location from `HERDR_PANE_ID` / `HERDR_WORKSPACE_ID`, then resolves the pane through Herdr to obtain its terminal ID. A Dispatch Target is selected only from that workspace.
 
-A proposal displays the target's Agent label, terminal ID, pane ID, status, status evidence, workspace, and cwd/worktree. The terminal ID is the dispatch identity. A pane ID is a stable handle while that pane remains in place, but moving the pane assigns a new pane ID; the route must therefore be re-resolved and revalidated immediately before use. Herdr officially guarantees that closed pane and tab IDs are not reused, so a closed route cannot later retarget a different resource ([Herdr agent skill](https://herdr.dev/docs/agent-skill/)).
+An immutable proposal records the target's Agent label, terminal ID, pane ID, status, status evidence, workspace, and cwd/worktree. The terminal ID is the dispatch identity. A pane ID is a stable handle while that pane remains in place, but moving the pane assigns a new pane ID; the route must therefore be re-resolved and revalidated immediately before use. Herdr officially guarantees that closed pane and tab IDs are not reused, so a closed route cannot later retarget a different resource ([Herdr agent skill](https://herdr.dev/docs/agent-skill/)).
 
 A Git worktree is identified by the real path of `git rev-parse --show-toplevel`. Separate Git worktrees are separate lease subjects. Write dispatch is rejected outside a Git worktree.
 
@@ -66,9 +66,9 @@ Herdr 0.7.3 exposes `screen_detection_skipped: true` only when recognized full-l
 
 Screen-detected Agents remain supported because they are the normal case on the current machine. Ambiguous transitions add attention and never settle a dispatch.
 
-## Proposal and confirmation
+## Proposal and automatic delivery
 
-A proposal is an immutable preview containing:
+A proposal is an immutable complete outbound message containing:
 
 - target identity and status evidence;
 - mode: `non-mutating` or `write`;
@@ -80,7 +80,7 @@ A proposal is an immutable preview containing:
 - correlation ID;
 - exact Result Envelope contract.
 
-The confirmation UI offers **Approve**, **Edit**, and **Cancel**. Editing creates a new immutable proposal and requires another preview. Immediately before delivery, the extension re-resolves terminal ID to pane ID and revalidates through tightly adjacent unary requests. Herdr 0.7.3 accepts only one unary request per connection, so each request uses a fresh socket while the event subscription remains on its own long-lived connection ([compatibility spike](./SPIKE-RESULTS.md#7-unary-and-subscription-socket-lifecycles)):
+The typed TUI path delivers the proposal automatically without Approve/Edit/Cancel, grant setup, count limits, expiry, or renewal. Immediately before delivery, the extension re-resolves terminal ID to pane ID and revalidates through tightly adjacent unary requests. Herdr 0.7.3 accepts only one unary request per connection, so each request uses a fresh socket while the event subscription remains on its own long-lived connection ([compatibility spike](./SPIKE-RESULTS.md#7-unary-and-subscription-socket-lifecycles)):
 
 - `pane.get` still returns the confirmed terminal ID and Agent;
 - target status is idle-like;
@@ -90,11 +90,11 @@ The confirmation UI offers **Approve**, **Edit**, and **Cancel**. Editing create
 
 Any mismatch invalidates the proposal. `foreground_cwd` is not used for worktree identity because transient child-shell `cd` operations would create false drift.
 
-Both `/herdr-dispatch` and `herdr_dispatch_propose` use this path. No entry point bypasses confirmation.
+Both `/herdr-dispatch` and `herdr_dispatch_propose` use this automatic path. Raw Herdr tasking remains denied because it would bypass proposal immutability, Registry reservations, monitoring, and result correlation ([ADR 0009](./adr/0009-automatic-dispatch-by-default.md)).
 
 ## Outbound message
 
-The complete outbound message is visible in confirmation and delivered byte-for-byte:
+The immutable message is stored and delivered byte-for-byte without a proposal confirmation prompt:
 
 ```text
 [HERDR DISPATCH]
@@ -127,30 +127,23 @@ Delivery crosses SQLite and Herdr and therefore cannot be atomic. V1 makes the a
 
 ### Durable intent
 
-On confirmation, one SQLite transaction:
+On automatic dispatch, one SQLite transaction:
 
 1. stores the immutable payload and its hash;
 2. changes lifecycle to `delivering`;
 3. acquires Target Occupancy;
 4. acquires a Worktree Write Lease when mode is write;
-5. appends the confirmation/delivery-intent audit events.
+5. appends the automatic-default delivery-intent audit events.
 
-The extension then performs final target revalidation and sends one socket request:
+The extension then performs final target revalidation and starts staged delivery.
 
-```json
-{
-  "method": "pane.send_input",
-  "params": { "pane_id": "...", "text": "<full message>", "keys": ["enter"] }
-}
-```
+Delivery stages the complete immutable text with `pane.send_input`, waits briefly for the Agent TUI to consume a multiline paste, re-resolves and revalidates the same terminal-to-pane route, then submits `keys: ["Enter"]` in a second `pane.send_input` request. This split is required because a real Claude Code TUI accepted combined text-plus-Enter but left the paste unsubmitted. If the route changes or Enter cannot be verified after staging, delivery is ambiguous and never resent. Closed pane IDs are not reused, and final route revalidation bounds—but cannot eliminate—the residual text/Enter race ([ADR 0006](./adr/0006-stage-multiline-input-before-submit.md)).
 
-`pane.send_input` makes text plus Enter one Herdr operation; it does **not** make target resolution plus send atomic. A pane may still close or move between final `pane.get` and input handling. Herdr guarantees that closed resource IDs are not reused, so a stale closed pane ID cannot retarget a later pane; a move still changes the pane ID and can make the route stale. The residual stale-route/ambiguous-response race is disclosed in the confirmation's advisory warning ([Herdr agent skill](https://herdr.dev/docs/agent-skill/)).
-
-The adapter listens for `pane.closed` and `pane.moved` during the confirmation/delivery window and aborts before send when either event is observed. After send, it re-resolves the target terminal and performs Delivery Echo Verification against `recent_unwrapped` output. Echo verification distinguishes many successful deliveries from stale-route failures, but absence of an echo still cannot prove that no input was accepted.
+The adapter listens for `pane.closed` and `pane.moved` during the proposal/delivery window and aborts before send when either event is observed. After send, it re-resolves the target terminal and performs Delivery Echo Verification against `recent_unwrapped` output. Echo verification distinguishes many successful deliveries from stale-route failures, but absence of an echo still cannot prove that no input was accepted.
 
 ### Normal completion of delivery
 
-The Registry changes `delivering → active` only after `pane.send_input` returns success. Echo verification performs bounded 200-line re-reads through the startup window and searches for the uniquely bounded `ID: hd_...` marker anywhere within a rendered line. This tolerates TUI whitespace, borders, and prompt prefixes observed in the [real Pi echo probe](./SPIKE-RESULTS.md#8-real-pi-tui-delivery-echo-timing-and-shape). If the expected marker does not appear within the startup window, `delivery-unverified` attention is added; the message is never resent automatically.
+The Registry changes `delivering → active` only after bounded echo verification finds the uniquely bounded `ID: hd_...` marker in target output. A successful `pane.send_input` response alone never activates a dispatch because it does not prove that the target TUI consumed or rendered the input. Verification performs bounded 200-line re-reads through the startup window and tolerates TUI whitespace, borders, and prompt prefixes. If the marker does not appear, the dispatch remains `delivering`, `delivery-unverified` attention is added, and the message is never resent automatically.
 
 Phase 4/5 must treat `markActive` losing its compare-and-set because the dispatch already settled as a benign race: a valid result may settle before echo verification, or emergency resolution may settle first. The delivery path reports the recorded Final Outcome and must not reinterpret this `RegistryStateError` as delivery failure.
 
@@ -291,7 +284,7 @@ Attention Conditions may coexist:
 - `target-lost`
 - `target-moved`
 
-Final Outcomes are `done`, `blocked`, `failed`, and `cancelled`. Every Final Outcome settles the dispatch and releases Target Occupancy and any Worktree Write Lease. Continuing after `blocked` requires a new proposal and confirmation.
+Final Outcomes are `done`, `blocked`, `failed`, and `cancelled`. Every Final Outcome settles the dispatch and releases Target Occupancy and any Worktree Write Lease. Continuing after `blocked` requires a new automatic dispatch proposal.
 
 A deadline expiration adds `overdue`; it does not cancel, stop monitoring, or release reservations.
 
@@ -316,7 +309,7 @@ V1 does not send `Ctrl+C`. If normal cancellation does not settle, the UI instru
 `delivery-unverified`, `result-missing`, `target-lost`, and `target-moved` have no standalone lease-release operation. Manual resolution:
 
 1. shows current target/worktree status and bounded untrusted output;
-2. requires `failed` or `cancelled` plus a summary;
+2. requires `blocked`, `failed`, or `cancelled` plus a summary; manual resolution never claims `done`;
 3. asks for a second confirmation;
 4. records the resolver session ID;
 5. atomically settles and releases reservations.
@@ -344,9 +337,9 @@ Acceptance requires:
 - lifecycle to be `delivering` or `active`;
 - schema validation to succeed.
 
-Pane revision is not an acceptance criterion. Correlation IDs are random and created immediately before confirmation, so a valid pre-delivery match is not expected. The residual risk that a compromised target emits an early false Result Envelope is accepted and tested explicitly.
+Pane revision is not an acceptance criterion. Correlation IDs are random and created immediately before automatic delivery, so a valid pre-delivery match is not expected. The residual risk that a compromised target emits an early false Result Envelope is accepted and tested explicitly.
 
-A matching malformed line adds `malformed-result`, stores a bounded raw line, and notifies; it never settles or triggers an automatic retry. The first valid accepted result wins transactionally. Later duplicates or conflicts are audit events and cannot settle twice.
+The first output match commonly contains the outbound contract template before the Agent has produced a result. The Origin Monitor therefore performs exponentially spaced, bounded 200-line re-reads through the configured startup window. Incomplete matching JSON is not marked malformed during that window, and the exact `done|blocked|failed|cancelled` / `"..."` contract template is ignored as a result attempt. A matching result still malformed on the final read adds `malformed-result`, stores bounded raw evidence, and notifies; it never settles or causes resend. The first valid accepted result wins transactionally. Later duplicates or conflicts are audit events and cannot settle twice ([ADR 0008](./adr/0008-reread-streamed-results-through-startup-window.md)).
 
 Settlement independently computes Git status, changed files, and diff statistics; it does not run tests. Agent-reported tests remain untrusted.
 
@@ -418,7 +411,7 @@ Herdr notifications occur only for Final Outcomes and Attention Conditions:
 - blocked, failed, overdue, malformed, result-missing, target-lost, target-moved, monitoring-paused, unacknowledged, delivery-unverified: sound `request`;
 - cancelled: sound `none`.
 
-Pi shows a one-line widget below the editor while records are active, for example `dispatches: 2 running · 1 attention · alt+h manager`. It does not modify the existing custom footer. Human-facing rows, notifications, confirmations, and result cards lead with sanitized Agent/task display data rather than correlation IDs; canonical IDs remain in protocol, Registry, audit, model data, completion values, and explicit technical details.
+Pi shows a one-line widget below the editor while records are active, for example `dispatches: 2 running · 1 attention · alt+h manager`. The widget reads current Registry counts on every render rather than capturing a state snapshot, so an ordinary TUI repaint repairs any missed change notification. Its groups match the Manager: `running` counts only Active Dispatches with no Attention Conditions, `delivering` counts only clean Delivering Dispatches, and `attention` counts affected dispatches rather than summing concurrent conditions. It does not modify the existing custom footer. Human-facing rows, notifications, confirmations, and result cards lead with sanitized Agent/task display data rather than correlation IDs; canonical IDs remain in protocol, Registry, audit, model data, completion values, and explicit technical details.
 
 ## User interface
 
@@ -427,7 +420,7 @@ Pi shows a one-line widget below the editor while records are active, for exampl
 Every command keeps its descriptive long name for compatibility and registers a compact, readable `hd-*` interactive alias:
 
 - `/hd-agents` (`/herdr-agents`) — Agent metadata from the current Workspace Scope only.
-- `/hd-new` (`/herdr-dispatch`) — manual proposal wizard.
+- `/hd-new` (`/herdr-dispatch`) — manual dispatch wizard; completion sends immediately without a final confirmation prompt.
 - `/hd-manager` (`/herdr-dispatches`) — interactive current-workspace Dispatch Manager; `alt+h` opens the same panel. It groups attention, running, and delivering records, keeps a small current-Origin settled fold, and offers one-shot `r`/`R` output reads framed as untrusted.
 - `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — filtered task selection followed by a previewed reply for an Active Dispatch with attention.
 - `/hd-cancel [id-or-prefix]` (`/herdr-dispatch-cancel`) — filtered task selection followed by a previewed normal cancellation.
@@ -448,7 +441,7 @@ The manager is live: `DispatchRuntime.onStateChanged()` requests a render after 
 - `herdr_dispatch_status`
 - `herdr_agent_output_inspect`
 
-`herdr_dispatch_propose` registers an explicit prompt guideline: **Use `herdr_dispatch_propose` for every request to task another Herdr Agent. Do not use `bash`, `user_bash`, or raw `herdr pane` / `herdr agent` / `herdr wait` commands to send work or wait for it.** The other dispatch tools reinforce the same rule when active.
+`herdr_dispatch_propose` registers an explicit prompt guideline: **Use `herdr_dispatch_propose` for every request to task another Herdr Agent. Do not use `bash`, `user_bash`, or raw `herdr pane` / `herdr agent` / `herdr wait` commands to send work or wait for it.** It sends automatically through the typed path without a confirmation prompt. The other dispatch tools reinforce the same raw-command rule when active.
 
 There is no model wait, reply, cancel, force-cancel, resolve, Agent-start, pane-create, workspace-create, or worktree-create tool.
 
@@ -456,7 +449,7 @@ Agent output inspection is authorized by an explicit user request. A user reques
 
 ### Run-mode rules
 
-Proposal, reply, cancellation, resolution, Origin Monitoring, and context delivery require `ctx.mode === "tui"`; checking `ctx.hasUI` is insufficient because RPC reports UI capability. Non-TUI modes may list current state and perform an explicitly requested bounded inspection only. The lease guard and raw Herdr CLI gate remain active in every mode because they prevent non-Origin Pi processes and skill-guided shell calls from bypassing reservations and confirmation.
+Automatic proposal delivery, reply, cancellation, resolution, Origin Monitoring, and context delivery require `ctx.mode === "tui"`; checking `ctx.hasUI` is insufficient because RPC reports UI capability. Automatic proposal delivery does not open a confirmation prompt. Non-TUI modes may list current state and perform an explicitly requested bounded inspection only. The lease guard and raw Herdr CLI gate remain active in every mode because they prevent non-Origin Pi processes and skill-guided shell calls from bypassing the typed dispatch path.
 
 ## Configuration
 
@@ -500,7 +493,7 @@ The live Herdr 0.7.3 spike is complete; methods and evidence are recorded in [SP
 - terminal IDs change across a clean server restart, so missing stored identity becomes `target-lost`;
 - moving a pane across workspaces changes pane ID while retaining terminal ID, and closed IDs were not reused;
 - `recent_unwrapped` defaults to 80 logical lines, honors requests through 1000, and silently clamps larger requests to 1000; V1 requests only 50 or 200 and never interprets missing tail content as proof;
-- `pane.send_input.keys: ["enter"]` is accepted atomically (the installed server also accepts aliases, which V1 does not use);
+- `pane.send_input.keys: ["Enter"]` matches the installed `herdr pane run` CLI exactly; lowercase aliases observed in a disposable shell are not treated as cross-TUI compatibility evidence;
 - explicit `screen_detection_skipped: true` positively identifies recognized full-lifecycle integration authority; missing/false remains screen-detected;
 - dedicated metadata-token coexistence is unavailable, so V1 omits pane metadata;
 - unary sockets accept one request while `events.subscribe` owns a separate long-lived stream;
@@ -533,7 +526,7 @@ These results tighten behavior to attention/fail-closed. They do not introduce h
 
 Use a fake Herdr Unix socket and temporary SQLite database to test:
 
-- atomic `pane.send_input` payload and fail-closed protocol mismatch;
+- staged multiline text, route revalidation, separate Enter submission, exact echo activation, and fail-closed protocol mismatch;
 - crash before send, during send, after Herdr success, and before `active` commit;
 - resume of `delivering` with result present, echo present, or neither present;
 - pane close/move between final revalidation and send, including conformance with the official closed-ID non-reuse guarantee;
@@ -565,7 +558,7 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 8. Restart Herdr during active work and record identity/history behavior without assuming continuity.
 9. Verify no result triggers a model turn and forks/clones do not claim Origin results.
 10. Verify settlement injects only sanitized results while explicit inspection returns untrusted-framed output.
-11. Ask Pi naturally to “use Herdr to task the adjacent Agent” and verify the official skill cannot bypass proposal/confirmation through `bash`, `!`, or `!!`; verify current-pane reads still work, while repeated foreign reads and `api snapshot` redirect to typed tools.
+11. Ask Pi naturally to “use Herdr to task the adjacent Agent” and verify the official skill cannot bypass the typed dispatch path through `bash`, `!`, or `!!`; verify current-pane reads still work, while repeated foreign reads and `api snapshot` redirect to typed tools.
 12. Verify Registry failure preserves reservations and disables state changes.
 
 ## Review findings addressed
@@ -585,6 +578,10 @@ Use a fake Herdr Unix socket and temporary SQLite database to test:
 
 - [ADR 0001: Use SQLite for the global Dispatch Registry](./adr/0001-sqlite-dispatch-registry.md)
 - [ADR 0002: Deliver dispatches through atomic Herdr pane input](./adr/0002-atomic-herdr-input-delivery.md)
+- [ADR 0006: Stage multiline input before submitting Enter](./adr/0006-stage-multiline-input-before-submit.md)
+- [ADR 0007: Author unattended dispatch with scoped Automation Grants (superseded)](./adr/0007-scoped-automation-grants.md)
+- [ADR 0008: Re-read streamed results through the startup window](./adr/0008-reread-streamed-results-through-startup-window.md)
+- [ADR 0009: Dispatch automatically by default](./adr/0009-automatic-dispatch-by-default.md)
 - [ADR 0003: Model lifecycle, attention, and outcome separately](./adr/0003-orthogonal-dispatch-state.md)
 - [ADR 0004: Use per-origin monitoring in V1](./adr/0004-per-origin-monitoring.md)
 - [ADR 0005: Gate raw Herdr tasking inside Pi](./adr/0005-gate-raw-herdr-tasking.md)

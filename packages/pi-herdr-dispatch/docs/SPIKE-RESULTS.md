@@ -19,7 +19,7 @@ All temporary panes and workspaces were closed after the checks. The named test 
 | Terminal ID continuity across server restart | **Not continuous** | Treat the stored terminal as lost; no heuristic retargeting |
 | Pane ID after move and closed-ID reuse | **Move changes ID; no reuse observed and official contract confirms non-reuse** | Re-resolve by terminal ID before delivery; never reuse stale routes |
 | `recent_unwrapped` depth and `lines` behavior | **Default 80; request cap 1000; larger values silently clamp** | Keep bounded 50/200 reads; missing content proves nothing |
-| `pane.send_input.keys` Enter spelling | **`"enter"` accepted** | Keep one atomic request with `keys: ["enter"]` |
+| `pane.send_input.keys` Enter spelling | **Lowercase worked in a disposable shell, but the installed CLI emits `"Enter"`** | Match `herdr pane run` exactly with `keys: ["Enter"]` |
 | `screen_detection_skipped` authority signal | **Explicit `true` positively identifies recognized full-lifecycle authority** | Only `true` is reported provenance; missing/false is screen-detected |
 | Dedicated metadata-token coexistence | **Unavailable in protocol 16** | Omit pane metadata in V1 |
 | Socket request lifecycle | **Unary connections accept one request; `events.subscribe` owns a long-lived stream** | Use fresh connections for consecutive unary requests and one reconnecting subscription stream |
@@ -108,7 +108,7 @@ Lowercase `"enter"` was accepted and executed the text plus Enter in one request
 
 ### Impact on the design
 
-V1 uses the already reviewed lowercase canonical form `keys: ["enter"]`. Delivery remains one `pane.send_input` request. Alias support is not relied upon, and there is no split `send-text` / `send-keys` fallback.
+The disposable shell accepted lowercase `"enter"`, but that probe did not establish compatibility with every Agent TUI. A later real Claude dispatch staged the multiline payload but did not submit it when text and `"Enter"` shared one request. The implementation now stages text, waits briefly, revalidates the route, and submits `keys: ["Enter"]` separately. Exact target echo—not either API response—is required before activation.
 
 ## 5. `screen_detection_skipped` and integration authority
 
@@ -199,6 +199,7 @@ A follow-up Phase 4 vertical acceptance used a fresh temporary Registry and a se
 - Delivery evidence matches a uniquely bounded `ID: hd_...` marker anywhere within one rendered line, tolerating whitespace, borders, and prompt prefixes.
 - The random correlation ID remains the anti-collision evidence. A missing marker still proves nothing and never triggers automatic resend.
 - Result Envelope validation remains separate and stricter than delivery-echo matching.
+- A later real Codex probe showed that the first output match can be the prompt itself while the valid hard-wrapped result arrives about six seconds later. Origin monitoring therefore re-reads bounded output through the startup window and ignores the exact outbound contract template as a result attempt.
 
 ## 9. Pi idle `nextTurn` result injection
 
