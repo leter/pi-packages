@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-07-17); **implementation not yet acceptance-verified.** Phase 8 is implemented at the coordinator and Registry-guard seams (unit/integration tested), but the end-to-end DispatchRuntime wiring and the exactly-once behavior of a triggered wake remain gated on live acceptance L14 and are not yet verified — a known ghost-wake risk (a triggered wake whose context-delivery claim never completes, re-firing on every settle) can only be confirmed or fixed against a live Pi. Auto Run must not be armed for real unattended work until L14 is run and green. With the switch off — the default — runtime behavior is the ADR-less V1 (`triggerTurn: false` everywhere).
+Accepted (2026-07-17); **core wake path verified live 2026-07-17; full L14 sign-off still partial.** Phase 8 is implemented at the coordinator and Registry-guard seams (unit/integration tested). The load-bearing ghost-wake risk (a triggered wake whose context-delivery claim never completes, re-firing on every settle) is **refuted by a clean live run**: an armed settlement fired exactly one wake turn, the `[HERDR AUTO RUN]` preamble plus result reached the model context (session-file evidence: the assistant turn is parented to the wake message), the context-delivery claim completed exactly once and stayed stable with no re-fire, and no runaway/chain formed (see [ACCEPTANCE-RESULTS.md](./ACCEPTANCE-RESULTS.md)). Remaining L14 cases — multi-hop depth-limit termination, off-mid-flight, and resume visibility — are lower risk and still recommended before relying on Auto Run for real unattended work. With the switch off — the default — runtime behavior is the ADR-less V1 (`triggerTurn: false` everywhere).
 
 ## Context
 

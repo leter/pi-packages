@@ -183,3 +183,22 @@ After evidence was captured:
 - the isolated local package installation had already been removed.
 
 No package was published, and the package version/private flags were unchanged.
+
+---
+
+# Auto Run (Phase 8 / ADR 0014 / L14) — partial live verification
+
+Date: 2026-07-17. Pi `0.80.7`, extension loaded from source, target `codex`.
+
+The load-bearing L14 concern was the **ghost-wake** risk: a triggered wake whose context-delivery claim never completes, re-firing on every settlement. A clean isolated run (a dedicated Origin Pi driven only by the tester, plus a `codex` target) settles this.
+
+**Core wake path — PASS.** Dispatch `hd_mrobpuay_QnoC90Jado9C7K3w` (depth 0) was dispatched from an armed Origin session (`019f6dea…`, armed before settlement), settled `done`, and produced exactly one Auto Run turn. Session-file evidence:
+
+- entry 7 — `custom_message` (`pi-herdr-dispatch-result`) whose content begins `[HERDR AUTO RUN] This turn was triggered automatically by a dispatch settlement; …`, proving the preamble plus untrusted result reached the model context (the human transcript shows only the result card because of the custom renderer, so the preamble is not visible there).
+- entry 8 — an `assistant` message whose `parentId` is entry 7's id, i.e. a model turn ran **on** the wake message (~2.1s later), summarized the trivial result, and ended without a follow-up dispatch (correct per the preamble).
+
+**No ghost-wake, exactly-once holds.** `context_delivery_claims.delivered_at` was set once (`1784255610298`) and stable; over an 18s watch the session file stayed at 9 entries (no re-fire), no `auto_run_depth > 0` dispatch was created, and the Origin returned to idle. The catastrophic "claim never completes → infinite re-wake" mode did not occur.
+
+**Also verified live:** arm/disarm with the `⚡自动` widget segment; stale-target rejection (a dispatch to a closed target's terminal was refused as "not an Eligible Agent"); dispatch delivery, echo, and Result-Envelope settlement across a real `codex` TUI (matched via the startup-window re-reads even when the target soft-wrapped the correlation ID on a narrow pane); **settle-while-disarmed** (a result settling while disarmed queued quietly, no wake); and **settle-then-arm gating** (a result that settled before arming did not retro-ignite when the switch was later turned on — `settledAt < armedAt`).
+
+**Still open for full L14 sign-off** (lower risk than the ghost-wake blocker, not exercised here): multi-hop depth-limit termination (settle → wake → follow-up dispatch → settle → depth-exhausted quiet + review notification); off-mid-flight (a turn already running, `/hd-auto off` holding the rest); and resume restoring the armed switch with its notification. Run these per [L14-auto-run-runbook.md](./L14-auto-run-runbook.md) before relying on Auto Run for real unattended work.
