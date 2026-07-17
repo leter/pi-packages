@@ -23,11 +23,12 @@ describe("Agent launch catalog", () => {
     expect([...parseCurrentIntegrations(status)]).toEqual(["pi", "claude", "opencode", "droid"]);
   });
 
-  it("keeps supported types in stable order only when both integrated and executable", async () => {
+  it("keeps executable integrated or reviewed screen-detected types in stable order", async () => {
     const executable = vi.fn(async (name: string) => name !== "claude");
 
     await expect(launchableAgentTypes(status, executable)).resolves.toEqual([
       "pi",
+      "codex",
       "opencode",
       "amp",
       "droid",
@@ -36,6 +37,7 @@ describe("Agent launch catalog", () => {
     expect(executable.mock.calls.map(([name]) => name)).toEqual([
       "pi",
       "claude",
+      "codex",
       "opencode",
       "amp",
       "droid",
@@ -59,8 +61,10 @@ describe("Agent launch catalog", () => {
     }
   });
 
-  it("allows the reviewed screen-detected Agents without a current integration", async () => {
+  it("allows codex, opencode, and other reviewed screen-detected Agents without a current integration", async () => {
     await expect(launchableAgentTypes("", async () => true)).resolves.toEqual([
+      "codex",
+      "opencode",
       "amp",
       "droid",
       "grok",

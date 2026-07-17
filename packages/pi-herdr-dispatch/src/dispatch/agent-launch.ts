@@ -20,6 +20,9 @@ export const SUPPORTED_AGENT_TYPES = [
 export type SupportedAgentType = (typeof SUPPORTED_AGENT_TYPES)[number];
 
 export const SCREEN_DETECTION_AGENT_TYPES = new Set<SupportedAgentType>([
+  // Herdr 0.7.4 does not report agent_session for codex or opencode integrations.
+  "codex",
+  "opencode",
   "amp",
   "droid",
   "grok",

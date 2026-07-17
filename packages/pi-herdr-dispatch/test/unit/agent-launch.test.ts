@@ -170,7 +170,7 @@ describe("AgentLaunchService", () => {
     },
   );
 
-  it.each(["amp", "droid", "grok"] as const)(
+  it.each(["codex", "amp", "droid", "grok"] as const)(
     "accepts reviewed screen-detected readiness for %s",
     async (agentType) => {
       const detected = snapshot();
