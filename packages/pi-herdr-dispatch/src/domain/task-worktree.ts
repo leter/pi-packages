@@ -3,14 +3,18 @@ import { lstat, mkdir, realpath, rm, rmdir } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 
 import {
-  TASK_WORKTREE_MAX_SLUG_LENGTH,
   taskWorktreeContainer,
   taskWorktreeSlug,
+  taskWorktreeSlugWithSuffix,
   type TaskWorktreeRefusalReason,
 } from "./task-worktree-path.js";
 import { resolveCanonicalWorktree } from "./worktree.js";
 
-export { taskWorktreeContainer, taskWorktreeSlug } from "./task-worktree-path.js";
+export {
+  taskWorktreeContainer,
+  taskWorktreeSlug,
+  taskWorktreeSlugWithSuffix,
+} from "./task-worktree-path.js";
 export type { TaskWorktreeRefusalReason } from "./task-worktree-path.js";
 
 export interface TaskWorktree {
@@ -63,8 +67,7 @@ export class TaskWorktreeService {
     const container = containerExisted ? await realpath(intendedContainer) : intendedContainer;
     const baseSlug = taskWorktreeSlug(task);
     for (let suffix = 1; suffix <= 10_000; suffix += 1) {
-      const suffixText = suffix === 1 ? "" : `-${suffix}`;
-      const slug = `${baseSlug.slice(0, TASK_WORKTREE_MAX_SLUG_LENGTH - suffixText.length)}${suffixText}`;
+      const slug = taskWorktreeSlugWithSuffix(baseSlug, suffix);
       const path = join(container, slug);
       const branch = `task/${slug}`;
       if (await pathExists(path)) continue;

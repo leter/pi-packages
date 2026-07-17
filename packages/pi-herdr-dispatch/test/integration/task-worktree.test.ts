@@ -52,6 +52,22 @@ describe("TaskWorktreeService", () => {
     await expect(readFile(join(first.path, "tracked.txt"), "utf8")).resolves.toBe("base\n");
   });
 
+  it("keeps a numeric collision suffix inside the shortened slug limit", async () => {
+    const root = await repository();
+    const service = new TaskWorktreeService({
+      unsettledWorktreePaths: () => [],
+      withRemovalGuard: withoutRegistryGuard,
+    });
+    const task = "a".repeat(40);
+
+    const first = await service.create(await service.plan(root, task));
+    const second = await service.create(await service.plan(root, task));
+
+    expect(basename(first.path)).toBe("a".repeat(24));
+    expect(basename(second.path)).toBe(`${"a".repeat(22)}-2`);
+    expect(second.branch).toBe(`task/${"a".repeat(22)}-2`);
+  });
+
   it("leaves no container or pane-side resource when git rejects the planned creation", async () => {
     const root = await repository();
     const service = new TaskWorktreeService({
