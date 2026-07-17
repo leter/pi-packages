@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-07-17); design agreed in the ADR 0016 interview, pending final user confirmation of this text before implementation. Builds on the Task Board (ADR 0016).
+Accepted (2026-07-17); design agreed in the ADR 0016 interview, direction re-confirmed by the user before implementation. Builds on the Task Board (ADR 0016). Implementation contract: [ROLES-WORKFLOWS-SPEC.md](../ROLES-WORKFLOWS-SPEC.md).
 
 ## Context
 
