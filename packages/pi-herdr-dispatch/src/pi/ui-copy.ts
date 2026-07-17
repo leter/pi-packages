@@ -141,6 +141,9 @@ export interface HumanUiCopy {
     taskDraftDeleted(): string;
     taskDeleteConfirm(title: string): string;
     taskDeleteConfirmBody(): string;
+    taskDemoteConfirm(title: string): string;
+    taskDemoteConfirmBody(): string;
+    taskDemoted(): string;
     selectedTaskUnavailable(): string;
     taskReturnFeedback(): string;
     taskReturned(): string;
@@ -531,6 +534,9 @@ export const UI_COPY = Object.freeze({
     taskDraftDeleted: () => "任务草稿已删除。",
     taskDeleteConfirm: (title) => `删除草稿“${title}”?`,
     taskDeleteConfirmBody: () => "此操作会永久删除该草稿并记录审计事件。",
+    taskDemoteConfirm: (title) => `将排队任务“${title}”撤回草稿?`,
+    taskDemoteConfirmBody: () => "撤回后任务会回到草稿,之后可以重新批准或删除。",
+    taskDemoted: () => "任务已撤回草稿。",
     selectedTaskUnavailable: () => "所选任务已不在任务板中",
     taskReturnFeedback: () => "填写打回意见",
     taskReturned: () => "任务已打回并重新排队。",

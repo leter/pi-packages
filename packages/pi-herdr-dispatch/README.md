@@ -71,7 +71,7 @@ The command never steals focus, waits up to `agentStartupTimeoutMs` for the perm
 
 `/hd-new` remains valid for shared-worktree write work. When the selected Agent's canonical worktree equals the Origin's, it gives one non-blocking hint that `/hd-create` can prepare isolation and that continuing serializes on the shared lease. Agents already seated in Task Worktrees pass through silently. `/hd-clean` is the only cleanup path: it shows why dirty, unmerged, or unsettled-dispatch-held entries are refused, asks once, then uses `git worktree remove` without `--force` followed by `git branch -d`. Settlement never removes a Task Worktree.
 
-Model tools expose scoped listing, proposal, status, one-shot inspection, and `herdr_task_draft`. The model may draft one bounded Board Task per call, but cannot approve, accept, return, edit, reorder, or delete tasks. Reply, cancellation, resolution, Agent Launch, worktree creation or cleanup, waits, and force interruption are never model tools.
+Model tools expose scoped listing, proposal, status, one-shot inspection, and `herdr_task_draft`. The model may draft one bounded Board Task per call, but cannot approve, accept, withdraw, return, edit, reorder, or delete tasks. Reply, cancellation, resolution, Agent Launch, worktree creation or cleanup, waits, and force interruption are never model tools.
 
 ## Using the Dispatch Manager
 
@@ -90,7 +90,7 @@ State glyphs pair a symbol, a theme color, and a label, so no state relies on co
 | `space` | Toggle the selected draft or review checkbox |
 | `a` / `A` | Select all or invert selection within the current draft/review group |
 | `Enter` on Task Board rows | Approve selected drafts into `排队`, or accept selected `待验收` tasks |
-| `x` on a draft/review row | Delete one draft after confirmation, or enter feedback and `打回` one reviewed task |
+| `x` on a draft/queued/review row | Delete one draft after confirmation, `撤回草稿` for one queued task after confirmation, or enter feedback and `打回` one reviewed task |
 | `c` | Clear all unread completions from the workspace view by marking them seen; retained history is not deleted |
 | `s` | Show or hide recently settled workspace records |
 | `Esc`, `←`, or `Ctrl+C` | Close without changing anything |
@@ -119,7 +119,7 @@ The shared `/hd-new` and `/hd-create` deadline prompt shows the configured defau
 
 The Task Board makes a multi-task run durable. Ask the model to split work into tasks and it creates `草稿` rows with `herdr_task_draft`. Open `/hd-task` or `alt+h`, select drafts with `space`/`a`/`A`, then press `Enter` to `批准` them into `排队`. Drafts consume no Agent, lease, depth, or quota before approval.
 
-The complete lifecycle is `草稿 → 排队 → 已派出 → 待验收 → 已验收`. Every dispatch outcome—including blocked, failed, cancelled, manual resolution, and emergency resolution—moves its bound task to `待验收`. That does not stop the model from routing the next queued task. Acceptance only records bookkeeping; it never merges, pushes, cleans a Task Worktree, switches branches, or marks a dispatch result as seen.
+The forward lifecycle is `草稿 → 排队 → 已派出 → 待验收 → 已验收`. A user can press `x` on a queued task, confirm `撤回草稿`, and then either revise/reapprove it or use the existing draft-only `x` deletion. Every dispatch outcome—including blocked, failed, cancelled, manual resolution, and emergency resolution—moves its bound task to `待验收`. That does not stop the model from routing the next queued task. Acceptance only records bookkeeping; it never merges, pushes, cleans a Task Worktree, switches branches, or marks a dispatch result as seen.
 
 Press `x` on a reviewed task to `打回` it with feedback. The task returns to the end of the queue. Its next attempt is a fresh typed dispatch seeded with the feedback as untrusted data, preferring the previous Agent and Task Worktree. Internal `hdt_` identifiers stay out of ordinary rows and widget text.
 

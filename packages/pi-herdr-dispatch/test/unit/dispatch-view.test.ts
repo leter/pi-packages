@@ -20,6 +20,7 @@ import {
   type ViewLine,
   updateTaskBoardSelection,
   taskBoardSubmission,
+  taskBoardSingleAction,
 } from "../../src/pi/dispatch-view-model.js";
 import { DispatchViewComponent, type DispatchViewPorts } from "../../src/pi/dispatch-view.js";
 
@@ -103,6 +104,14 @@ describe("dispatch view model", () => {
       action: "task-accept",
       taskIds: ["hdt_review"],
     });
+  });
+
+  it("routes x on a queued Board Task to draft withdrawal", () => {
+    expect(taskBoardSingleAction("draft")).toBe("task-delete");
+    expect(taskBoardSingleAction("queued")).toBe("task-demote");
+    expect(taskBoardSingleAction("review")).toBe("task-return");
+    expect(taskBoardSingleAction("dispatched")).toBeUndefined();
+    expect(taskBoardSingleAction("accepted")).toBeUndefined();
   });
 
   it("keeps the checkbox set inside the pure Task Board selection model", () => {
@@ -431,6 +440,7 @@ interface Harness {
     unsettled: UnsettledEntry[];
     unseenSettled: StoredDispatch[];
     settled: StoredDispatch[];
+    tasks: StoredTask[];
   };
   markResultSeen: ReturnType<typeof vi.fn>;
   markResultsSeen: ReturnType<typeof vi.fn>;
@@ -444,6 +454,7 @@ function harness(): Harness {
     ],
     unseenSettled: [],
     settled: [],
+    tasks: [],
   };
   const tui = { requestRender: vi.fn() };
   const inspect = vi.fn(async () => ({ text: "agent output line" }));
@@ -463,6 +474,7 @@ function harness(): Harness {
       unsettled: data.unsettled,
       unseenSettled: data.unseenSettled,
       settled: data.settled,
+      tasks: data.tasks,
     }),
     getDispatch: (id) =>
       [...data.unsettled.map((entry) => entry.dispatch), ...data.unseenSettled, ...data.settled].find(
@@ -485,6 +497,20 @@ const ENTER = "\r";
 const ESCAPE = "\x1b";
 
 describe("dispatch view component", () => {
+  it("returns draft withdrawal when x is pressed on a queued Board Task", () => {
+    const { component, done, data } = harness();
+    data.unsettled = [];
+    data.tasks = [boardTask({ id: "hdt_queued", state: "queued", approvedAt: 100 })];
+    component.render(120);
+
+    component.handleInput("x");
+
+    expect(done).toHaveBeenCalledExactlyOnceWith({
+      action: "task-demote",
+      taskId: "hdt_queued",
+    });
+  });
+
   it("navigates list to detail and back, keeping selection by id", () => {
     const { component } = harness();
     let output = component.render(120).join("\n");

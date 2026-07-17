@@ -9,6 +9,7 @@ import {
 describe("Task Board domain", () => {
   it("allows only the ADR 0016 task state transitions", () => {
     expect(() => assertTaskTransition("draft", "queued")).not.toThrow();
+    expect(() => assertTaskTransition("queued", "draft")).not.toThrow();
     expect(() => assertTaskTransition("queued", "dispatched")).not.toThrow();
     expect(() => assertTaskTransition("dispatched", "review")).not.toThrow();
     expect(() => assertTaskTransition("review", "accepted")).not.toThrow();

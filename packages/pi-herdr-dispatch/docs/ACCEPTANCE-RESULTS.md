@@ -377,6 +377,7 @@ model bash-tool attempt to promote a draft were blocked by the
 2. **V1 gap:** a `queued` task cannot be deleted or demoted (only drafts can be
    deleted, only reviewed tasks returned); an unwanted queued task can only be
    dispatched or left in place. Roadmap candidate alongside reordering.
+   **Resolved (2026-07-17):** `x` on a queued task now confirms `撤回草稿`; the resulting draft can then be deleted through the existing draft-only confirmation.
 3. **Visual note (pre-known):** the `review` state reuses the `▲`/warning attention
    mark; live it reads acceptably in the 待验收 group but remains conceptually
    overloaded.

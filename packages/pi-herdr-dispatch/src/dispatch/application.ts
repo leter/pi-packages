@@ -472,6 +472,10 @@ export class DispatchApplication {
     return this.#registry.approveTasks(taskIds, this.#workspaceId, approvedAt);
   }
 
+  demoteTask(taskId: string, demotedAt: number): void {
+    this.#registry.demoteTask(taskId, this.#workspaceId, demotedAt);
+  }
+
   acceptTasks(taskIds: readonly string[], acceptedAt: number): number {
     return this.#registry.acceptTasks(taskIds, this.#workspaceId, acceptedAt);
   }

@@ -181,11 +181,11 @@ The per-dispatch relay counter that guarantees every Auto Run chain terminates: 
 _Avoid_: retry count, turn budget
 
 **Task Board**:
-Durable, current-Workspace-Scope Registry state containing human-approved Board Tasks. Models may create drafts, but only checkbox actions in the Dispatch Manager can approve or accept them.
+Durable, current-Workspace-Scope Registry state containing human-approved Board Tasks. Models may create drafts, but only user actions in the Dispatch Manager can approve, accept, return, delete, or withdraw them to draft.
 _Avoid_: autonomous scheduler, model-approved task
 
 **Board Task**:
-The human-facing unit of work on the Task Board. It progresses through `draft`, `queued`, `dispatched`, `review`, and `accepted`; one or more fresh dispatches may implement it after a user return.
+The human-facing unit of work on the Task Board. It progresses through `draft`, `queued`, `dispatched`, `review`, and `accepted`; a user may withdraw `queued → draft`, and one or more fresh dispatches may implement it after a user return.
 _Avoid_: dispatch alias, mutable dispatch
 
 **Task Approval**:
@@ -199,6 +199,10 @@ _Avoid_: auto-merge on acceptance, cleanup
 **Task Return**:
 The user action that moves a reviewed Board Task back to queued with bounded feedback. Its next attempt is a fresh typed dispatch and prefers the previous target and Task Worktree.
 _Avoid_: reopening a dispatch, automatic retry
+
+**Draft Withdrawal**:
+The user-only action that moves a queued Board Task back to draft, clearing its approval and FIFO position while preserving its content, Task Worktree preference, and return feedback. Product copy: 撤回草稿.
+_Avoid_: Task Return, 打回, model demotion
 
 **Run Quota**:
 The number of task-bound dispatches remaining in the currently armed Auto Run session. Re-arming resets it; reaching zero leaves queued tasks quiet and unchanged.
@@ -290,4 +294,5 @@ Product copy (UI strings, notifications) is Simplified Chinese ([ADR 0011](./adr
 | Task Approval | 批准 |
 | Task Acceptance | 验收 |
 | Task Return | 打回 |
+| Draft Withdrawal | 撤回草稿 |
 | Run Quota | 本次额度 |

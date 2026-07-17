@@ -365,6 +365,19 @@ export function registerDispatchCommands(
           }
           ctx.ui.notify(UI_COPY.command.taskDraftDeleted(), "info");
         }
+      } else if (result.action === "task-demote") {
+        const confirmed = await ctx.ui.confirm(
+          UI_COPY.command.taskDemoteConfirm(task.title),
+          UI_COPY.command.taskDemoteConfirmBody(),
+        );
+        if (confirmed) {
+          try {
+            app.demoteTask(task.id, Date.now());
+          } catch (error) {
+            throw new Error(UI_COPY.command.taskOperationFailed(), { cause: error });
+          }
+          ctx.ui.notify(UI_COPY.command.taskDemoted(), "info");
+        }
       } else {
         const feedback = await ctx.ui.editor(UI_COPY.command.taskReturnFeedback());
         if (feedback !== undefined) {

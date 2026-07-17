@@ -91,6 +91,11 @@ describe("human UI copy catalog", () => {
       "⚡自动 · 本次额度 7 · 2 草稿待批 · 1 待验收",
     );
     expect(UI_COPY.command.description("task")).toBe("创建草稿或打开任务板");
+    expect(UI_COPY.command.taskDemoteConfirm("整理任务")).toBe(
+      "将排队任务“整理任务”撤回草稿?",
+    );
+    expect(UI_COPY.command.taskDemoteConfirmBody()).toContain("重新批准或删除");
+    expect(UI_COPY.command.taskDemoted()).toBe("任务已撤回草稿。");
     expect(UI_COPY.command.autoStatus(false, 5, 7)).not.toContain("本次额度");
     expect(UI_COPY.manager.technicalLabel("workspace")).toBe("工作区");
     expect(UI_COPY.manager.technicalLabel("worktree")).toBe("任务 worktree");

@@ -11,7 +11,7 @@ export const TASK_FEEDBACK_MAX_LENGTH = 2_000;
 
 const LEGAL_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = Object.freeze({
   draft: ["queued"],
-  queued: ["dispatched"],
+  queued: ["draft", "dispatched"],
   dispatched: ["review"],
   review: ["accepted", "queued"],
   accepted: [],

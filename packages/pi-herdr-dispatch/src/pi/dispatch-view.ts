@@ -16,6 +16,7 @@ import {
   detailChrome,
   listChrome,
   selectableIds,
+  taskBoardSingleAction,
   TaskBoardSelectionModel,
   type DispatchAction,
   type DispatchViewSnapshot,
@@ -54,7 +55,7 @@ export interface DispatchViewPorts {
 export type DispatchViewResult =
   | { action: DispatchAction | "redispatch"; dispatchId: string }
   | { action: "task-approve" | "task-accept"; taskIds: string[] }
-  | { action: "task-delete" | "task-return"; taskId: string }
+  | { action: "task-delete" | "task-demote" | "task-return"; taskId: string }
   | undefined;
 
 export interface DispatchViewOptions {
@@ -212,11 +213,8 @@ export class DispatchViewComponent implements Component {
         return;
       }
       if (key === "x") {
-        if (currentTask.state === "draft") {
-          this.#finish({ action: "task-delete", taskId: currentTask.id });
-        } else if (currentTask.state === "review") {
-          this.#finish({ action: "task-return", taskId: currentTask.id });
-        }
+        const action = taskBoardSingleAction(currentTask.state);
+        if (action) this.#finish({ action, taskId: currentTask.id });
         return;
       }
     }

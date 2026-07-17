@@ -115,6 +115,107 @@ describe("Task Board Registry", () => {
     expect(registry.listTasks("w1").find((task) => task.id === "hdt_c")?.state).toBe("draft");
   });
 
+  it("demotes returned queued work to draft and gives it a fresh FIFO position when reapproved", async () => {
+    const registry = await openRegistry();
+    registry.createTask({
+      id: "hdt_demote",
+      workspaceId: "w1",
+      title: "Parser",
+      task: "Implement the parser",
+      mode: "write",
+      preferredWorktreePath: "/repo/original-preference",
+      createdBy: "user",
+      createdAt: 100,
+    });
+    registry.createTask({
+      id: "hdt_other",
+      workspaceId: "w1",
+      title: "Other",
+      task: "Keep the queue occupied",
+      mode: "non-mutating",
+      createdBy: "model",
+      createdAt: 101,
+    });
+    registry.approveTasks(["hdt_demote", "hdt_other"], "w1", 200);
+    registry.confirmDeliveryIntent(intent({ taskId: "hdt_demote" }));
+    registry.settle({
+      dispatchId: "hd_task_1",
+      outcome: "blocked",
+      sanitizedResult: { id: "hd_task_1", outcome: "blocked", summary: "Needs revision" },
+      kind: "result",
+      settledAt: 300,
+    });
+    registry.returnTask("hdt_demote", "Preserve the public API", "w1", 400);
+
+    registry.demoteTask("hdt_demote", "w1", 500);
+
+    const demoted = registry.getTask("hdt_demote")!;
+    expect(demoted).toMatchObject({
+      title: "Parser",
+      task: "Implement the parser",
+      mode: "write",
+      preferredWorktreePath: "/repo/task-a",
+      returnFeedback: "Preserve the public API",
+      boundDispatchId: "hd_task_1",
+      state: "draft",
+      updatedAt: 500,
+    });
+    expect(demoted).not.toHaveProperty("queuePosition");
+    expect(demoted).not.toHaveProperty("approvedAt");
+    expect(registry.listAuditEvents().at(-1)).toMatchObject({
+      eventType: "task_demoted",
+      data: { taskId: "hdt_demote" },
+      createdAt: 500,
+    });
+
+    registry.approveTasks(["hdt_demote"], "w1", 600);
+    expect(registry.getTask("hdt_demote")).toMatchObject({
+      state: "queued",
+      queuePosition: 3,
+      approvedAt: 600,
+      returnFeedback: "Preserve the public API",
+    });
+  });
+
+  it("refuses to demote draft, dispatched, review, or accepted work", async () => {
+    const registry = await openRegistry();
+    registry.createTask({
+      id: "hdt_state",
+      workspaceId: "w1",
+      title: "State task",
+      task: "State task",
+      mode: "non-mutating",
+      createdBy: "model",
+      createdAt: 100,
+    });
+    expect(() => registry.demoteTask("hdt_state", "w1", 150)).toThrow(RegistryStateError);
+
+    registry.approveTasks(["hdt_state"], "w1", 200);
+    registry.confirmDeliveryIntent(intent({
+      id: "hd_state",
+      taskId: "hdt_state",
+      task: "State task",
+      mode: "non-mutating",
+      worktreePath: undefined,
+      targetTerminalId: "term_state",
+      payloadHash: "sha256:state",
+    }));
+    expect(() => registry.demoteTask("hdt_state", "w1", 250)).toThrow(RegistryStateError);
+
+    registry.settle({
+      dispatchId: "hd_state",
+      outcome: "done",
+      sanitizedResult: { id: "hd_state", outcome: "done", summary: "Done" },
+      kind: "result",
+      settledAt: 300,
+    });
+    expect(() => registry.demoteTask("hdt_state", "w1", 350)).toThrow(RegistryStateError);
+
+    registry.acceptTasks(["hdt_state"], "w1", 400);
+    expect(() => registry.demoteTask("hdt_state", "w1", 450)).toThrow(RegistryStateError);
+    expect(registry.getTask("hdt_state")?.state).toBe("accepted");
+  });
+
   it("binds queued work at depth 0, consumes quota, and refuses non-queued or exhausted work", async () => {
     const registry = await openRegistry();
     registry.createTask({

@@ -15,7 +15,7 @@ Status: ADR 0016 Task Board implemented and verified live (L16, 2026-07-17).
 - One automatic dispatch per immutable proposal; no authorization setup or proposal confirmation. A task-bound Dispatch is separately pre-authorized by Task Approval and, while Auto Run is armed, consumes one unit of Run Quota; task-bound Dispatches while disarmed and all non-task Dispatches have no count limit.
 - Every target-side safety instruction is advisory in V1.
 - No model wait tool. Autonomous continuation exists only as the user-armed, depth-bounded Auto Run path ([ADR 0014](./adr/0014-auto-run-settlement-continuation.md)); with the switch off — the default — a result never starts a model turn.
-- Task Board assignment remains model-routed. The extension never acts as an autonomous scheduler; only the user can approve, accept, return, or delete Board Tasks.
+- Task Board assignment remains model-routed. The extension never acts as an autonomous scheduler; only the user can approve, accept, return, withdraw to draft, or delete Board Tasks.
 - Raw Herdr tasking, pane-control, Agent-start, and blocking-wait commands issued through this Pi's `bash` or `user_bash` paths are gated; Agent inspection remains available.
 - No recursive delegation by a Dispatch Target.
 - Dispatch, reply, cancellation, and manual resolution are TUI-only. Print, JSON, and RPC modes are read-only.
@@ -400,12 +400,13 @@ The Task Board ([ADR 0016](./adr/0016-task-board.md)) is durable Registry state 
 
 ```text
 draft -> queued -> dispatched -> review -> accepted
+draft <- queued (user draft withdrawal)
                          review -> queued (user return)
 ```
 
 Every Final Outcome path moves a bound task from `dispatched` to `review` in the same settlement transaction. Review never blocks the next queued task. Acceptance is terminal bookkeeping only: it never merges, pushes, cleans a Task Worktree, changes branches, or touches ADR 0012 seen state. A return carries bounded user feedback into a fresh dispatch through the fixed English untrusted-data frame and prefers the prior target and Task Worktree.
 
-`herdr_task_draft` creates one model-authored draft. No model tool can approve, edit, reorder, delete, return, or accept a task. `/hd-task` provides manual draft entry and opens the same board embedded in the Dispatch Manager. Draft and review rows use scoped checkbox selection: `space` toggles, `a` selects the current group, `A` inverts it, and `Enter` approves drafts or accepts reviews; `x` deletes one draft after confirmation or returns one reviewed task after feedback entry. Internal `hdt_` identifiers stay out of default rows.
+`herdr_task_draft` creates one model-authored draft. No model tool can approve, edit, reorder, delete, withdraw, return, or accept a task. `/hd-task` provides manual draft entry and opens the same board embedded in the Dispatch Manager. Draft and review rows use scoped checkbox selection: `space` toggles, `a` selects the current group, `A` inverts it, and `Enter` approves drafts or accepts reviews. On one row, `x` deletes a draft after confirmation, withdraws a queued task to draft after confirmation (`撤回草稿`), or returns a reviewed task after feedback entry. Draft withdrawal clears `queue_position` and `approved_at`, preserves content, preference, and return feedback, and makes deletion available only through the existing second, draft-only `x` action. Internal `hdt_` identifiers stay out of default rows.
 
 A task-bound `herdr_dispatch_propose` validates and binds one queued task in the durable-intent transaction. It always records Auto Run Depth 0. While Auto Run is armed it consumes one Run Quota unit; while disarmed a user-turn task dispatch needs no quota and reports no remaining-quota figure. Re-arming with `/hd-auto on [N]` resets quota to N; omitted N uses `defaultRunQuota` (10, range 1–50). At zero, queued tasks remain unchanged and one notification asks for review. Non-task follow-ups retain parent depth + 1.
 

@@ -59,6 +59,7 @@ export type OutputReadState =
 
 export type DispatchAction = "reply" | "cancel" | "resolve";
 export type TaskBoardSelectionCommand = "toggle" | "all" | "invert";
+export type TaskBoardSingleAction = "task-delete" | "task-demote" | "task-return";
 
 export const OUTPUT_DISPLAY_LINES = 20;
 export const SETTLED_DISPLAY_LIMIT = 2;
@@ -263,6 +264,15 @@ export function taskBoardSubmission(
     .map((task) => task.id);
   if (taskIds.length === 0) return undefined;
   return { action: current.state === "draft" ? "task-approve" : "task-accept", taskIds };
+}
+
+export function taskBoardSingleAction(
+  state: StoredTask["state"],
+): TaskBoardSingleAction | undefined {
+  if (state === "draft") return "task-delete";
+  if (state === "queued") return "task-demote";
+  if (state === "review") return "task-return";
+  return undefined;
 }
 
 /** Pure, unit-testable owner of the Task Board checkbox selection state. */

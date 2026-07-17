@@ -327,6 +327,23 @@ export class DispatchRegistry {
     });
   }
 
+  demoteTask(taskId: string, workspaceId: string, demotedAt: number): void {
+    validateTaskIds([taskId]);
+    if (!workspaceId) throw new TypeError("workspaceId must not be empty");
+    validateTimestamp(demotedAt, "demotedAt");
+    this.#mutate("demote queued task to draft", () => {
+      const task = this.#requireTaskState(taskId, workspaceId, "queued");
+      assertTaskTransition(task.state, "draft");
+      this.#database
+        .prepare(
+          `UPDATE tasks SET state = 'draft', queue_position = NULL, approved_at = NULL,
+             updated_at = ? WHERE id = ? AND state = 'queued'`,
+        )
+        .run(demotedAt, taskId);
+      this.#appendTaskAudit(taskId, "task_demoted", {}, demotedAt);
+    });
+  }
+
   acceptTasks(taskIds: readonly string[], workspaceId: string, acceptedAt: number): number {
     validateTaskIds(taskIds);
     if (!workspaceId) throw new TypeError("workspaceId must not be empty");
