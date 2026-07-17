@@ -40,6 +40,16 @@ export interface AutoRunWake {
   preamble: string;
 }
 
+export interface ContextDeliveryOutcome {
+  status: "delivered" | "already-delivered" | "pending-branch-change";
+  /**
+   * Whether this call actually sent a wake message that starts a model turn.
+   * False when it only completed an already-present branch entry's durable claim
+   * (no new turn), so the coordinator must not open a wake bracket for it.
+   */
+  startedWake: boolean;
+}
+
 export class OriginContextDelivery {
   readonly #registry: DispatchRegistry;
   readonly #now: () => number;
@@ -60,7 +70,7 @@ export class OriginContextDelivery {
     dispatchId: string,
     context: OriginContextPort,
     wake?: AutoRunWake,
-  ): "delivered" | "already-delivered" | "pending-branch-change" {
+  ): ContextDeliveryOutcome {
     const dispatch = this.#registry.getDispatch(dispatchId);
     if (!dispatch || dispatch.lifecycle !== "settled") {
       throw new Error(`Dispatch ${dispatchId} is not settled`);
@@ -69,7 +79,9 @@ export class OriginContextDelivery {
       throw new Error("Only the exact Origin Session may claim dispatch context");
     }
     const completed = this.#registry.getContextDelivery(dispatchId);
-    if (completed?.deliveredAt !== undefined) return "already-delivered";
+    if (completed?.deliveredAt !== undefined) {
+      return { status: "already-delivered", startedWake: false };
+    }
     if (this.#preservePendingQueue && completed) this.#enqueued.add(dispatchId);
     const result = this.#registry.getResult(dispatchId);
     if (!result) throw new Error(`Dispatch ${dispatchId} has no stored result`);
@@ -82,6 +94,10 @@ export class OriginContextDelivery {
       claimedAt: this.#now(),
     });
 
+    // Whether this call actually sent the message (a wake send starts a model
+    // turn). Completing an already-present branch entry does not, so the caller
+    // must not treat that "delivered" as a new turn.
+    let startedWake = false;
     let entry = findResultEntry(context.getBranch(), dispatchId);
     if (!entry && !this.#enqueued.has(dispatchId)) {
       this.#enqueued.add(dispatchId);
@@ -103,6 +119,7 @@ export class OriginContextDelivery {
             ? { deliverAs: "followUp", triggerTurn: true }
             : { deliverAs: "nextTurn", triggerTurn: false },
         );
+        startedWake = wake !== undefined;
       } catch (error) {
         entry = findResultEntry(context.getBranch(), dispatchId);
         if (!entry) this.#enqueued.delete(dispatchId);
@@ -110,7 +127,7 @@ export class OriginContextDelivery {
       }
       entry = findResultEntry(context.getBranch(), dispatchId);
     }
-    if (!entry) return "pending-branch-change";
+    if (!entry) return { status: "pending-branch-change", startedWake };
 
     this.#enqueued.delete(dispatchId);
     this.#registry.completeContextDelivery({
@@ -120,7 +137,7 @@ export class OriginContextDelivery {
       entryId: entry.id,
       completedAt: this.#now(),
     });
-    return "delivered";
+    return { status: "delivered", startedWake };
   }
 }
 

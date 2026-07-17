@@ -148,8 +148,8 @@ describe("Origin active-branch context delivery", () => {
     expect(registry.listPendingContextDelivery("session-origin").map((item) => item.id)).toEqual([
       "hd_context",
     ]);
-    expect(delivery.deliver("hd_context", context)).toBe("delivered");
-    expect(delivery.deliver("hd_context", context)).toBe("already-delivered");
+    expect(delivery.deliver("hd_context", context).status).toBe("delivered");
+    expect(delivery.deliver("hd_context", context).status).toBe("already-delivered");
     expect(registry.listPendingContextDelivery("session-origin")).toEqual([]);
 
     expect(context.sends).toBe(1);
@@ -182,20 +182,20 @@ describe("Origin active-branch context delivery", () => {
     const context = new FakeOriginContext();
     context.deferAppend = true;
 
-    expect(delivery.deliver("hd_context", context)).toBe("pending-branch-change");
+    expect(delivery.deliver("hd_context", context).status).toBe("pending-branch-change");
     expect(context.sends).toBe(1);
     expect(context.getBranch().some((entry) => entry.type === "custom_message")).toBe(false);
     expect(registry.getContextDelivery("hd_context")?.deliveredAt).toBeUndefined();
     context.branches.get("a")!.push(entry("unrelated-turn-entry", "root-a", "custom"));
-    expect(delivery.deliver("hd_context", context)).toBe("pending-branch-change");
+    expect(delivery.deliver("hd_context", context).status).toBe("pending-branch-change");
     expect(context.sends).toBe(1);
     const afterReload = new OriginContextDelivery(registry, () => 2_100, true);
-    expect(afterReload.deliver("hd_context", context)).toBe("pending-branch-change");
+    expect(afterReload.deliver("hd_context", context).status).toBe("pending-branch-change");
     expect(context.sends).toBe(1);
 
     context.deferAppend = false;
     context.flushNextTurn();
-    expect(delivery.deliver("hd_context", context)).toBe("delivered");
+    expect(delivery.deliver("hd_context", context).status).toBe("delivered");
     expect(context.sends).toBe(1);
   });
 
@@ -208,7 +208,7 @@ describe("Origin active-branch context delivery", () => {
     expect(() => delivery.deliver("hd_context", context)).toThrow("simulated crash");
     expect(registry.getContextDelivery("hd_context")?.deliveredAt).toBeUndefined();
 
-    expect(delivery.deliver("hd_context", context)).toBe("delivered");
+    expect(delivery.deliver("hd_context", context).status).toBe("delivered");
     expect(context.sends).toBe(1);
     expect(
       context
@@ -223,13 +223,13 @@ describe("Origin active-branch context delivery", () => {
     const context = new FakeOriginContext();
     context.deferAppend = true;
 
-    expect(delivery.deliver("hd_context", context)).toBe("pending-branch-change");
+    expect(delivery.deliver("hd_context", context).status).toBe("pending-branch-change");
     expect(registry.getContextDelivery("hd_context")?.deliveredAt).toBeUndefined();
     context.active = "b";
     context.deferAppend = false;
     context.flushNextTurn();
 
-    expect(delivery.deliver("hd_context", context)).toBe("delivered");
+    expect(delivery.deliver("hd_context", context).status).toBe("delivered");
     expect(context.sends).toBe(1);
     expect(
       context
@@ -245,7 +245,7 @@ describe("Origin active-branch context delivery", () => {
 
     expect(
       delivery.deliver("hd_context", context, { preamble: buildAutoRunPreamble(4) }),
-    ).toBe("delivered");
+    ).toEqual({ status: "delivered", startedWake: true });
 
     expect(context.lastOptions).toEqual({ deliverAs: "followUp", triggerTurn: true });
     const resultEntry = context
@@ -261,6 +261,30 @@ describe("Origin active-branch context delivery", () => {
     }
     expect(registry.getDispatch("hd_context")?.resultSeenAt).toBeUndefined();
     expect(registry.listUnseenSettled("w1").map((item) => item.id)).toEqual(["hd_context"]);
+  });
+
+  it("reports startedWake false when the branch entry is already present (completes claim, sends nothing)", async () => {
+    const registry = await settledRegistry();
+    const delivery = new OriginContextDelivery(registry, () => 2_000);
+    const context = new FakeOriginContext();
+    // Simulate a wake whose turn already appended the result entry to the branch.
+    context.branches.get("a")!.push({
+      id: "preexisting-result",
+      parentId: "root-a",
+      timestamp: new Date().toISOString(),
+      type: "custom_message",
+      customType: DISPATCH_RESULT_CUSTOM_TYPE,
+      content: "already here",
+      display: true,
+      details: { dispatchId: "hd_context", outcome: "done", agentLabel: "pi", taskSummary: "Inspect" },
+    } as SessionEntry);
+
+    const outcome = delivery.deliver("hd_context", context, { preamble: buildAutoRunPreamble(4) });
+
+    // Delivered (durable claim completed) but no new turn started, and no message sent.
+    expect(outcome).toEqual({ status: "delivered", startedWake: false });
+    expect(context.sends).toBe(0);
+    expect(registry.getContextDelivery("hd_context")?.deliveredAt).toBe(2_000);
   });
 
   it("rejects forks and clones with a different session ID", async () => {

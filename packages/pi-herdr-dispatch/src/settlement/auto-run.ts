@@ -38,7 +38,11 @@ export function decideSettlementWake(input: SettlementWakeInput): SettlementWake
   return { wake: true, nextDepth, remainingBudget: input.maxAutoRunDepth - nextDepth };
 }
 
-export type AutoRunDeliveryStatus = "delivered" | "already-delivered" | "pending-branch-change";
+export interface AutoRunDeliveryResult {
+  status: "delivered" | "already-delivered" | "pending-branch-change";
+  /** Whether this call actually sent a wake message that starts a new model turn. */
+  startedWake: boolean;
+}
 
 export interface AutoRunPendingDispatch {
   id: string;
@@ -61,7 +65,7 @@ export interface AutoRunDeliveryBatch {
    */
   isModelIdle: boolean;
   pending: readonly AutoRunPendingDispatch[];
-  deliver(dispatchId: string, wake?: { preamble: string }): AutoRunDeliveryStatus;
+  deliver(dispatchId: string, wake?: { preamble: string }): AutoRunDeliveryResult;
   notifyDepthExhausted(dispatchId: string): void;
 }
 
@@ -116,6 +120,11 @@ export class AutoRunCoordinator {
   }
 
   deliverPending(batch: AutoRunDeliveryBatch): void {
+    // Self-heal stale depth: if the model is idle and no wake is mid-dispatch, any
+    // prior wake turn has ended, so proposals in a following user turn stay depth 0
+    // even if the agent_settled hook that clears #wakeDepth was missed.
+    if (batch.isModelIdle && this.#pendingWakeAt === undefined) this.#wakeDepth = undefined;
+
     let firstWake: { dispatch: AutoRunPendingDispatch; nextDepth: number; remainingBudget: number } | undefined;
     for (const dispatch of batch.pending) {
       const armed = batch.armed && wokeAfterArming(dispatch, batch.armedAt);
@@ -146,24 +155,16 @@ export class AutoRunCoordinator {
       return;
     }
 
-    this.#wakeDepth = firstWake.nextDepth;
-    this.#pendingWakeAt = this.#now();
-    let status: AutoRunDeliveryStatus;
-    try {
-      status = batch.deliver(firstWake.dispatch.id, {
-        preamble: buildAutoRunPreamble(Math.max(0, firstWake.remainingBudget)),
-      });
-    } catch (error) {
-      // Delivery failed before a turn could start: release the bracket so a later
-      // settlement is not permanently blocked by a stale wake marker.
-      this.#wakeDepth = undefined;
-      this.#pendingWakeAt = undefined;
-      throw error;
-    }
-    // Nothing new was sent, so no turn started and no bracket is open.
-    if (status === "already-delivered") {
-      this.#wakeDepth = undefined;
-      this.#pendingWakeAt = undefined;
+    const result = batch.deliver(firstWake.dispatch.id, {
+      preamble: buildAutoRunPreamble(Math.max(0, firstWake.remainingBudget)),
+    });
+    // Open the wake bracket only when a new turn was actually started. A call that
+    // merely completed an already-present branch entry's durable claim (or was held
+    // in the delivery queue) started no turn, so leaving a bracket would be a phantom
+    // hold that strands the next result and mis-attributes depth.
+    if (result.startedWake) {
+      this.#wakeDepth = firstWake.nextDepth;
+      this.#pendingWakeAt = this.#now();
     }
   }
 }

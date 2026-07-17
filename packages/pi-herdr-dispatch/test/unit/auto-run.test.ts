@@ -5,7 +5,7 @@ import {
   buildAutoRunPreamble,
   decideSettlementWake,
   WAKE_START_GRACE_MS,
-  type AutoRunDeliveryStatus,
+  type AutoRunDeliveryResult,
   type AutoRunPendingDispatch,
 } from "../../src/settlement/auto-run.js";
 
@@ -98,6 +98,10 @@ class FakeBatch {
   readonly exhausted: string[] = [];
   /** Dispatches that report already-delivered (nothing new was sent). */
   readonly alreadyDelivered: Set<string>;
+  /** Dispatches that report delivered but started no turn (only completed an existing claim). */
+  readonly completedExisting: Set<string>;
+  /** Dispatches that report pending-branch-change (a wake was sent, entry not yet on branch). */
+  readonly pendingBranchChange: Set<string>;
   /** Dispatches whose delivery should throw. */
   readonly throwOn: Set<string>;
   readonly armedAt?: number;
@@ -110,25 +114,40 @@ class FakeBatch {
     readonly pending: readonly AutoRunPendingDispatch[],
     options: {
       alreadyDelivered?: readonly string[];
+      completedExisting?: readonly string[];
+      pendingBranchChange?: readonly string[];
       throwOn?: readonly string[];
       armedAt?: number;
       isModelIdle?: boolean;
     } = {},
   ) {
     this.alreadyDelivered = new Set(options.alreadyDelivered ?? []);
+    this.completedExisting = new Set(options.completedExisting ?? []);
+    this.pendingBranchChange = new Set(options.pendingBranchChange ?? []);
     this.throwOn = new Set(options.throwOn ?? []);
     if (options.armedAt !== undefined) this.armedAt = options.armedAt;
     this.isModelIdle = options.isModelIdle ?? true;
   }
 
-  deliver = (dispatchId: string, wake?: { preamble: string }): AutoRunDeliveryStatus => {
+  deliver = (dispatchId: string, wake?: { preamble: string }): AutoRunDeliveryResult => {
     if (this.throwOn.has(dispatchId)) throw new Error(`delivery failed for ${dispatchId}`);
     this.calls.push({
       dispatchId,
       woken: wake !== undefined,
       ...(wake ? { preamble: wake.preamble } : {}),
     });
-    return this.alreadyDelivered.has(dispatchId) ? "already-delivered" : "delivered";
+    const sentWake = wake !== undefined;
+    if (this.alreadyDelivered.has(dispatchId)) {
+      return { status: "already-delivered", startedWake: false };
+    }
+    if (this.completedExisting.has(dispatchId)) {
+      // Branch entry already present: the claim completes but no message is sent.
+      return { status: "delivered", startedWake: false };
+    }
+    if (this.pendingBranchChange.has(dispatchId)) {
+      return { status: "pending-branch-change", startedWake: sentWake };
+    }
+    return { status: "delivered", startedWake: sentWake };
   };
 
   notifyDepthExhausted = (dispatchId: string): void => {
@@ -198,6 +217,34 @@ describe("AutoRunCoordinator", () => {
     const released = new FakeBatch(true, 5, [pending("hd_b", 0)], { isModelIdle: true });
     coordinator.deliverPending(released);
     expect(released.calls.map((call) => call.dispatchId)).toEqual(["hd_b"]);
+  });
+
+  it("opens no bracket when a delivery only completes an existing claim (no new turn)", () => {
+    // hd_a's branch entry is already present, so deliver completes the durable claim
+    // and returns delivered/startedWake=false — no turn started. The coordinator must
+    // NOT open a phantom wake bracket: no depth is recorded, and the next result is
+    // free to wake immediately rather than being stranded behind a fake hold.
+    const { coordinator } = makeCoordinator();
+    const completing = new FakeBatch(true, 5, [pending("hd_a", 2)], { completedExisting: ["hd_a"] });
+    coordinator.deliverPending(completing);
+    expect(completing.calls.map((call) => call.dispatchId)).toEqual(["hd_a"]);
+    expect(coordinator.currentDepth()).toBe(0);
+
+    const next = new FakeBatch(true, 5, [pending("hd_b", 0)], { isModelIdle: true });
+    coordinator.deliverPending(next);
+    expect(next.calls.filter((call) => call.woken)).toHaveLength(1);
+  });
+
+  it("opens the bracket for a wake that starts a turn even when the branch entry is not yet present", () => {
+    const { coordinator } = makeCoordinator();
+    const batch = new FakeBatch(true, 5, [pending("hd_a", 1)], { pendingBranchChange: ["hd_a"] });
+    coordinator.deliverPending(batch);
+    // A wake message was sent (a turn started), so depth is recorded and the next
+    // result is held behind the real bracket.
+    expect(coordinator.currentDepth()).toBe(2);
+    const held = new FakeBatch(true, 5, [pending("hd_b", 0)], { isModelIdle: true });
+    coordinator.deliverPending(held);
+    expect(held.calls).toHaveLength(0);
   });
 
   it("does not double-wake during the start-gap grace, then wakes once it elapses", () => {
