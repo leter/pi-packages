@@ -132,6 +132,82 @@ describe("/hd-create", () => {
     expect(notify).toHaveBeenCalledWith("派发正在运行;投递回显已验证。", "info");
   });
 
+  it("truncates a long task into a label free of control characters", async () => {
+    const handlers = new Map<string, (args: string, ctx: ExtensionContext) => Promise<void>>();
+    const exec = vi.fn(async () => ({
+      stdout: "pi: current (v4) (/tmp/pi)",
+      stderr: "",
+      code: 0,
+    }));
+    const pi = {
+      registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) =>
+        handlers.set(name, options.handler),
+      registerShortcut: vi.fn(),
+      exec,
+    } as unknown as ExtensionAPI;
+    const application = {
+      defaultDeadlineMinutes: 30,
+      assertCanCreateTarget: vi.fn(async () => undefined),
+    } as unknown as DispatchApplication;
+    const launch = vi.fn(async (_request: { label: string }) => ({
+      terminalId: "term-created",
+    }));
+    const runtime = {
+      application,
+      agentLauncher: { launch } as unknown as AgentLaunchService,
+      mutationUnavailableReason: undefined,
+    } as unknown as DispatchRuntime;
+    const controller = {
+      proposeAndDispatch: vi.fn(async () => ({
+        status: "active" as const,
+        dispatchId: "hd_created",
+        echoVerified: true as const,
+      })),
+    } as unknown as DispatchController;
+    registerDispatchCommands(pi, runtime, controller, {} as FollowupController);
+
+    const longTask =
+      "W1 smoke: create a file named ADR15-W1.txt containing exactly ok at the root, then report done.";
+    const ctx = {
+      mode: "tui",
+      cwd: "/repo",
+      ui: {
+        select: vi
+          .fn()
+          .mockResolvedValueOnce("pi")
+          .mockResolvedValueOnce("当前标签页 · 自适应")
+          .mockResolvedValueOnce("非变更"),
+        editor: vi.fn(async () => longTask),
+        input: vi.fn(async () => ""),
+        confirm: vi.fn(),
+        notify: vi.fn(),
+        custom: vi.fn(async (factory) =>
+          new Promise((resolve) => {
+            factory(
+              { requestRender: vi.fn() } as never,
+              theme() as never,
+              {} as never,
+              resolve,
+            );
+          })),
+      },
+      sessionManager: {
+        getSessionId: () => "session-origin",
+        getSessionFile: () => "/session.jsonl",
+      },
+    } as unknown as ExtensionContext;
+
+    await handlers.get("hd-create")!("", ctx);
+
+    expect(launch).toHaveBeenCalledTimes(1);
+    const label = launch.mock.calls[0]![0].label;
+    expect(label.startsWith("pi · W1 smoke:")).toBe(true);
+    expect(label.endsWith("…")).toBe(true);
+    // The Herdr protocol rejects control characters; an ANSI-emitting
+    // truncation helper regressed this once (pi-tui 0.80.10).
+    expect(label).not.toMatch(/[\u0000-\u001f\u007f]/u);
+  });
+
   it("reports the retained pane and tab when cancellation arrives after creation", async () => {
     const handlers = new Map<string, (args: string, ctx: ExtensionContext) => Promise<void>>();
     const pi = {

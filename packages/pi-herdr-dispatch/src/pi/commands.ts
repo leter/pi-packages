@@ -5,7 +5,6 @@ import {
   type ExtensionContext,
   type RegisteredCommand,
 } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
 
 import {
   AgentLaunchCancelledError,
@@ -42,6 +41,7 @@ import {
   formatDispatchTable,
   formatInspectionText,
   sanitizedResultCard,
+  displayWidth,
   shortenPath,
 } from "./visual.js";
 import type { DispatchRuntime } from "./dispatch-runtime.js";
@@ -586,7 +586,16 @@ function createdResourceLocation(pane?: HerdrPane, worktreePath?: string): strin
 }
 
 function createAgentLabel(agentType: SupportedAgentType, task: string): string {
-  return truncateToWidth(`${agentType} · ${firstTaskLine(task)}`, 48, "…");
+  // The label travels over the Herdr protocol, which rejects control
+  // characters, so it must never pass through an ANSI-emitting TUI helper.
+  const text = `${agentType} · ${firstTaskLine(task)}`;
+  if (displayWidth(text) <= 48) return text;
+  let shown = "";
+  for (const point of text) {
+    if (displayWidth(`${shown}${point}`) > 47) break;
+    shown += point;
+  }
+  return `${shown}…`;
 }
 
 function registerCommandWithAlias(
