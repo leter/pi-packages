@@ -23,6 +23,7 @@ import {
   updateTaskBoardSelection,
   taskBoardSubmission,
   taskBoardSingleAction,
+  taskSummary,
 } from "../../src/pi/dispatch-view-model.js";
 import { DispatchViewComponent, type DispatchViewPorts } from "../../src/pi/dispatch-view.js";
 
@@ -78,6 +79,15 @@ const plain = (line: ViewLine): string => line.spans.map((span) => span.text).jo
 const plainAll = (lines: readonly ViewLine[]): string[] => lines.map(plain);
 
 describe("dispatch view model", () => {
+  it("summarizes a role-composed payload from the approved task text", () => {
+    const composed = "Role: You are acting as an independent reviewer. Inspect.\n\nFix the login parser.";
+    expect(taskSummary(composed)).toBe("Fix the login parser.");
+    expect(taskSummary("Role: brief only, nothing follows")).toBe(
+      "Role: brief only, nothing follows",
+    );
+    expect(taskSummary("Plain task text.")).toBe("Plain task text.");
+  });
+
   it("keeps Task Board checkbox selection scoped to the current group", () => {
     const tasks = [
       boardTask({ id: "hdt_draft_a" }),

@@ -102,10 +102,15 @@ export function primaryAttention(
 }
 
 export function taskSummary(task: string, maximum = 72): string {
-  const first = task
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .find(Boolean);
+  const lines = task.split(/\r?\n/u).map((line) => line.trim());
+  let start = 0;
+  // A composed Board Task payload opens with the role-brief paragraph;
+  // summarize the approved task text that follows it instead.
+  if (lines[0]?.startsWith("Role: ")) {
+    const blank = lines.indexOf("", 1);
+    if (blank >= 0 && lines.slice(blank).some(Boolean)) start = blank;
+  }
+  const first = lines.slice(start).find(Boolean);
   return sanitizeLine(first ?? UI_COPY.common.untitledDispatch(), maximum);
 }
 
