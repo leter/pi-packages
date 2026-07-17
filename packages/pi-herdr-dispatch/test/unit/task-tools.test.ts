@@ -1,6 +1,18 @@
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
+// tools.ts checks launchability via host PATH. Unit tests mock pi.exec status only;
+// do not require CI runners to install agent CLIs.
+vi.mock("../../src/pi/agent-launch-catalog.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/pi/agent-launch-catalog.js")>();
+  return {
+    ...actual,
+    launchableAgentTypes: vi.fn(async (integrationStatusOutput: string) =>
+      actual.launchableAgentTypes(integrationStatusOutput, async () => true),
+    ),
+  };
+});
+
 import { registerDispatchTools } from "../../src/pi/tools.js";
 import { ReadonlyAgentLaunchRefusalError } from "../../src/dispatch/application.js";
 
