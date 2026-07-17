@@ -11,14 +11,14 @@ describe("Task Board tools", () => {
       registerTool: (tool: ToolDefinition) => tools.push(tool),
       exec: vi.fn(async () => {
         order.push("launchable-agent");
-        return { stdout: "claude: current", stderr: "", code: 0 };
+        return { stdout: "pi: current", stderr: "", code: 0 };
       }),
     } as unknown as ExtensionAPI;
     const order: string[] = [];
     const launched = {
       terminalId: "term-reviewer",
       paneId: "p-reviewer",
-      agentLabel: "claude",
+      agentLabel: "pi",
       statusProvenance: "reported" as const,
       paneName: "reviewer-auto-1",
       role: "reviewer",
@@ -26,7 +26,7 @@ describe("Task Board tools", () => {
     };
     const runtime = {
       application: {
-        assertReadonlyAgentLaunchAllowed: vi.fn(async () => { order.push("role-and-reuse"); }),
+        assertReadonlyAgentLaunchAllowed: vi.fn(async () => { order.push("role-and-reuse"); return "pi"; }),
         launchReadonlyAgent: vi.fn(async () => { order.push("launch"); return launched; }),
       },
       launchBudgetState: vi.fn(() => {
@@ -43,7 +43,7 @@ describe("Task Board tools", () => {
 
     const result = await tool.execute(
       "call_launch",
-      { role: "reviewer", agentType: "claude" },
+      { role: "reviewer", agentType: "pi" },
       undefined,
       undefined,
       { mode: "tui" } as ExtensionContext,
@@ -58,10 +58,92 @@ describe("Task Board tools", () => {
       "consume",
       "notify",
     ]);
+    expect(runtime.application.assertReadonlyAgentLaunchAllowed).toHaveBeenCalledWith({
+      role: "reviewer",
+      agentType: "pi",
+    });
+    expect(runtime.application.launchReadonlyAgent).toHaveBeenCalledWith({
+      role: "reviewer",
+      agentType: "pi",
+      signal: undefined,
+    });
     expect(result.content).toEqual([expect.objectContaining({
       text: expect.stringContaining("Launch Budget remaining: 0"),
     })]);
     expect(result.details).toEqual(expect.objectContaining({ status: "launched", remainingBudget: 0 }));
+  });
+
+  it("resolves an omitted Agent type from the role default before launchability checks", async () => {
+    const tools: ToolDefinition[] = [];
+    const pi = {
+      registerTool: (tool: ToolDefinition) => tools.push(tool),
+      exec: vi.fn(async () => ({ stdout: "claude: current", stderr: "", code: 0 })),
+    } as unknown as ExtensionAPI;
+    const launched = {
+      terminalId: "term-reviewer",
+      paneId: "p-reviewer",
+      agentLabel: "claude",
+      statusProvenance: "reported" as const,
+      paneName: "reviewer-auto-1",
+      role: "reviewer",
+      roleLabel: "评审",
+    };
+    const assertReadonlyAgentLaunchAllowed = vi.fn(async () => "claude");
+    const launchReadonlyAgent = vi.fn(async () => launched);
+    const runtime = {
+      application: { assertReadonlyAgentLaunchAllowed, launchReadonlyAgent },
+      launchBudgetState: () => ({ armed: true, remaining: 1 }),
+      consumeLaunchBudget: () => 0,
+      notifyReadonlyAgentLaunched: vi.fn(async () => undefined),
+      runReadonlyLaunchExclusive: <T>(action: () => Promise<T>) => action(),
+    };
+    registerDispatchTools(pi, runtime as never, {} as never);
+    const tool = tools.find((candidate) => candidate.name === "herdr_agent_launch_readonly")!;
+
+    const result = await tool.execute(
+      "call_default", { role: "reviewer" }, undefined, undefined, { mode: "tui" } as ExtensionContext,
+    );
+
+    expect(assertReadonlyAgentLaunchAllowed).toHaveBeenCalledWith({ role: "reviewer" });
+    expect(launchReadonlyAgent).toHaveBeenCalledWith({
+      role: "reviewer",
+      agentType: "claude",
+      signal: undefined,
+    });
+    expect(result.details).toEqual(expect.objectContaining({ status: "launched" }));
+  });
+
+  it("returns a typed refusal when the role and request both omit Agent type", async () => {
+    const tools: ToolDefinition[] = [];
+    const pi = {
+      registerTool: (tool: ToolDefinition) => tools.push(tool),
+    } as unknown as ExtensionAPI;
+    const launchReadonlyAgent = vi.fn();
+    const runtime = {
+      application: {
+        assertReadonlyAgentLaunchAllowed: vi.fn(async () => {
+          throw new ReadonlyAgentLaunchRefusalError(
+            "missing-agent-type",
+            "Role analyst has no default Agent type; provide agentType explicitly",
+          );
+        }),
+        launchReadonlyAgent,
+      },
+      launchBudgetState: () => ({ armed: true, remaining: 1 }),
+      runReadonlyLaunchExclusive: <T>(action: () => Promise<T>) => action(),
+    };
+    registerDispatchTools(pi, runtime as never, {} as never);
+    const tool = tools.find((candidate) => candidate.name === "herdr_agent_launch_readonly")!;
+
+    const result = await tool.execute(
+      "call_missing", { role: "analyst" }, undefined, undefined, { mode: "tui" } as ExtensionContext,
+    );
+
+    expect(result.content).toEqual([expect.objectContaining({
+      text: expect.stringContaining("no default Agent type"),
+    })]);
+    expect(result.details).toEqual(expect.objectContaining({ status: "refused" }));
+    expect(launchReadonlyAgent).not.toHaveBeenCalled();
   });
 
   it("refuses disarmed, invalid-role, reuse-first, and exhausted calls before launch", async () => {
@@ -112,7 +194,7 @@ describe("Task Board tools", () => {
         application: {
           assertReadonlyAgentLaunchAllowed: item.refusal
             ? vi.fn(async () => { throw item.refusal; })
-            : vi.fn(async () => undefined),
+            : vi.fn(async () => "claude"),
           launchReadonlyAgent,
         },
         launchBudgetState: () => item.state,
@@ -145,7 +227,7 @@ describe("Task Board tools", () => {
     const consumeLaunchBudget = vi.fn();
     const runtime = {
       application: {
-        assertReadonlyAgentLaunchAllowed: vi.fn(async () => undefined),
+        assertReadonlyAgentLaunchAllowed: vi.fn(async () => "claude"),
         launchReadonlyAgent: vi.fn(async () => { throw new Error("startup failed"); }),
       },
       launchBudgetState: () => ({ armed: true, remaining: 1 }),
@@ -246,7 +328,15 @@ describe("Task Board tools", () => {
       registryRuntime: {
         registry: {
           teamCatalog: () => ({
-            roles: { reviewer: { key: "reviewer", label: "评审", mode: "non-mutating", brief: "Review." } },
+            roles: {
+              reviewer: {
+                key: "reviewer",
+                label: "评审",
+                mode: "non-mutating",
+                brief: "Review.",
+                agent: "claude",
+              },
+            },
             workflows: {
               dev: { key: "dev", stages: ["coder", "reviewer"], maxReworkCycles: 2, escalation: [] },
             },
@@ -270,6 +360,7 @@ describe("Task Board tools", () => {
     expect(text).toContain("role coder");
     expect(text).toContain("workflow dev");
     expect(text).toContain("stage 2/2 reviewer");
+    expect(text).toContain("agent claude");
     expect(text).toContain("rework cycles 2");
     expect(text).toContain("parked no-verdict");
   });

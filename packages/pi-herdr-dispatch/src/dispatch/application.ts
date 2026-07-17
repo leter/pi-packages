@@ -109,7 +109,7 @@ export interface DispatchApplicationOptions {
 
 export interface ReadonlyAgentLaunchRequest {
   role: string;
-  agentType: string;
+  agentType?: string;
   signal?: AbortSignal;
 }
 
@@ -142,6 +142,7 @@ export class ReadonlyAgentLaunchRefusalError extends Error {
     | "invalid-team"
     | "unknown-role"
     | "write-role"
+    | "missing-agent-type"
     | "unsupported-agent"
     | "eligible-role-agent"
     | "launch-unavailable";
@@ -279,8 +280,9 @@ export class DispatchApplication {
 
   async assertReadonlyAgentLaunchAllowed(
     request: ReadonlyAgentLaunchRequest,
-  ): Promise<void> {
-    await this.#readonlyLaunchPlan(request);
+  ): Promise<SupportedAgentType> {
+    const plan = await this.#readonlyLaunchPlan(request);
+    return plan.agentType;
   }
 
   async launchReadonlyAgent(
@@ -298,7 +300,7 @@ export class DispatchApplication {
       plan.snapshot.panes.flatMap((pane) => pane.label === undefined ? [] : [pane.label]),
     );
     const launched = await this.#agentLauncher.launch({
-      agentType: request.agentType as SupportedAgentType,
+      agentType: plan.agentType,
       layout: "adaptive",
       cwd: this.#originCwd,
       label: paneName,
@@ -336,10 +338,17 @@ export class DispatchApplication {
         `Role ${role.key} is write-role capacity and cannot be model-launched`,
       );
     }
-    if (!(SUPPORTED_AGENT_TYPES as readonly string[]).includes(request.agentType)) {
+    const agentType = request.agentType ?? role.agent;
+    if (agentType === undefined) {
+      throw new ReadonlyAgentLaunchRefusalError(
+        "missing-agent-type",
+        `Role ${role.key} has no default Agent type; provide agentType explicitly`,
+      );
+    }
+    if (!(SUPPORTED_AGENT_TYPES as readonly string[]).includes(agentType)) {
       throw new ReadonlyAgentLaunchRefusalError(
         "unsupported-agent",
-        `Agent type ${safeText(request.agentType)} is not in the supported launch catalog`,
+        `Agent type ${safeText(agentType)} is not in the supported launch catalog`,
       );
     }
     const snapshot = await this.#herdr.currentWorkspaceSnapshot();
@@ -356,7 +365,7 @@ export class DispatchApplication {
         paneName,
       );
     }
-    return { role, snapshot };
+    return { role, snapshot, agentType: agentType as SupportedAgentType };
   }
 
   async #eligibleAgentsFromSnapshot(

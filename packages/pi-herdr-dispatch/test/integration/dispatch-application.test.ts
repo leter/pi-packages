@@ -11,6 +11,7 @@ import {
 } from "../../src/dispatch/application.js";
 import type { AgentLaunchService } from "../../src/dispatch/agent-launch.js";
 import { DEFAULT_DISPATCH_CONFIG } from "../../src/domain/config.js";
+import { parseTeamConfig } from "../../src/domain/team.js";
 import type { HerdrDeliveryResult } from "../../src/herdr/delivery.js";
 import type {
   CurrentWorkspaceSnapshot,
@@ -175,7 +176,6 @@ describe("DispatchApplication", () => {
 
     await expect(application.launchReadonlyAgent({
       role: "reviewer",
-      agentType: "claude",
     })).resolves.toEqual({
       terminalId: "term-launched",
       paneId: "p-launched",
@@ -191,6 +191,52 @@ describe("DispatchApplication", () => {
       cwd: "/repo/origin",
       label: "reviewer-auto-1",
     });
+  });
+
+  it("lets an explicit Agent type override the role default", async () => {
+    const launch = vi.fn(async () => ({
+      terminalId: "term-launched",
+      paneId: "p-launched",
+      workspaceId: "w-current",
+      agentLabel: "pi",
+      displayName: "reviewer-auto-1",
+      cwd: "/repo/origin",
+      status: "idle" as const,
+      statusProvenance: "reported" as const,
+    }));
+    const { application } = await harness({}, {
+      agentLauncher: { launch } as unknown as AgentLaunchService,
+    });
+
+    await expect(application.launchReadonlyAgent({
+      role: "reviewer",
+      agentType: "pi",
+    })).resolves.toEqual(expect.objectContaining({ agentLabel: "pi" }));
+    expect(launch).toHaveBeenCalledWith(expect.objectContaining({ agentType: "pi" }));
+  });
+
+  it("returns a typed refusal when neither the request nor role has an Agent type", async () => {
+    const launch = vi.fn();
+    const { application, registry } = await harness({}, {
+      agentLauncher: { launch } as unknown as AgentLaunchService,
+    });
+    registry.setTeamConfigState({
+      status: "ready",
+      team: parseTeamConfig({
+        roles: {
+          reviewer: { label: "评审", mode: "non-mutating", brief: "Review." },
+        },
+      }),
+    });
+
+    await expect(application.launchReadonlyAgent({ role: "reviewer" })).rejects.toEqual(
+      expect.objectContaining({
+        name: "ReadonlyAgentLaunchRefusalError",
+        code: "missing-agent-type",
+        message: expect.stringContaining("reviewer"),
+      }),
+    );
+    expect(launch).not.toHaveBeenCalled();
   });
 
   it.each([

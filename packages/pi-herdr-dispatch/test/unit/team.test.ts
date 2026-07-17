@@ -25,6 +25,17 @@ describe("team catalog", () => {
     expect(Object.keys(state.team.roles)).toEqual([
       "coder", "reviewer", "bugfix", "chore", "researcher", "advisor", "oracle",
     ]);
+    expect(Object.fromEntries(
+      Object.entries(state.team.roles).map(([key, role]) => [key, role.agent]),
+    )).toEqual({
+      coder: "codex",
+      reviewer: "claude",
+      bugfix: "amp",
+      chore: "pi",
+      researcher: "grok",
+      advisor: "opencode",
+      oracle: "droid",
+    });
     expect(state.team.workflows.dev).toEqual({
       key: "dev",
       stages: ["coder", "reviewer"],
@@ -41,7 +52,12 @@ describe("team catalog", () => {
     const team = parseTeamConfig({
       roles: {
         coder: { label: "主程", mode: "write", brief: "Act as the primary implementer." },
-        analyst: { label: "分析", mode: "non-mutating", brief: "Analyze the bounded question." },
+        analyst: {
+          label: "分析",
+          mode: "non-mutating",
+          brief: "Analyze the bounded question.",
+          agent: "grok",
+        },
       },
       workflows: {
         research: { stages: ["analyst"], maxReworkCycles: 0, escalation: [] },
@@ -53,6 +69,7 @@ describe("team catalog", () => {
       mode: "write",
       brief: "Act as the primary implementer.",
     });
+    expect(team.roles.analyst?.agent).toBe("grok");
     expect(team.roles.reviewer).toEqual(DEFAULT_TEAM_CATALOG.roles.reviewer);
     expect(team.workflows.research).toEqual({
       key: "research",
@@ -70,6 +87,7 @@ describe("team catalog", () => {
     ["unknown role field", { roles: { coder: { label: "开发", mode: "write", brief: "Brief.", extra: true } } }],
     ["missing role field", { roles: { coder: { label: "开发", mode: "write" } } }],
     ["bad role mode", { roles: { coder: { label: "开发", mode: "admin", brief: "Brief." } } }],
+    ["unsupported role agent", { roles: { coder: { label: "开发", mode: "write", brief: "Brief.", agent: "other" } } }],
     ["empty label", { roles: { coder: { label: "", mode: "write", brief: "Brief." } } }],
     ["long label", { roles: { coder: { label: "角".repeat(21), mode: "write", brief: "Brief." } } }],
     ["long brief", { roles: { coder: { label: "开发", mode: "write", brief: "x".repeat(401) } } }],

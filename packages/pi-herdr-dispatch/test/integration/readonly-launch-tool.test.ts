@@ -34,7 +34,7 @@ function toolHarness(opened: DispatchRegistry, launchReadonlyAgent: () => Promis
   const notifyLaunchBudgetExhaustedOnce = vi.fn(async () => undefined);
   const runtime = {
     application: {
-      assertReadonlyAgentLaunchAllowed: vi.fn(async () => undefined),
+      assertReadonlyAgentLaunchAllowed: vi.fn(async () => "pi"),
       launchReadonlyAgent,
     },
     launchBudgetState: () => opened.getLaunchBudgetState("session-origin", 1),
@@ -131,7 +131,7 @@ describe("read-only launch tool with durable Launch Budget", () => {
     } as unknown as ExtensionAPI;
     const runtime = {
       application: {
-        assertReadonlyAgentLaunchAllowed: vi.fn(async () => undefined),
+        assertReadonlyAgentLaunchAllowed: vi.fn(async () => "claude"),
         launchReadonlyAgent,
       },
       launchBudgetState: () => opened.getLaunchBudgetState("session-origin", 1),

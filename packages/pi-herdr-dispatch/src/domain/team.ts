@@ -2,6 +2,10 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import {
+  SUPPORTED_AGENT_TYPES,
+  type SupportedAgentType,
+} from "../dispatch/agent-launch.js";
 import type { DispatchMode } from "../registry/types.js";
 
 export interface Role {
@@ -9,6 +13,7 @@ export interface Role {
   label: string;
   mode: DispatchMode;
   brief: string;
+  agent?: SupportedAgentType;
 }
 
 export interface WorkflowEscalation {
@@ -33,7 +38,7 @@ export type TeamConfigState =
   | { status: "invalid"; reason: string };
 
 const ROLE_KEY = /^[a-z][a-z0-9-]{0,39}$/u;
-const ROLE_FIELDS = new Set(["label", "mode", "brief"]);
+const ROLE_FIELDS = new Set(["label", "mode", "brief", "agent"]);
 const WORKFLOW_FIELDS = new Set(["stages", "maxReworkCycles", "escalation"]);
 const ESCALATION_FIELDS = new Set(["afterCycles", "role"]);
 const TOP_LEVEL_FIELDS = new Set(["roles", "workflows"]);
@@ -44,6 +49,7 @@ export const DEFAULT_TEAM_CATALOG: TeamCatalog = freezeTeam({
       key: "coder",
       label: "\u5f00\u53d1",
       mode: "write",
+      agent: "codex",
       brief:
         "You are acting as the implementation specialist. Focus on a correct, maintainable change within the task's stated scope.",
     },
@@ -51,6 +57,7 @@ export const DEFAULT_TEAM_CATALOG: TeamCatalog = freezeTeam({
       key: "reviewer",
       label: "\u8bc4\u5ba1",
       mode: "non-mutating",
+      agent: "claude",
       brief:
         "You are acting as an independent reviewer. Inspect the work without mutating files and report concrete findings.",
     },
@@ -58,6 +65,7 @@ export const DEFAULT_TEAM_CATALOG: TeamCatalog = freezeTeam({
       key: "bugfix",
       label: "\u4feebug",
       mode: "write",
+      agent: "amp",
       brief:
         "You are acting as the bug-fix specialist. Use the available evidence to make the smallest robust correction within scope.",
     },
@@ -65,6 +73,7 @@ export const DEFAULT_TEAM_CATALOG: TeamCatalog = freezeTeam({
       key: "chore",
       label: "\u6742\u6d3b",
       mode: "write",
+      agent: "pi",
       brief:
         "You are acting as the maintenance specialist. Complete the bounded upkeep task carefully and keep unrelated changes out.",
     },
@@ -72,6 +81,7 @@ export const DEFAULT_TEAM_CATALOG: TeamCatalog = freezeTeam({
       key: "researcher",
       label: "\u8d44\u6599",
       mode: "non-mutating",
+      agent: "grok",
       brief:
         "You are acting as the research specialist. Gather relevant evidence and distinguish verified facts from inference.",
     },
@@ -79,6 +89,7 @@ export const DEFAULT_TEAM_CATALOG: TeamCatalog = freezeTeam({
       key: "advisor",
       label: "\u987e\u95ee",
       mode: "non-mutating",
+      agent: "opencode",
       brief:
         "You are acting as a consulting specialist. Analyze the stated question and offer focused options without changing project files.",
     },
@@ -86,6 +97,7 @@ export const DEFAULT_TEAM_CATALOG: TeamCatalog = freezeTeam({
       key: "oracle",
       label: "\u7ec8\u5ba1",
       mode: "non-mutating",
+      agent: "droid",
       brief:
         "You are acting as the final-review specialist. Resolve the exhausted escalation or verdict question from the supplied evidence.",
     },
@@ -225,7 +237,20 @@ function parseRole(key: string, value: unknown): Role {
   if (value.mode !== "write" && value.mode !== "non-mutating") {
     throw new TypeError(`role ${key} mode must be write or non-mutating`);
   }
-  return { key, label, mode: value.mode, brief };
+  if (
+    value.agent !== undefined &&
+    (typeof value.agent !== "string" ||
+      !(SUPPORTED_AGENT_TYPES as readonly string[]).includes(value.agent))
+  ) {
+    throw new TypeError(`role ${key} agent must be a supported Agent type`);
+  }
+  return {
+    key,
+    label,
+    mode: value.mode,
+    brief,
+    ...(value.agent === undefined ? {} : { agent: value.agent as SupportedAgentType }),
+  };
 }
 
 function parseWorkflow(key: string, value: unknown): Workflow {

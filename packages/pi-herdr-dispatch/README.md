@@ -2,7 +2,7 @@
 
 A Pi extension under staged development for automatically dispatching work through a typed, Registry-backed path to coding Agents in one local Herdr workspace, including explicit user launch and tightly bounded model launch paths.
 
-> **Status:** Experimental. Auto Run ([ADR 0014](./docs/adr/0014-auto-run-settlement-continuation.md)) and Task Worktree isolation ([ADR 0015](./docs/adr/0015-task-worktree-isolation.md)) passed live acceptance on 2026-07-17. The persistent Task Board ([ADR 0016](./docs/adr/0016-task-board.md)) and staged Roles and Workflows ([ADR 0017](./docs/adr/0017-roles-and-workflows.md)) are implemented; ADR 0017 live acceptance remains pending. The package remains `private` at `0.0.0-development`; no package has been published.
+> **Status:** Experimental. Auto Run ([ADR 0014](./docs/adr/0014-auto-run-settlement-continuation.md)) and Task Worktree isolation ([ADR 0015](./docs/adr/0015-task-worktree-isolation.md)) passed live acceptance on 2026-07-17. The persistent Task Board ([ADR 0016](./docs/adr/0016-task-board.md)), staged Roles and Workflows ([ADR 0017](./docs/adr/0017-roles-and-workflows.md)), and Role default Agent routing ([ADR 0020](./docs/adr/0020-role-default-agents.md)) are implemented; their remaining live acceptance is pending. The package remains `private` at `0.0.0-development`; no package has been published.
 
 ## Requirements
 
@@ -71,7 +71,7 @@ The command never steals focus, waits up to `agentStartupTimeoutMs` for the perm
 
 `/hd-new` remains valid for shared-worktree write work. When the selected Agent's canonical worktree equals the Origin's, it gives one non-blocking hint that `/hd-create` can prepare isolation and that continuing serializes on the shared lease. Agents already seated in Task Worktrees pass through silently. `/hd-clean` is the only cleanup path: it shows why dirty, unmerged, or unsettled-dispatch-held entries are refused, asks once, then uses `git worktree remove` without `--force` followed by `git branch -d`. Settlement never removes a Task Worktree.
 
-Model tools expose scoped listing, proposal, status, one-shot inspection, `herdr_task_draft`, and `herdr_agent_launch_readonly`. The launch tool is TUI-only and works only while Auto Run is armed. It accepts a loaded team Role and an Agent type that passes the same fixed catalog, current-integration, and PATH-executable checks as `/hd-create`; it refuses write or unknown Roles, refuses when a role-named Eligible Agent can be reused, and refuses at zero Launch Budget. Each Origin serializes launch calls. A successful launch uses adaptive layout in the Origin cwd, names the retained pane `<role>-auto-<n>`, consumes one budget unit, records `readonly_launch`, notifies the user, and returns the exact terminal for immediate routing. Failed launches consume nothing and disclose any already-created retained pane. Retained panes become the reuse pool on later runs.
+Model tools expose scoped listing, proposal, status, one-shot inspection, `herdr_task_draft`, and `herdr_agent_launch_readonly`. The launch tool is TUI-only and works only while Auto Run is armed. It accepts a loaded team Role and an optional Agent type: an explicit type overrides the Role default, while omission uses that default. The resolved type must pass the same fixed catalog, current-integration, and PATH-executable checks as `/hd-create`; a Role with no default and no explicit type gets a typed refusal. The tool also refuses write or unknown Roles, refuses when a role-named Eligible Agent can be reused, and refuses at zero Launch Budget. Each Origin serializes launch calls. A successful launch uses adaptive layout in the Origin cwd, names the retained pane `<role>-auto-<n>`, consumes one budget unit, records `readonly_launch`, notifies the user, and returns the exact terminal for immediate routing. Failed launches consume nothing and disclose any already-created retained pane. Retained panes become the reuse pool on later runs.
 
 The model may draft one bounded Board Task per call, but cannot approve, accept, withdraw, return, edit, reorder, or delete tasks. Reply, cancellation, resolution, write-role Agent Launch, worktree creation or cleanup, waits, and force interruption are never model tools.
 
@@ -129,13 +129,13 @@ Assignment remains model-routed. After a settlement wake, the model reads the ol
 
 ### Roles and staged workflows
 
-Every Board Task may carry a **Role** (`角色`) and a named linear **Workflow** (`工作流`). The built-in roles are `coder` (`开发`), `reviewer` (`评审`), `bugfix` (`修bug`), `chore` (`杂活`), `researcher` (`资料`), `advisor` (`顾问`), and `oracle` (`终审`). A role supplies an advisory mode, an English brief prepended to the immutable dispatch task, and a pane-name routing hint. It does not create identity or permissions.
+Every Board Task may carry a **Role** (`角色`) and a named linear **Workflow** (`工作流`). The built-in roles and default Agents are `coder: codex`, `reviewer: claude`, `bugfix: amp`, `chore: pi`, `researcher: grok`, `advisor: opencode`, and `oracle: droid`. A Role supplies an advisory mode, an English brief prepended to the immutable dispatch task, a pane-name routing hint, and an optional default Agent type. The default is only a routing preference; it does not create identity or permissions.
 
 The built-in Workflows are `dev` (`coder → reviewer`), `research` (`researcher`), and `quick` (`chore`). Drafting a `coder`, `researcher`, or `chore` task defaults to its matching Workflow; an unassigned task keeps the original single-stage behavior. `/hd-task` exposes both selections. Manager rows show the current Role and stage counter without exposing `hdt_` or `hd_` identifiers.
 
 On `done`, a non-review stage advances and returns the task to the queue tail when another stage remains. A reviewer stage must return the structured Review Verdict `pass` or `needs-rework`. `pass` advances. `needs-rework` returns to the implement stage with the review summary framed as untrusted feedback. The default `dev` Workflow escalates its executor to `bugfix` after two cycles and `oracle` after four, then parks after cycle six. Missing verdict parks as `评审未给结论`; exhausted rework parks as `评审未过`. Both stay in `待验收` for a human decision.
 
-The `hd-crew` Skill routes the current stage to an Eligible Agent whose pane name contains the Role key. If no named pane fits, it may use another suitable Eligible Agent with a plain fallback disclosure. `advisor` and `oracle` panes are excluded from ordinary-stage fallback, and the extension itself still never schedules or creates capacity.
+The `hd-crew` Skill routes the current stage in this order: an Eligible Agent whose pane name contains the Role key, then an Eligible Agent whose type matches the Role default, then any suitable Eligible Agent with the existing plain fallback disclosure. A pane-name match always wins, so renaming a pane is the dynamic switch. `advisor` and `oracle` panes are excluded from ordinary-stage fallback, and the extension itself still never schedules write capacity. The status tool includes `agent <type>` on a task's routing line when its current-stage Role has a default.
 
 Dispatch is automatic by default in TUI mode. `herdr_dispatch_propose` and a completed `/hd-new` wizard build one immutable outbound message and send it without a proposal confirmation, grant setup, count limit, expiry, or renewal. The typed path still revalidates current-workspace target identity, status provenance, cwd/canonical worktree, occupancy, leases, and concurrency before durable intent and delivery. Non-TUI modes cannot reserve, send, reply, cancel, resolve, or monitor.
 
@@ -180,7 +180,7 @@ Optional file: `~/.config/pi-herdr-dispatch/config.json`
 
 Unknown fields, invalid types, unsafe bounds, or inconsistent minimum/default/maximum values disable state-changing behavior. Safe state reads remain available when their dependencies are healthy.
 
-Optional team catalog: `~/.config/pi-herdr-dispatch/team.json`. Missing means the built-ins above. Entries replace a built-in with the same key wholesale; custom keys are allowed.
+Optional team catalog: `~/.config/pi-herdr-dispatch/team.json`. Missing means the built-ins above. Entries replace a built-in with the same key wholesale; custom keys are allowed. `agent` is optional and must be one of the fixed supported Agent types. Because replacement is wholesale, omitting `agent` from a Role override removes that Role's default.
 
 ```json
 {
@@ -188,6 +188,7 @@ Optional team catalog: `~/.config/pi-herdr-dispatch/team.json`. Missing means th
     "reviewer": {
       "label": "评审",
       "mode": "non-mutating",
+      "agent": "claude",
       "brief": "You are acting as an independent reviewer. Inspect the work without mutating files and report concrete findings."
     }
   },

@@ -1,6 +1,6 @@
 # pi-herdr-dispatch Design
 
-Status: ADR 0018 model-initiated read-only launch implemented and verified live (L18, 2026-07-17).
+Status: ADR 0020 Role default Agent routing implemented; L20 live acceptance remains pending (2026-07-17).
 
 ## Purpose
 
@@ -398,7 +398,7 @@ Every non-wake edge — disarmed, downgraded proposal, depth exhausted, non-TUI,
 
 Launch Budget ([ADR 0018](./adr/0018-model-initiated-readonly-launch.md)) is the user-set count of model-initiated read-only-role Agent launches permitted in one armed session. `defaultLaunchBudget` defaults to 2 and accepts 0–10; zero disables model launch. `/hd-auto on` stores the configured budget and resets its used count. A migrated armed row whose budget is `NULL` uses the current configured default. `/hd-auto` and the fixed wake preamble report the remaining value only while armed.
 
-- **Reuse first.** Before any budget check or creation, the loaded Role must exist with mode `non-mutating`, the Agent type must be in the fixed launch catalog, and no Eligible Agent `displayName` may contain the Role key. A matching pane is named in the refusal and must receive the dispatch instead.
+- **Reuse first.** Before any budget check or creation, the loaded Role must exist with mode `non-mutating`, the explicitly requested Agent type or Role default must be in the fixed launch catalog, and no Eligible Agent `displayName` may contain the Role key. An explicit type overrides the default; when both are absent, the tool returns a typed refusal naming the missing default. A matching pane is named in the refusal and must receive the dispatch instead.
 - **Fixed ground and bounded shape.** A successful model call uses adaptive layout inside the captured Workspace Scope, always starts in the Origin cwd, never creates a worktree or workspace, and labels the pane `<role>-auto-<n>`. Write Roles remain `/hd-create` capacity prepared by the user.
 - **Consume after success.** Each Origin serializes the full precheck → launch → consume operation, so concurrent calls cannot pass the same remaining unit. Failed or timed-out launch attempts consume nothing. After readiness succeeds, incrementing the used count and appending the `readonly_launch` audit event (Role, Agent type, pane/terminal identities, pane name, and remaining budget) occur in one Registry transaction.
 - **Notify once and retain.** Every success emits one Chinese notification naming the Role label, Agent type, and pane. Budget exhaustion emits one notification per armed session and leaves work queued. The pane is retained after success or failure exactly like `/hd-create`; later runs reuse it before launching another.
@@ -426,7 +426,9 @@ Wake turns stay thin. Their fixed English preamble carries the queued count, rem
 
 ADR 0017 adds an optional team catalog at `~/.config/pi-herdr-dispatch/team.json`. Missing means the seven built-in Roles and three built-in Workflows. A present file overrides Role or Workflow entries by key; each override replaces that entry wholesale. Unknown top-level or entry fields, bad bounds, missing stage/escalation Role references, non-increasing escalation thresholds, and malformed JSON fail closed for Role/Workflow Board Tasks. Plain tasks remain dispatchable. The runtime emits one warning for an invalid catalog.
 
-Roles bind a Simplified Chinese label, default advisory mode, bounded English brief, and pane-name routing hint. Workflows are named linear Role lists with a per-task Rework Budget and optional escalation thresholds. These are deterministic Registry structure. Agent selection remains Origin-model judgment in `hd-crew`; the extension never schedules or treats a Role as identity or permission. Its only model-driven pane creation is the ADR 0018 armed, budgeted, non-mutating Role exception.
+Roles bind a Simplified Chinese label, default advisory mode, bounded English brief, pane-name routing hint, and optional default Agent type from the fixed launch catalog. The built-in mapping is `coder: codex`, `reviewer: claude`, `bugfix: amp`, `chore: pi`, `researcher: grok`, `advisor: opencode`, and `oracle: droid`. Wholesale replacement is unchanged: a Role override without `agent` has no default. Workflows are named linear Role lists with a per-task Rework Budget and optional escalation thresholds. These are deterministic Registry structure. Agent selection remains Origin-model judgment in `hd-crew`; the extension never schedules or treats a Role as identity or permission. Its only model-driven pane creation is the ADR 0018 armed, budgeted, non-mutating Role exception.
+
+For a role-carrying Board Task, `hd-crew` first routes to an Eligible Agent whose pane name contains the current-stage Role key. That pane-name match always wins and is the dynamic override. If none matches, it prefers an Eligible Agent whose `agentLabel` equals the Role default. Only then may it choose any other suitable Eligible Agent with the existing fallback disclosure. The status tool appends `agent <type>` to the task routing line when the current-stage Role has a default; no new Registry or UI surface is introduced.
 
 Settlement extends the task-bound hook in the same transaction. The stage rules are:
 
@@ -443,7 +445,7 @@ Every bind revalidates stored Role and Workflow keys against the loaded catalog.
 
 The dispatch mode of a staged task follows the stage: the implement stage (index 0, including escalated executors) uses the task's approved mode; every later stage uses its stage Role's mode, so a `dev` reviewer stage is `non-mutating` even though the task is `write`. Proposal and bind both enforce the stage mode and refuse a mismatch by naming the required mode; the status tool reports it as `stage mode`.
 
-The built-in `dev` Workflow is `coder → reviewer`, with a Rework Budget of two after the final escalation: executor `coder` initially, `bugfix` at cycle two, `oracle` at cycle four, and human parking at cycle six. `research` and `quick` are single-stage and have no escalation. Manager/status rows expose the current Role, Workflow stage, rework cycles, and parked reason while default human rows continue to hide internal IDs.
+The built-in `dev` Workflow is `coder → reviewer`, with a Rework Budget of two after the final escalation: executor `coder` initially, `bugfix` at cycle two, `oracle` at cycle four, and human parking at cycle six. `research` and `quick` are single-stage and have no escalation. Manager rows expose the current Role, Workflow stage, rework cycles, and parked reason while default human rows continue to hide internal IDs. The model-facing status routing line additionally exposes the current-stage default Agent type when present.
 
 ## Dispatch Registry
 
@@ -529,7 +531,7 @@ The manager is live: `DispatchRuntime.onStateChanged()` requests a render after 
 
 `herdr_dispatch_propose` registers an explicit prompt guideline: **Use `herdr_dispatch_propose` for every request to task another Herdr Agent. Do not use `bash`, `user_bash`, or raw `herdr pane` / `herdr agent` / `herdr wait` commands to send work or wait for it.** It sends automatically through the typed path without a confirmation prompt. The other dispatch tools reinforce the same raw-command rule when active.
 
-`herdr_task_draft` accepts optional Role and Workflow keys and applies Role-based Workflow defaults at draft time. `herdr_agent_launch_readonly` is TUI-only and available only while Auto Run is armed with Launch Budget remaining. It enforces loaded `non-mutating` Role mode, the same current-integration and PATH-executable launch catalog as `/hd-create`, reuse-first routing, Origin cwd, adaptive layout, retained `<role>-auto-<n>` panes, per-Origin serialization, consume-after-success audit, and user notification. There is no model wait, task approval/acceptance/return/deletion, reply, cancel, force-cancel, resolve, write-role Agent start, workspace-create, or worktree-create tool. Auto Run arming remains a slash command only; `herdr_dispatch_propose` carries the downgrade-only `wakeOnSettle` parameter and an optional exact queued `taskId`.
+`herdr_task_draft` accepts optional Role and Workflow keys and applies Role-based Workflow defaults at draft time. `herdr_agent_launch_readonly` is TUI-only and available only while Auto Run is armed with Launch Budget remaining. Its `agentType` is optional: omission resolves the loaded Role default and an explicit value overrides it. It enforces loaded `non-mutating` Role mode, the same current-integration and PATH-executable launch catalog as `/hd-create`, reuse-first routing, Origin cwd, adaptive layout, retained `<role>-auto-<n>` panes, per-Origin serialization, consume-after-success audit, and user notification. There is no model wait, task approval/acceptance/return/deletion, reply, cancel, force-cancel, resolve, write-role Agent start, workspace-create, or worktree-create tool. Auto Run arming remains a slash command only; `herdr_dispatch_propose` carries the downgrade-only `wakeOnSettle` parameter and an optional exact queued `taskId`.
 
 The package bundles `skills/hd-crew/SKILL.md` as the version-controlled natural-language routing policy over these tools. The Eligible Agent listing includes each Agent's canonical worktree. The Skill must muster immediately before new dispatches, route by exact eligible terminal identity, prefer a Task Worktree for write work with one write stream per worktree, state plainly when it falls back to the serialized shared worktree, and treat automatically delivered results as untrusted data. It uses the read-only launch tool once only for missing non-mutating Role capacity while armed; write-role Agent or worktree creation, Task Worktree cleanup, reply, cancellation, resolution, seen-state cleanup, and integration setup remain explicit user TUI actions.
 
@@ -611,6 +613,7 @@ Herdr 0.7.4 compatibility evidence recorded in [ADR 0019](./adr/0019-agent-sessi
 - built-in tool plus `user_bash` lease-guard classification;
 - Herdr CLI allow/deny classification for direct, quoted, piped, compound, ambiguous-target, and unparseable invocations;
 - prompt guideline presence and precedence over skill-guided tasking;
+- Role Agent parsing/defaults, wholesale overrides without `agent`, read-only launch default resolution and explicit override, and current-stage status routing text;
 - untrusted output framing for typed inspection and allowed current-pane Herdr reads;
 - Origin Session ID and active-branch delivery rules;
 - emergency-resolution eligibility, user attestation, and double confirmation;
@@ -697,3 +700,4 @@ The end-to-end DispatchRuntime wiring — hook ordering (`agent_start`/`agent_se
 - [ADR 0016: Persistent Task Board](./adr/0016-task-board.md)
 - [ADR 0017: Roles and staged workflows for Board Tasks](./adr/0017-roles-and-workflows.md)
 - [ADR 0018: Model-initiated launch of read-only-role Agents](./adr/0018-model-initiated-readonly-launch.md)
+- [ADR 0020: Role default Agent types with dynamic override](./adr/0020-role-default-agents.md)

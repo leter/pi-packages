@@ -189,7 +189,7 @@ The human-facing unit of work on the Task Board. It progresses through `draft`, 
 _Avoid_: dispatch alias, mutable dispatch
 
 **Role**:
-A configured advisory profile binding a brief, mode default, and pane-name routing hint to Board Tasks.
+A configured advisory profile binding a brief, mode default, pane-name routing hint, and optional default Agent type to Board Tasks. The Agent type is a routing preference after pane-name matching, not identity or capacity.
 _Avoid_: enforced identity, per-role permissions
 
 **Workflow**:

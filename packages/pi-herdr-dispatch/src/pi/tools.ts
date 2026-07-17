@@ -8,7 +8,11 @@ import {
   type CreateProposalRequest,
   type DispatchApplication,
 } from "../dispatch/application.js";
-import { AgentLaunchError, SUPPORTED_AGENT_TYPES } from "../dispatch/agent-launch.js";
+import {
+  AgentLaunchError,
+  SUPPORTED_AGENT_TYPES,
+  type SupportedAgentType,
+} from "../dispatch/agent-launch.js";
 import { executorRoleForCycle, type TeamCatalog } from "../domain/team.js";
 import type { StoredTask } from "../registry/types.js";
 import {
@@ -59,7 +63,9 @@ const taskDraftParameters = Type.Object({
 });
 const readonlyLaunchParameters = Type.Object({
   role: Type.String({ description: "Non-mutating role key from the loaded team catalog" }),
-  agentType: StringEnum(SUPPORTED_AGENT_TYPES),
+  agentType: Type.Optional(StringEnum(SUPPORTED_AGENT_TYPES, {
+    description: "Explicit Agent type override; omit to use the Role default",
+  })),
 });
 
 interface ReadonlyLaunchToolDetails {
@@ -145,8 +151,9 @@ function createReadonlyLaunchTool(
         }
 
         const app = application(runtime);
+        let agentType: SupportedAgentType;
         try {
-          await app.assertReadonlyAgentLaunchAllowed(params);
+          agentType = await app.assertReadonlyAgentLaunchAllowed(params);
         } catch (error) {
           if (error instanceof ReadonlyAgentLaunchRefusalError) {
             return readonlyLaunchRefusal(error.message);
@@ -161,9 +168,9 @@ function createReadonlyLaunchTool(
           );
         }
         const launchable = await launchableAgentTypes(integrationStatus.stdout);
-        if (!launchable.includes(params.agentType)) {
+        if (!launchable.includes(agentType)) {
           return readonlyLaunchRefusal(
-            `Agent type ${params.agentType} is not launchable with the current integration and executable catalog. Ask the user to use /hd-setup or choose another installed type.`,
+            `Agent type ${agentType} is not launchable with the current integration and executable catalog. Ask the user to use /hd-setup or choose another installed type.`,
           );
         }
 
@@ -182,7 +189,7 @@ function createReadonlyLaunchTool(
 
         let launched;
         try {
-          launched = await app.launchReadonlyAgent({ ...params, signal });
+          launched = await app.launchReadonlyAgent({ ...params, agentType, signal });
         } catch (error) {
           if (error instanceof ReadonlyAgentLaunchRefusalError) {
             return readonlyLaunchRefusal(error.message);
@@ -429,7 +436,10 @@ function createStatusTool(
 function taskRoutingStatus(task: StoredTask, team: TeamCatalog | undefined): string {
   const role = task.role ?? "none";
   if (!task.workflow) {
-    return `role ${role} · workflow none · stage 1/1 ${task.role ?? "unassigned"} · rework cycles ${task.reworkCycles}${
+    const agent = task.role === undefined ? undefined : team?.roles[task.role]?.agent;
+    return `role ${role} · workflow none · stage 1/1 ${task.role ?? "unassigned"}${
+      agent ? ` · agent ${agent}` : ""
+    } · rework cycles ${task.reworkCycles}${
       task.parkedReason ? ` · parked ${task.parkedReason}` : ""
     }`;
   }
@@ -446,7 +456,10 @@ function taskRoutingStatus(task: StoredTask, team: TeamCatalog | undefined): str
   const stageMode = task.stageIndex > 0
     ? team?.roles[stageRole]?.mode ?? task.mode
     : task.mode;
-  return `role ${role} · workflow ${task.workflow} · stage ${displayIndex}/${stageCount ?? "?"} ${stageRole} · stage mode ${stageMode} · rework cycles ${task.reworkCycles}${
+  const stageAgent = team?.roles[stageRole]?.agent;
+  return `role ${role} · workflow ${task.workflow} · stage ${displayIndex}/${stageCount ?? "?"} ${stageRole}${
+    stageAgent ? ` · agent ${stageAgent}` : ""
+  } · stage mode ${stageMode} · rework cycles ${task.reworkCycles}${
     task.parkedReason ? ` · parked ${task.parkedReason}` : ""
   }`;
 }
