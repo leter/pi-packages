@@ -235,6 +235,11 @@ export class DispatchApplication {
           !occupied.has(agent.terminalId) &&
           agent.cwd !== undefined,
       )
+    const paneLabels = new Map(
+      snapshot.panes
+        .filter((pane) => pane.label !== undefined)
+        .map((pane) => [pane.terminalId, pane.label!]),
+    );
     return Promise.all(
       eligible.map(async (agent) => {
         let worktreePath: string | undefined;
@@ -244,12 +249,15 @@ export class DispatchApplication {
           // Non-Git Eligible Agents remain valid for non-mutating work.
         }
         const agentLabel = agent.agent ?? agent.name ?? agent.label ?? "unknown";
+        // The pane label is the user's rename and carries the ADR 0017
+        // role-routing hint; snapshot agent records omit it, so join panes.
+        const displayName = agent.label ?? paneLabels.get(agent.terminalId) ?? agent.name;
         return Object.freeze({
           terminalId: agent.terminalId,
           paneId: agent.paneId,
           workspaceId: agent.workspaceId,
           agentLabel,
-          ...(agent.name === undefined ? {} : { displayName: agent.name }),
+          ...(displayName === undefined ? {} : { displayName }),
           cwd: agent.cwd!,
           ...(worktreePath === undefined ? {} : { worktreePath }),
           status: agent.agentStatus as "idle" | "done",
@@ -554,10 +562,16 @@ export class DispatchApplication {
       throw new RangeError(`inspection lines must be from 1 to ${MAX_INSPECTION_LINES}`);
     }
     const snapshot = await this.#herdr.currentWorkspaceSnapshot();
+    const paneLabels = new Map(
+      snapshot.panes
+        .filter((pane) => pane.label !== undefined)
+        .map((pane) => [pane.terminalId, pane.label!]),
+    );
     const candidates = snapshot.agents.filter(
       (agent) =>
         agent.terminalId !== this.#originTerminalId &&
-        (agent.terminalId === target || agent.agent === target || agent.name === target),
+        (agent.terminalId === target || agent.agent === target || agent.name === target ||
+          (paneLabels.get(agent.terminalId) ?? agent.label) === target),
     );
     if (candidates.length !== 1) throw new ProposalTargetError("inspection target is missing or ambiguous");
     const candidate = candidates[0]!;
@@ -565,13 +579,14 @@ export class DispatchApplication {
     const read = await this.#herdr.readTail(candidate.paneId, requestedLines <= 50 ? 50 : 200);
     const lines = read.text.split(/\r?\n/u);
     const agentLabel = candidate.agent ?? candidate.name ?? candidate.label ?? "unknown";
+    const displayName = candidate.label ?? paneLabels.get(candidate.terminalId) ?? candidate.name;
     return {
       target: {
         terminalId: candidate.terminalId,
         paneId: candidate.paneId,
         workspaceId: candidate.workspaceId,
         agentLabel,
-        ...(candidate.name === undefined ? {} : { displayName: candidate.name }),
+        ...(displayName === undefined ? {} : { displayName }),
         cwd: candidate.cwd,
         status:
           candidate.agentStatus === "done" ? "done" : "idle",

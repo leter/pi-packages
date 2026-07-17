@@ -67,11 +67,14 @@ class FakeHerdr implements HerdrDispatchPort {
   monitored: HerdrMonitorTarget[] = [];
   readLines?: 50 | 200;
   snapshotAgent = agent;
+  snapshotPaneLabel?: string;
 
   async currentWorkspaceSnapshot(): Promise<CurrentWorkspaceSnapshot> {
     return {
       workspace: { workspaceId: "w-current", label: "Current", focused: true },
-      panes: [pane],
+      panes: [
+        this.snapshotPaneLabel === undefined ? pane : { ...pane, label: this.snapshotPaneLabel },
+      ],
       agents: [this.snapshotAgent],
       serverVersion: "0.7.3",
       protocol: 16,
@@ -171,6 +174,23 @@ describe("DispatchApplication", () => {
     });
     expect(proposal.target.terminalId).toBe("term-target");
     expect(proposal.payload).toContain("ID: hd_test_1");
+  });
+
+  it("surfaces the pane label as displayName for role routing and target matching", async () => {
+    const { application, herdr } = await harness();
+    herdr.snapshotPaneLabel = "coder-1";
+
+    await expect(application.listEligibleAgents()).resolves.toEqual([
+      expect.objectContaining({ displayName: "coder-1" }),
+    ]);
+    const proposal = await application.createProposal({
+      target: "coder-1",
+      mode: "non-mutating",
+      task: "Inspect the parser.",
+      deadlineMinutes: 15,
+      allowProjectDependencyInstall: false,
+    });
+    expect(proposal.target.terminalId).toBe("term-target");
   });
 
   it("labels exact agent-session evidence as reported in Eligible Agent listings", async () => {

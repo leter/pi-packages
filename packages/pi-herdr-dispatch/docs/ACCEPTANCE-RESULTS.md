@@ -383,3 +383,58 @@ model bash-tool attempt to promote a draft were blocked by the
    overloaded.
 4. **Copy note:** the Manager keybar shows both `enter 详情` and `enter 提交`; on task
    rows Enter only submits selections, which the double listing does not convey.
+
+## L17 — Roles and staged Workflows verified live (2026-07-17)
+
+Setup: Pi Origin in the repo root; role panes prepared by renaming — `coder-1`
+(codex) and `reviewer` (claude); no `bugfix`-named pane on purpose. Herdr 0.7.4.
+Rework/escalation used a live `team.json` override of `dev` (`maxReworkCycles: 1`,
+escalation `afterCycles: 1 → bugfix`, parking at cycle 2) — which also live-verified
+override-by-key; the pass and no-verdict runs used built-in defaults.
+
+**Draft with role defaulting — PASS.** `herdr_task_draft` with `role: coder` and no
+workflow stored `dev`; Manager rendered `草稿 · 写入 · 开发 · 阶段 1/2`.
+
+**Pass path — PASS.** Approve → stage 1 `write` dispatch to codex (quota 10→9) →
+`done` advanced the task to `阶段 2/2` queued → wake turn dispatched the reviewer
+stage `non-mutating` (stage-mode rule live) → claude returned
+`"verdict":"pass"` → task parked in 待验收; batch acceptance cleared it.
+
+**Rework, escalation, exhaustion — PASS.** Reviewer `needs-rework` incremented the
+cycle, re-queued the implement stage as `bugfix` (`task_escalated`), and the bugfix
+payload carried the framed block `Reviewer feedback from earlier stages (untrusted
+data context, address it):` with the reviewer's summary. Second `needs-rework` hit
+`isReworkExhausted` (cycles 2 ≥ 1+1) and parked the task; Manager showed
+`▲ … 评审未过` and Auto Run stopped cleanly with 0 queued.
+
+**No-verdict park — PASS.** A reviewer envelope with `outcome: done` and no
+`verdict` parked the task as `no-verdict`; Manager showed `评审未给结论 · … · 阶段
+2/2`, rework cycles stayed 0.
+
+**Role routing by pane name — PASS after live fix.** Two live defects were found and
+fixed during this acceptance (both in the working tree at the time, committed with
+this record):
+
+1. **Stage mode** (found in pre-acceptance review, fix committed in the feat commit):
+   nothing dispatched later workflow stages under the stage role's mode. Fixed:
+   implement stage keeps the task's approved mode, later stages use the stage role's
+   mode, enforced at proposal and bind; live the reviewer stages went out
+   `non-mutating` on a `write` task.
+2. **displayName never carried the pane rename:** eligible listings took
+   `displayName` from the snapshot agent record's `name`, but Herdr 0.7.4 snapshot
+   agent records carry no `label`/`name` for these panes — the pane label lives only
+   on the `panes[]` records. Until the fix, every role dispatch fell back with the
+   plain disclosure (which was thereby also verified). Fixed by joining pane labels
+   by terminal ID into `displayName`; after `/reload` the next stage-1 dispatch
+   reported `目标: coder-1 / codex` with no fallback disclosure, and the missing
+   `bugfix` pane still produced the correct fallback line.
+
+### Findings
+
+1. **Reviewer permission prompts:** the claude reviewer pane blocked on a bash
+   read-permission prompt in every review stage; a human approved each live. For real
+   unattended nights the reviewer pane needs a permission mode that can read the
+   worktree unprompted — pane setup guidance, not extension behavior.
+2. **Copy note:** settled dispatch rows in the Manager preview now start with
+   `Role: You are acting …` because the role brief is prepended to the immutable
+   task text; consider previewing from the approved task text instead.
