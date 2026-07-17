@@ -6,6 +6,7 @@ import {
   lifecycleMark,
   outcomeMark,
   padToDisplayWidth,
+  parkedTaskMark,
   relativeAge,
   relativeDeadline,
   sanitizeLine,
@@ -331,14 +332,14 @@ function appendTaskBoard(
     if (total === 0) continue;
     lines.push({ spans: [span(UI_COPY.manager.taskGroup(state), "muted", true)] });
     for (const task of group) {
-      const mark = taskStateMark(task.state);
+      const mark = task.parkedReason === undefined
+        ? taskStateMark(task.state)
+        : parkedTaskMark(task.parkedReason);
       const stage = taskStageInfo(task, team);
       const roleLabel = stage.roleKey === undefined
         ? undefined
         : team?.roles[stage.roleKey]?.label ?? UI_COPY.state.role(stage.roleKey);
-      const stateLabel = task.parkedReason === undefined
-        ? mark.label
-        : UI_COPY.state.parkedReason(task.parkedReason);
+      const stateLabel = mark.label;
       const checkbox = task.state === "draft" || task.state === "review"
         ? selection.has(task.id) ? "[✓] " : "[ ] "
         : "    ";
@@ -404,7 +405,11 @@ export interface ViewChrome {
   hint: string;
 }
 
-export function listChrome(snapshot: DispatchViewSnapshot, showSettled: boolean): ViewChrome {
+export function listChrome(
+  snapshot: DispatchViewSnapshot,
+  showSettled: boolean,
+  selectedId?: string,
+): ViewChrome {
   const entries = sortUnsettled(snapshot.unsettled);
   const attention = entries.filter((entry) => entry.attention.length > 0).length;
   const active = entries.filter(
@@ -422,13 +427,16 @@ export function listChrome(snapshot: DispatchViewSnapshot, showSettled: boolean)
     snapshot.tasks?.filter((task) => task.state === "review").length ?? 0,
     snapshot.runQuotaRemaining,
   );
+  const selectedTask = snapshot.tasks?.find((task) => task.id === selectedId);
+  const taskSubmissionFocused =
+    selectedTask?.state === "draft" || selectedTask?.state === "review";
   return {
     title: UI_COPY.manager.title(),
     ...(counts === "" ? {} : { counts, countsColor: attention > 0 ? "warning" : "muted" }),
     hint: UI_COPY.manager.listKeybar(
       showSettled,
       (snapshot.unseenSettled?.length ?? 0) > 0,
-      (snapshot.tasks?.some((task) => task.state !== "accepted") ?? false),
+      taskSubmissionFocused,
     ),
   };
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import {
   isReworkExhausted,
   loadTeamConfig,
   parseTeamConfig,
+  writeRoleAgent,
 } from "../../src/domain/team.js";
 
 const cleanupPaths: string[] = [];
@@ -81,10 +82,8 @@ describe("team catalog", () => {
 
   it.each([
     ["non-object", []],
-    ["unknown top-level field", { extra: true }],
     ["roles must be a map", { roles: [] }],
     ["invalid role key", { roles: { "Bad Key": { label: "坏", mode: "write", brief: "Brief." } } }],
-    ["unknown role field", { roles: { coder: { label: "开发", mode: "write", brief: "Brief.", extra: true } } }],
     ["missing role field", { roles: { coder: { label: "开发", mode: "write" } } }],
     ["bad role mode", { roles: { coder: { label: "开发", mode: "admin", brief: "Brief." } } }],
     ["unsupported role agent", { roles: { coder: { label: "开发", mode: "write", brief: "Brief.", agent: "other" } } }],
@@ -92,14 +91,12 @@ describe("team catalog", () => {
     ["long label", { roles: { coder: { label: "角".repeat(21), mode: "write", brief: "Brief." } } }],
     ["long brief", { roles: { coder: { label: "开发", mode: "write", brief: "x".repeat(401) } } }],
     ["workflow must be object", { workflows: { dev: [] } }],
-    ["unknown workflow field", { workflows: { dev: { stages: ["coder"], maxReworkCycles: 2, escalation: [], extra: true } } }],
     ["empty stages", { workflows: { dev: { stages: [], maxReworkCycles: 2, escalation: [] } } }],
     ["unknown stage role", { workflows: { dev: { stages: ["missing"], maxReworkCycles: 2, escalation: [] } } }],
     ["non-integer budget", { workflows: { dev: { stages: ["coder"], maxReworkCycles: 1.5, escalation: [] } } }],
     ["negative budget", { workflows: { dev: { stages: ["coder"], maxReworkCycles: -1, escalation: [] } } }],
     ["large budget", { workflows: { dev: { stages: ["coder"], maxReworkCycles: 11, escalation: [] } } }],
     ["escalation must be array", { workflows: { dev: { stages: ["coder"], maxReworkCycles: 2, escalation: {} } } }],
-    ["unknown escalation field", { workflows: { dev: { stages: ["coder"], maxReworkCycles: 2, escalation: [{ afterCycles: 1, role: "bugfix", extra: true }] } } }],
     ["non-positive escalation", { workflows: { dev: { stages: ["coder"], maxReworkCycles: 2, escalation: [{ afterCycles: 0, role: "bugfix" }] } } }],
     ["unordered escalation", { workflows: { dev: { stages: ["coder"], maxReworkCycles: 2, escalation: [{ afterCycles: 2, role: "bugfix" }, { afterCycles: 2, role: "oracle" }] } } }],
     ["unknown escalation role", { workflows: { dev: { stages: ["coder"], maxReworkCycles: 2, escalation: [{ afterCycles: 1, role: "missing" }] } } }],
@@ -128,5 +125,87 @@ describe("team catalog", () => {
       .toEqual([false, false, false, false, false, true]);
     expect([0, 1, 2, 3].map((cycles) => isReworkExhausted(research, cycles)))
       .toEqual([false, false, true, true]);
+  });
+
+  it("writes a complete effective role while preserving the rest of team.json", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-herdr-team-"));
+    cleanupPaths.push(directory);
+    const path = join(directory, "nested", "team.json");
+    await mkdir(join(directory, "nested"), { recursive: true });
+    await writeFile(path, JSON.stringify({
+      roles: {
+        coder: {
+          label: "主程",
+          mode: "write",
+          brief: "Keep this exact role brief.",
+          agent: "codex",
+          futureRoleField: "preserve me",
+        },
+        analyst: {
+          label: "分析",
+          mode: "non-mutating",
+          brief: "Analyze the bounded question.",
+          agent: "grok",
+        },
+      },
+      workflows: {
+        research: {
+          stages: ["analyst"],
+          maxReworkCycles: 0,
+          escalation: [],
+          futureWorkflowField: "preserve me too",
+        },
+      },
+      futureTeamField: { enabled: true },
+    }), "utf8");
+
+    const team = await writeRoleAgent("coder", "claude", path);
+
+    expect(team.roles.coder).toEqual({
+      key: "coder",
+      label: "主程",
+      mode: "write",
+      brief: "Keep this exact role brief.",
+      agent: "claude",
+    });
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+      roles: {
+        coder: {
+          label: "主程",
+          mode: "write",
+          brief: "Keep this exact role brief.",
+          agent: "claude",
+          futureRoleField: "preserve me",
+        },
+        analyst: {
+          label: "分析",
+          mode: "non-mutating",
+          brief: "Analyze the bounded question.",
+          agent: "grok",
+        },
+      },
+      workflows: {
+        research: {
+          stages: ["analyst"],
+          maxReworkCycles: 0,
+          escalation: [],
+          futureWorkflowField: "preserve me too",
+        },
+      },
+      futureTeamField: { enabled: true },
+    });
+  });
+
+  it("rejects an invalid role agent without changing team.json", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-herdr-team-"));
+    cleanupPaths.push(directory);
+    const path = join(directory, "team.json");
+    const original = '{"futureTeamField":true}';
+    await writeFile(path, original, "utf8");
+
+    await expect(writeRoleAgent("coder", "other" as never, path)).rejects.toThrow(
+      "role coder agent must be a supported Agent type",
+    );
+    await expect(readFile(path, "utf8")).resolves.toBe(original);
   });
 });

@@ -56,6 +56,7 @@ The readable `hd-*` aliases are the recommended interactive commands; the origin
 - `/hd-create` (`/herdr-dispatch-create`) — complete the wizard, optionally create a Task Worktree for write mode, create a supported Agent there, wait until it is eligible, then send through the same automatic dispatch path.
 - `/hd-agents` (`/herdr-agents`) — list current-workspace Eligible Agents and each canonical worktree.
 - `/hd-manager` (`/herdr-dispatches`, or `alt+h`) — open the current-workspace Dispatch Manager, browse human-readable tasks, and perform explicit bounded output reads (`r` for 50 lines, `R` for 200).
+- `/hd-settings` (`/herdr-settings`, or `alt+s`) — open the TUI-only Settings panel. V1 edits Run Quota, Launch Budget, Auto Run Depth, the default deadline, and the seven built-in Role Agent defaults.
 - `/hd-task` (`/herdr-task`) — manually create a Task Board draft, optionally choose its Role and Workflow, or open the board listing. TUI-only.
 - `/hd-auto [on [N]|off]` (`/herdr-dispatch-auto`) — report or toggle Auto Run and, while armed, its remaining Run Quota and Launch Budget. `on N` resets Run Quota to N and Launch Budget to `defaultLaunchBudget`; omitted N uses `defaultRunQuota`.
 - `/hd-clean` (`/herdr-dispatch-clean`) — inspect retained Task Worktrees and remove selected clean, merged, unheld entries after one confirmation.
@@ -81,7 +82,7 @@ The model may draft one bounded Board Task per call, but cannot approve, accept,
 
 `/hd-manager` (or `alt+h`; long form `/herdr-dispatches`) opens the Dispatch Manager as a rounded framed panel: `任务派发` and live counts sit in the top border, the key hints in the bottom border, and `→` marks the selection. Rows are grouped in action order — `待处理` (needs attention), then `运行中` (running), then `投递中` (delivering) — and show the target Agent, task summary, principal attention reason, and relative deadline. The panel is capped at 96 terminal columns, uses one blank row between sections and before the bottom keybar, promotes section headings above dim metadata, and keeps the `S` teaching only in the keybar. The empty body stays compact and carries no instructional placeholder. Dispatch IDs never appear in default rows; press `D` on a detail screen when you need the full identifiers.
 
-State glyphs pair a symbol, a theme color, and a label, so no state relies on color alone: `●` active, `◌` delivering, `▲` needs attention, `✓` done, `◼` blocked, `✗` failed, `○` cancelled.
+State glyphs pair a symbol, a theme color, and a label, so no state relies on color alone: `●` active, `◌` delivering, `◆` review, `▲` needs attention, `✓` done, `◼` blocked, `✗` failed, `○` cancelled. A parked review keeps `▲` because it needs user attention.
 
 ### List screen
 
@@ -118,6 +119,14 @@ Typical flow: dispatch work to an Existing Agent with `/hd-new`, or use `/hd-cre
 A settled result is not silently done: besides the one-shot notification, it counts as `✓ N 已完成` in the widget and sits in the `已完成 · 未读` Manager group until you open its detail, which marks it seen and folds it into the workspace settled history. When unread completions accumulate, press `c` on the list screen to atomically mark all of them seen; this only clears the unread presentation state, never deletes Registry history, and `s` can still reveal the retained records. The detail formats the sanitized result as a card — summary, blocker, and file/test counts, always labelled untrusted — instead of raw envelope JSON, and every outbound dispatch instructs the target to write its summary and blocker text in Simplified Chinese. From that detail, `f` seeds a follow-up dispatch to the same Agent — a brand-new dispatch (settlement is never reopened) that rides on the target pane's surviving conversation context, re-validated for eligibility, occupancy, and leases like any other.
 
 The shared `/hd-new` and `/hd-create` deadline prompt shows the configured default (30 minutes by default); submitting an empty value uses that default.
+
+## Using Settings
+
+Open `/hd-settings` or press `alt+s`. Use `↑`/`↓` to select a row and `←`/`→` to step a number or cycle a Role Agent through `pi`, `claude`, `codex`, `opencode`, `amp`, `droid`, and `grok`. There is no free-text field.
+
+The `运行设置` group edits `defaultRunQuota`, `defaultLaunchBudget`, `maxAutoRunDepth`, and `defaultDeadlineMinutes`. The `角色模型` group edits the default Agent for each of the seven built-in Roles. Successful changes persist to `config.json` or `team.json` and take effect immediately without `/reload`.
+
+Before either file is replaced, the full merged object is parsed and validated. Fields the panel does not manage stay untouched, including advanced configuration, Role label/mode/brief, Workflows, and unknown extension fields. Writes create missing directories and use a temporary file plus rename. A failed save leaves the original file and active in-memory value unchanged and shows one failure line. Settings is a user-only TUI surface; no model tool can read or change it.
 
 ## Task Board (任务板)
 
@@ -180,7 +189,7 @@ Optional file: `~/.config/pi-herdr-dispatch/config.json`
 
 `defaultLaunchBudget` accepts 0–10. Zero disables model-initiated launch. Re-arming resets its usage; a legacy armed row with no stored value uses the configured default.
 
-Unknown fields, invalid types, unsafe bounds, or inconsistent minimum/default/maximum values disable state-changing behavior. Safe state reads remain available when their dependencies are healthy.
+Unknown fields are retained as file-only extension data. Invalid recognized types, unsafe bounds, removed inspection-bound keys, or inconsistent minimum/default/maximum values disable state-changing behavior. Safe state reads remain available when their dependencies are healthy.
 
 Optional team catalog: `~/.config/pi-herdr-dispatch/team.json`. Missing means the built-ins above. Entries replace a built-in with the same key wholesale; custom keys are allowed. `agent` is optional and must be one of the fixed supported Agent types. Because replacement is wholesale, omitting `agent` from a Role override removes that Role's default.
 

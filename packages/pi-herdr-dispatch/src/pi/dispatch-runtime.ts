@@ -8,10 +8,17 @@ import {
   DEFAULT_DISPATCH_CONFIG,
   defaultConfigPath,
   loadDispatchConfig,
+  writeDispatchConfig,
   type DispatchConfig,
 } from "../domain/config.js";
 import { TaskWorktreeService } from "../domain/task-worktree.js";
-import { defaultTeamConfigPath, loadTeamConfig } from "../domain/team.js";
+import {
+  DEFAULT_TEAM_CATALOG,
+  defaultTeamConfigPath,
+  loadTeamConfig,
+  writeRoleAgent,
+  type TeamCatalog,
+} from "../domain/team.js";
 import { HerdrAdapter } from "../herdr/adapter.js";
 import { OriginMonitor } from "../monitor/origin-monitor.js";
 import { AutoRunCoordinator } from "../settlement/auto-run.js";
@@ -27,6 +34,8 @@ import {
 } from "./live-presentation.js";
 import { agentDisplayName, taskSummary } from "./dispatch-view-model.js";
 import { RegistryRuntime } from "./registry-runtime.js";
+import type { SettingChange } from "./settings-view-model.js";
+import type { SettingsViewPorts } from "./settings-view.js";
 import { UI_COPY } from "./ui-copy.js";
 
 export interface DispatchRuntimeOptions {
@@ -54,6 +63,7 @@ export class DispatchRuntime {
   #originSessionId?: string;
   #workspaceId?: string;
   #config: DispatchConfig = { ...DEFAULT_DISPATCH_CONFIG };
+  #team: TeamCatalog = DEFAULT_TEAM_CATALOG;
   readonly #autoRun = new AutoRunCoordinator();
   /** Serializes deliverPendingContext so concurrent callers cannot race the coordinator state. */
   #deliveryQueue: Promise<void> = Promise.resolve();
@@ -96,6 +106,34 @@ export class DispatchRuntime {
     return this.#originSessionId;
   }
 
+  settingsPorts(): SettingsViewPorts {
+    return {
+      getConfig: () => this.#config,
+      getTeam: () => this.#team,
+      applyChange: (change) => this.applySettingChange(change),
+      onStateChanged: (listener) => this.onStateChanged(listener),
+    };
+  }
+
+  async applySettingChange(
+    change: SettingChange,
+  ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    try {
+      if (change.kind === "config") {
+        const config = await writeDispatchConfig({ [change.key]: change.value }, this.#configPath);
+        Object.assign(this.#config, config);
+      } else {
+        const team = await writeRoleAgent(change.roleKey, change.agent, this.#teamConfigPath);
+        this.#team = team;
+        this.registryRuntime.registry?.setTeamConfigState({ status: "ready", team });
+      }
+      this.#updateWidget();
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, reason: errorMessage(error) };
+    }
+  }
+
   /** Subscribe to dispatch state changes (settlement, attention, delivery intent). */
   onStateChanged(listener: () => void): () => void {
     this.#stateListeners.add(listener);
@@ -111,6 +149,7 @@ export class DispatchRuntime {
     const configState = await loadDispatchConfig(this.#configPath);
     const teamState = await loadTeamConfig(this.#teamConfigPath);
     this.registryRuntime.registry?.setTeamConfigState(teamState);
+    this.#team = teamState.status === "ready" ? teamState.team : DEFAULT_TEAM_CATALOG;
     const config = configState.status === "ready" ? configState.config : { ...DEFAULT_DISPATCH_CONFIG };
     this.#config = config;
     if (!registryReady) {

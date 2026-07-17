@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export interface DispatchConfig {
   defaultDeadlineMinutes: number;
@@ -43,8 +43,6 @@ export const DEFAULT_DISPATCH_CONFIG: DispatchConfig = Object.freeze({
   defaultLaunchBudget: 2,
 });
 
-const CONFIG_KEYS = new Set(Object.keys(DEFAULT_DISPATCH_CONFIG));
-
 export function defaultConfigPath(home = homedir()): string {
   return join(home, ".config", "pi-herdr-dispatch", "config.json");
 }
@@ -64,11 +62,23 @@ export async function loadDispatchConfig(path = defaultConfigPath()): Promise<Di
   }
 }
 
+export async function writeDispatchConfig(
+  patch: Partial<DispatchConfig>,
+  path = defaultConfigPath(),
+): Promise<DispatchConfig> {
+  const current = await readJsonObject(path, "dispatch config");
+  const merged = { ...current, ...patch };
+  const config = parseDispatchConfig(merged);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(`${path}.tmp`, JSON.stringify(merged, null, 2), "utf8");
+  await rename(`${path}.tmp`, path);
+  return config;
+}
+
 export function parseDispatchConfig(value: unknown): DispatchConfig {
   if (!isRecord(value)) throw new TypeError("dispatch config must be a JSON object");
-  for (const key of Object.keys(value)) {
-    if (!CONFIG_KEYS.has(key)) throw new TypeError(`unknown dispatch config field ${key}`);
-  }
+  // Unknown keys are ignored and preserved on write (forward-compatible with
+  // configs from newer builds); only the known fields below are validated.
   const config = { ...DEFAULT_DISPATCH_CONFIG };
   for (const key of Object.keys(config) as (keyof DispatchConfig)[]) {
     if (value[key] !== undefined) config[key] = integer(value[key], key);
@@ -117,6 +127,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isMissingFile(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+async function readJsonObject(path: string, label: string): Promise<Record<string, unknown>> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if (isMissingFile(error)) return {};
+    throw error;
+  }
+  const value: unknown = JSON.parse(text);
+  if (!isRecord(value)) throw new TypeError(`${label} must be a JSON object`);
+  return value;
 }
 
 function errorMessage(error: unknown): string {

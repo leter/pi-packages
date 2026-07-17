@@ -123,7 +123,7 @@ export class DispatchViewComponent implements Component {
     try {
       if (this.#screen.kind === "list") {
         body = this.#listLines();
-        chrome = listChrome(this.#ports.snapshot(), this.#showSettled);
+        chrome = listChrome(this.#ports.snapshot(), this.#showSettled, this.#selectedId);
       } else {
         ({ body, chrome } = this.#detailView());
       }

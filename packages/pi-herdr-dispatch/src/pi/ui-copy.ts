@@ -15,6 +15,7 @@ export type HumanCommand =
   | "create"
   | "clean"
   | "manager"
+  | "settings"
   | "auto"
   | "task"
   | "reply"
@@ -70,6 +71,7 @@ export interface HumanUiCopy {
     proposalTuiOnly(): string;
     readonlyLaunchTuiOnly(): string;
     managerTuiOnly(): string;
+    settingsTuiOnly(): string;
     setupTuiOnly(): string;
     followupTuiOnly(): string;
     noEligibleAgents(): string;
@@ -185,7 +187,7 @@ export interface HumanUiCopy {
     taskBoardHeading(): string;
     taskGroup(state: TaskState): string;
     settledHeading(count: number, shown: boolean): string;
-    listKeybar(settledShown: boolean, hasUnseen: boolean, hasTasks?: boolean): string;
+    listKeybar(settledShown: boolean, hasUnseen: boolean, taskSubmissionFocused?: boolean): string;
     emergencyResolutionRequired(): string;
     activeSince(age: string): string;
     deliveryStarted(age: string): string;
@@ -204,6 +206,19 @@ export interface HumanUiCopy {
     closeKeybar(): string;
     missingRegistryDispatch(): string;
     backKeybar(): string;
+  };
+  readonly settings: {
+    title(): string;
+    runtimeGroup(): string;
+    rolesGroup(): string;
+    runQuota(): string;
+    launchBudget(): string;
+    autoRunDepth(): string;
+    deadlineMinutes(): string;
+    numericRange(minimum: number, maximum: number, step: number): string;
+    noAgent(): string;
+    keybar(): string;
+    saveFailed(reason: string): string;
   };
   readonly presentation: {
     noEligibleAgents(): string;
@@ -386,6 +401,7 @@ const commandDescriptions: Readonly<Record<HumanCommand, string>> = Object.freez
   create: "创建一个新 Agent 并立即发送 Herdr 派发",
   clean: "检查并清理已合并的任务 worktree",
   manager: "打开 Herdr 派发管理器",
+  settings: "打开 Herdr 设置",
   auto: "查看或切换自动运行(结算结果自动唤醒模型)",
   task: "创建草稿或打开任务板",
   reply: "预览并确认对一个有待处理状况的运行中派发的回复",
@@ -461,6 +477,7 @@ export const UI_COPY = Object.freeze({
     proposalTuiOnly: () => "Herdr 派发投递仅在 TUI 模式下可用",
     readonlyLaunchTuiOnly: () => "只读角色 Agent 创建仅在 TUI 模式下可用",
     managerTuiOnly: () => "派发管理器仅在 TUI 模式下可用",
+    settingsTuiOnly: () => "设置仅在 TUI 模式下可用",
     setupTuiOnly: () => "集成安装仅在 TUI 模式下可用",
     followupTuiOnly: () => "派发后续操作仅在 TUI 模式下可用",
     noEligibleAgents: () => "当前没有可用 Agent",
@@ -630,10 +647,11 @@ export const UI_COPY = Object.freeze({
     taskGroup: (state) => taskStateLabels[state],
     settledHeading: (count, shown) =>
       shown ? `已结算 · 最近 ${count} 条` : `已结算 · ${count} 条`,
-    listKeybar: (settledShown, hasUnseen, hasTasks = false) =>
+    listKeybar: (settledShown, hasUnseen, taskSubmissionFocused = false) =>
       [
-        "enter 详情",
-        hasTasks ? "space 选择 · a 全选 · A 反选 · enter 提交 · x 单项" : "",
+        taskSubmissionFocused
+          ? "space 选择 · a 全选 · A 反选 · enter 提交 · x 单项"
+          : "enter 详情",
         hasUnseen ? "c 清空未读" : "",
         `s ${settledShown ? "隐藏" : "显示"}已结算`,
       ]
@@ -671,6 +689,19 @@ export const UI_COPY = Object.freeze({
     closeKeybar: () => " esc 关闭",
     missingRegistryDispatch: () => " 该派发已不在注册表中",
     backKeybar: () => " esc 返回",
+  },
+  settings: {
+    title: () => "设置",
+    runtimeGroup: () => "运行设置",
+    rolesGroup: () => "角色模型",
+    runQuota: () => "本次额度",
+    launchBudget: () => "创建额度",
+    autoRunDepth: () => "自动接力深度",
+    deadlineMinutes: () => "默认截止分钟",
+    numericRange: (minimum, maximum, step) => `范围 ${minimum}–${maximum} · 步长 ${step}`,
+    noAgent: () => "未设置",
+    keybar: () => "↑↓ 选择 · ←→ 调整 · esc 关闭",
+    saveFailed: (reason) => `保存失败:${reason}`,
   },
   presentation: {
     noEligibleAgents: () => "当前没有可用 Agent——其余的正在工作、受阻或已被占用。",
@@ -744,7 +775,7 @@ export const UI_COPY = Object.freeze({
     autoRunActiveTitle: () => "自动运行已启用",
     autoRunActiveBody: (maxDepth) =>
       `本会话的结算结果会自动唤醒模型;深度上限 ${maxDepth}。用 /hd-auto off 关闭。`,
-    autoRunDepthExhaustedTitle: (agent) => `${agent} 完成 · 自动运行深度已达上限`,
+    autoRunDepthExhaustedTitle: (agent) => `${agent} 完成 · 自动接力深度已达上限`,
     autoRunDepthExhaustedBody: (task) => `${task} · 结果已排队,等待人工查看`,
     runQuotaExhaustedTitle: () => "本次额度已用完",
     runQuotaExhaustedBody: () => "排队任务保持不变;用 /hd-auto on [额度] 重新开启。",

@@ -35,6 +35,7 @@ import {
 import { DispatchController } from "./dispatch-controller.js";
 import { SETTLED_DISPLAY_LIMIT, type DispatchAction } from "./dispatch-view-model.js";
 import { openDispatchView, type DispatchViewPorts } from "./dispatch-view.js";
+import { openSettingsView } from "./settings-view.js";
 import { FollowupController } from "./followup-controller.js";
 import {
   agentRow,
@@ -258,6 +259,7 @@ export function registerDispatchCommands(
   };
 
   let dispatchViewOpen = false;
+  let settingsViewOpen = false;
   const executeFollowup = async (
     action: DispatchAction,
     dispatch: StoredDispatch,
@@ -417,6 +419,17 @@ export function registerDispatchCommands(
     await executeFollowup(result.action, dispatch, ctx);
   };
 
+  const openSettingsPanel = async (ctx: ExtensionContext): Promise<void> => {
+    if (ctx.mode !== "tui") throw new Error(UI_COPY.command.settingsTuiOnly());
+    if (settingsViewOpen) return;
+    settingsViewOpen = true;
+    try {
+      await openSettingsView(ctx.ui, runtime.settingsPorts());
+    } finally {
+      settingsViewOpen = false;
+    }
+  };
+
   pi.registerShortcut("alt+h", {
     description: UI_COPY.command.description("manager"),
     handler: async (ctx) => handle(ctx, () => openPanel(ctx)),
@@ -437,6 +450,16 @@ export function registerDispatchCommands(
           "info",
         );
       }),
+  });
+
+  pi.registerShortcut("alt+s", {
+    description: UI_COPY.command.description("settings"),
+    handler: async (ctx) => handle(ctx, () => openSettingsPanel(ctx)),
+  });
+
+  registerCommandWithAlias(pi, "herdr-settings", "hd-settings", {
+    description: UI_COPY.command.description("settings"),
+    handler: async (_args, ctx) => handle(ctx, () => openSettingsPanel(ctx)),
   });
 
   registerCommandWithAlias(pi, "herdr-task", "hd-task", {

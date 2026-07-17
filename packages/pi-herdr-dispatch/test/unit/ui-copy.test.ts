@@ -111,6 +111,32 @@ describe("human UI copy catalog", () => {
     expect(UI_COPY.command.taskWorktreeRefusalReason("branch-unmerged")).toBe("分支未合并");
   });
 
+  it("contains exact Settings panel copy", () => {
+    expect(UI_COPY.command.description("settings")).toBe("打开 Herdr 设置");
+    expect(UI_COPY.command.settingsTuiOnly()).toBe("设置仅在 TUI 模式下可用");
+    expect([
+      UI_COPY.settings.title(),
+      UI_COPY.settings.runtimeGroup(),
+      UI_COPY.settings.rolesGroup(),
+      UI_COPY.settings.runQuota(),
+      UI_COPY.settings.launchBudget(),
+      UI_COPY.settings.autoRunDepth(),
+      UI_COPY.settings.deadlineMinutes(),
+    ]).toEqual([
+      "设置",
+      "运行设置",
+      "角色模型",
+      "本次额度",
+      "创建额度",
+      "自动接力深度",
+      "默认截止分钟",
+    ]);
+    expect(UI_COPY.settings.keybar()).toBe("↑↓ 选择 · ←→ 调整 · esc 关闭");
+    expect(UI_COPY.settings.saveFailed("permission denied")).toBe(
+      "保存失败:permission denied",
+    );
+  });
+
   it("contains exact human renderer, notification, and follow-up copy", () => {
     expect(UI_COPY.presentation.noEligibleAgents()).toBe(
       "当前没有可用 Agent——其余的正在工作、受阻或已被占用。",
@@ -124,6 +150,9 @@ describe("human UI copy catalog", () => {
     expect(UI_COPY.notification.readonlyAgentLaunchedBody("评审", "claude", "reviewer-auto-1"))
       .toContain("评审 · claude · reviewer-auto-1");
     expect(UI_COPY.notification.launchBudgetExhaustedTitle()).toBe("创建额度已用完");
+    expect(UI_COPY.notification.autoRunDepthExhaustedTitle("claude")).toBe(
+      "claude 完成 · 自动接力深度已达上限",
+    );
     expect(UI_COPY.followup.replyCancelled()).toBe("回复已取消。");
     expect(UI_COPY.followup.deliveryVerified("reply")).toBe("回复的投递回显已验证。");
     expect(UI_COPY.followup.settled("claude", "受阻")).toBe("claude 的派发已结算:受阻。");

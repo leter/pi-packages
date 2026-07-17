@@ -8,6 +8,7 @@ import type {
   FinalOutcome,
   StoredDispatch,
   StoredTask,
+  TaskParkedReason,
   TaskState,
 } from "../registry/types.js";
 import { UI_COPY } from "./ui-copy.js";
@@ -89,10 +90,14 @@ export function taskStateMark(state: TaskState): StateMark {
     case "dispatched":
       return { glyph: "●", color: "accent", label: UI_COPY.state.task(state) };
     case "review":
-      return { glyph: ATTENTION_GLYPH, color: "warning", label: UI_COPY.state.task(state) };
+      return { glyph: "◆", color: "accent", label: UI_COPY.state.task(state) };
     case "accepted":
       return { glyph: "✓", color: "success", label: UI_COPY.state.task(state) };
   }
+}
+
+export function parkedTaskMark(reason: TaskParkedReason): StateMark {
+  return { glyph: ATTENTION_GLYPH, color: "warning", label: UI_COPY.state.parkedReason(reason) };
 }
 
 const ZERO_WIDTH_CHARACTER = /[\p{Default_Ignorable_Code_Point}\p{Mark}]/u;
@@ -246,7 +251,9 @@ export interface BoardTaskRow {
 }
 
 export function boardTaskRow(task: StoredTask, team?: TeamCatalog): BoardTaskRow {
-  const state = taskStateMark(task.state);
+  const state = task.parkedReason === undefined
+    ? taskStateMark(task.state)
+    : parkedTaskMark(task.parkedReason);
   const stage = taskStageInfo(task, team);
   const role = stage.roleKey === undefined
     ? undefined
@@ -254,9 +261,7 @@ export function boardTaskRow(task: StoredTask, team?: TeamCatalog): BoardTaskRow
   return {
     mark: state,
     title: sanitizeLine(task.title, 80),
-    state: task.parkedReason === undefined
-      ? state.label
-      : UI_COPY.state.parkedReason(task.parkedReason),
+    state: state.label,
     mode: UI_COPY.state.mode(task.mode),
     ...(role === undefined ? {} : { role }),
     ...(task.workflow === undefined

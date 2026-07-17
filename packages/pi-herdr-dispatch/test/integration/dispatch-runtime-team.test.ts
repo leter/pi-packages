@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -19,6 +19,85 @@ afterEach(async () => {
 });
 
 describe("DispatchRuntime team config", () => {
+  it("persists a config setting and applies the new default without reload", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-herdr-runtime-settings-"));
+    cleanupPaths.push(directory);
+    const configPath = join(directory, "config.json");
+    await writeFile(
+      configPath,
+      JSON.stringify({ retentionDays: 45, futureSetting: true }),
+      "utf8",
+    );
+    const runtime = await startRuntime(directory, configPath, join(directory, "missing-team.json"));
+
+    await expect(runtime.applySettingChange({
+      kind: "config",
+      key: "defaultDeadlineMinutes",
+      value: 35,
+    })).resolves.toEqual({ ok: true });
+
+    expect(runtime.settingsPorts().getConfig().defaultDeadlineMinutes).toBe(35);
+    expect(runtime.application?.defaultDeadlineMinutes).toBe(35);
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
+      retentionDays: 45,
+      futureSetting: true,
+      defaultDeadlineMinutes: 35,
+    });
+  });
+
+  it("persists a role agent and publishes the reparsed team catalog", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-herdr-runtime-settings-"));
+    cleanupPaths.push(directory);
+    const teamPath = join(directory, "team.json");
+    await writeFile(teamPath, JSON.stringify({
+      roles: {
+        coder: {
+          label: "主程",
+          mode: "write",
+          brief: "Keep the live brief.",
+          agent: "codex",
+        },
+      },
+      futureTeamSetting: true,
+    }), "utf8");
+    const runtime = await startRuntime(directory, join(directory, "missing-config.json"), teamPath);
+
+    await expect(runtime.applySettingChange({
+      kind: "role-agent",
+      roleKey: "coder",
+      agent: "claude",
+    })).resolves.toEqual({ ok: true });
+
+    expect(runtime.settingsPorts().getTeam().roles.coder).toMatchObject({
+      label: "主程",
+      brief: "Keep the live brief.",
+      agent: "claude",
+    });
+    expect(runtime.registryRuntime.registry?.teamCatalog()?.roles.coder?.agent).toBe("claude");
+  });
+
+  it("returns a refusal without changing the file or active config", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-herdr-runtime-settings-"));
+    cleanupPaths.push(directory);
+    const configPath = join(directory, "config.json");
+    const original = '{"defaultRunQuota":12,"retentionDays":45}';
+    await writeFile(configPath, original, "utf8");
+    const runtime = await startRuntime(directory, configPath, join(directory, "missing-team.json"));
+
+    const result = await runtime.applySettingChange({
+      kind: "config",
+      key: "defaultRunQuota",
+      value: 51,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "defaultRunQuota must be from 1 to 50",
+    });
+    expect(runtime.settingsPorts().getConfig().defaultRunQuota).toBe(12);
+    await expect(readFile(configPath, "utf8")).resolves.toBe(original);
+  });
+
   it("emits one warning for invalid team.json without disabling plain Board Tasks", async () => {
     const directory = await mkdtemp(join(tmpdir(), "pi-herdr-runtime-team-"));
     cleanupPaths.push(directory);
@@ -145,6 +224,45 @@ describe("DispatchRuntime team config", () => {
     ]);
   });
 });
+
+async function startRuntime(
+  directory: string,
+  configPath: string,
+  teamConfigPath: string,
+): Promise<DispatchRuntime> {
+  const socketPath = join(directory, `herdr-${servers.length}.sock`);
+  const fake = new FakeHerdrServer(socketPath, (request, connection) => {
+    if (request.method !== "session.snapshot") return;
+    connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() });
+  });
+  servers.push(fake);
+  await fake.start();
+  const runtime = new DispatchRuntime({
+    registry: new RegistryRuntime(join(directory, `registry-${runtimes.length}.sqlite`)),
+    configPath,
+    teamConfigPath,
+    environment: {
+      HERDR_SOCKET_PATH: socketPath,
+      HERDR_WORKSPACE_ID: "w1",
+      HERDR_PANE_ID: "p-origin",
+    },
+    sendContextMessage: vi.fn(async () => undefined),
+  });
+  runtimes.push(runtime);
+  const ctx = {
+    mode: "tui",
+    cwd: "/repo",
+    ui: { notify: vi.fn(), setWidget: vi.fn() },
+    isIdle: () => true,
+    sessionManager: {
+      getSessionId: () => "session-origin",
+      getLeafId: () => "leaf",
+      getBranch: () => [],
+    },
+  } as unknown as ExtensionContext;
+  await runtime.start(ctx);
+  return runtime;
+}
 
 function snapshot(): Record<string, unknown> {
   const origin = {

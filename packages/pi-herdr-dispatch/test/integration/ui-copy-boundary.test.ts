@@ -65,6 +65,8 @@ describe("human UI copy boundary", () => {
       "src/pi/live-presentation.ts",
       "src/pi/registry-runtime.ts",
       "src/pi/renderers.ts",
+      "src/pi/settings-view-model.ts",
+      "src/pi/settings-view.ts",
       "src/pi/visual.ts",
     ];
     const violations: string[] = [];

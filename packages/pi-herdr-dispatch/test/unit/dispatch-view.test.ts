@@ -182,7 +182,11 @@ describe("dispatch view model", () => {
       })],
     };
     const rendered = plainAll(buildListLines(snapshot, undefined, false, 1_000_000)).join("\n");
+    const parkedMark = buildListLines(snapshot, undefined, false, 1_000_000)
+      .flatMap((line) => line.spans)
+      .find((span) => span.text.includes("▲"));
     expect(rendered).toContain("评审未给结论 · 写入 · 评审 · 阶段 2/2");
+    expect(parkedMark?.color).toBe("warning");
     expect(rendered).not.toContain("hdt_");
   });
   it("sorts attention first, then active, then delivering by deadline", () => {
@@ -244,6 +248,20 @@ describe("dispatch view model", () => {
       title: "任务派发",
       hint: "enter 详情 · s 显示已结算",
     });
+  });
+
+  it("shows only the Enter action valid for the focused row", () => {
+    const snapshot: DispatchViewSnapshot = {
+      originSessionId: "session_origin",
+      unsettled: [{ dispatch: dispatch(), attention: [] }],
+      settled: [],
+      tasks: [boardTask({ id: "hdt_draft" })],
+    };
+
+    expect(listChrome(snapshot, false, "hdt_draft").hint).toContain("enter 提交");
+    expect(listChrome(snapshot, false, "hdt_draft").hint).not.toContain("enter 详情");
+    expect(listChrome(snapshot, false, "hd_a").hint).toContain("enter 详情");
+    expect(listChrome(snapshot, false, "hd_a").hint).not.toContain("enter 提交");
   });
 
   it("marks the selected row and keeps state glyph, label, and attention paired", () => {

@@ -160,6 +160,10 @@ _Avoid_: unrestricted transcript scraping, trusted pane text, continuing surveil
 The single current-workspace TUI surface opened by `/hd-manager` (long form `/herdr-dispatches`) or `alt+h`. It groups unsettled dispatches by attention and lifecycle, exposes explicit one-shot bounded output reads, and routes selected follow-ups through the existing confirmation gates. It may display foreign-Origin records for emergency discovery but never grants reply, cancellation, monitoring takeover, or automatic retargeting.
 _Avoid_: ID table, second dispatch panel, autonomous coordinator, global workspace browser
 
+**Settings**:
+The user-only TUI surface opened by `/hd-settings` (long form `/herdr-settings`) or `alt+s`. It steps the managed runtime defaults and cycles Role Agent defaults, validates and atomically persists the complete merged files, and applies successful changes without reload. It is not a model tool.
+_Avoid_: free-text configuration editor, model settings tool, read-only status view
+
 **Dispatch Settlement**:
 The indivisible recording of a Final Outcome, release of Target Occupancy and any Worktree Write Lease, and queuing of the Sanitized Dispatch Result for the Origin Session's next user-initiated turn without starting a model turn.
 _Avoid_: autonomous continuation, partial release
@@ -272,6 +276,7 @@ Product copy (UI strings, notifications) is Simplified Chinese ([ADR 0011](./adr
 | Task Worktree | 任务 worktree |
 | Reservation | 预留 |
 | Dispatch Manager | 派发管理器 |
+| Settings | 设置 |
 | lifecycle `delivering` | 投递中 |
 | lifecycle `active` | 运行中 |
 | lifecycle `settled` / Settlement | 已结算 / 结算 |
@@ -304,7 +309,7 @@ Product copy (UI strings, notifications) is Simplified Chinese ([ADR 0011](./adr
 | Unseen Settlement | 已完成 · 未读 |
 | Follow-up Dispatch | 追加派发 |
 | Auto Run | 自动运行 |
-| Auto Run Depth | 自动运行深度 |
+| Auto Run Depth | 自动接力深度 |
 | Task Board | 任务板 |
 | task state `draft` | 草稿 |
 | task state `queued` | 排队 |

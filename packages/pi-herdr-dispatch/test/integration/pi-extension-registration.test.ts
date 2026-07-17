@@ -70,6 +70,8 @@ describe("Pi extension Phase 4 registration", () => {
       "hd-agents",
       "herdr-dispatches",
       "hd-manager",
+      "herdr-settings",
+      "hd-settings",
       "herdr-task",
       "hd-task",
       "herdr-dispatch-auto",
@@ -87,7 +89,7 @@ describe("Pi extension Phase 4 registration", () => {
       "herdr-agent-output",
       "hd-output",
     ]);
-    expect(shortcuts).toEqual(["alt+h"]);
+    expect(shortcuts).toEqual(["alt+h", "alt+s"]);
     expect(Object.fromEntries(descriptions)).toEqual({
       "herdr-agents": "列出当前 Herdr 工作区的可用 Agent",
       "hd-agents": "列出当前 Herdr 工作区的可用 Agent",
@@ -97,6 +99,8 @@ describe("Pi extension Phase 4 registration", () => {
       "hd-create": "创建一个新 Agent 并立即发送 Herdr 派发",
       "herdr-dispatches": "打开 Herdr 派发管理器",
       "hd-manager": "打开 Herdr 派发管理器",
+      "herdr-settings": "打开 Herdr 设置",
+      "hd-settings": "打开 Herdr 设置",
       "herdr-task": "创建草稿或打开任务板",
       "hd-task": "创建草稿或打开任务板",
       "herdr-dispatch-auto": "查看或切换自动运行(结算结果自动唤醒模型)",

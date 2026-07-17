@@ -1,6 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   SUPPORTED_AGENT_TYPES,
@@ -38,11 +38,6 @@ export type TeamConfigState =
   | { status: "invalid"; reason: string };
 
 const ROLE_KEY = /^[a-z][a-z0-9-]{0,39}$/u;
-const ROLE_FIELDS = new Set(["label", "mode", "brief", "agent"]);
-const WORKFLOW_FIELDS = new Set(["stages", "maxReworkCycles", "escalation"]);
-const ESCALATION_FIELDS = new Set(["afterCycles", "role"]);
-const TOP_LEVEL_FIELDS = new Set(["roles", "workflows"]);
-
 export const DEFAULT_TEAM_CATALOG: TeamCatalog = freezeTeam({
   roles: {
     coder: {
@@ -146,9 +141,40 @@ export async function loadTeamConfig(path = defaultTeamConfigPath()): Promise<Te
   }
 }
 
+export async function writeRoleAgent(
+  roleKey: string,
+  agent: SupportedAgentType,
+  path = defaultTeamConfigPath(),
+): Promise<TeamCatalog> {
+  const current = await readJsonObject(path, "team config");
+  const catalog = parseTeamConfig(current);
+  const role = catalog.roles[roleKey];
+  if (!role) throw new TypeError(`unknown role ${roleKey}`);
+  const currentRoles = optionalRecord(current.roles, "roles");
+  const currentRole = currentRoles[roleKey];
+  const mergedRole = {
+    ...(isRecord(currentRole) ? currentRole : {}),
+    label: role.label,
+    mode: role.mode,
+    brief: role.brief,
+    agent,
+  };
+  const merged = {
+    ...current,
+    roles: {
+      ...currentRoles,
+      [roleKey]: mergedRole,
+    },
+  };
+  const team = parseTeamConfig(merged);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(`${path}.tmp`, JSON.stringify(merged, null, 2), "utf8");
+  await rename(`${path}.tmp`, path);
+  return team;
+}
+
 export function parseTeamConfig(value: unknown): TeamCatalog {
   if (!isRecord(value)) throw new TypeError("team config must be a JSON object");
-  rejectUnknownFields(value, TOP_LEVEL_FIELDS, "team config");
   const roleOverrides = optionalRecord(value.roles, "roles");
   const workflowOverrides = optionalRecord(value.workflows, "workflows");
 
@@ -231,7 +257,6 @@ export function taskStageInfo(
 function parseRole(key: string, value: unknown): Role {
   validateKey(key, "role");
   if (!isRecord(value)) throw new TypeError(`role ${key} must be an object`);
-  rejectUnknownFields(value, ROLE_FIELDS, `role ${key}`);
   const label = boundedText(value.label, `role ${key} label`, 20);
   const brief = boundedText(value.brief, `role ${key} brief`, 400);
   if (value.mode !== "write" && value.mode !== "non-mutating") {
@@ -256,7 +281,6 @@ function parseRole(key: string, value: unknown): Role {
 function parseWorkflow(key: string, value: unknown): Workflow {
   validateKey(key, "workflow");
   if (!isRecord(value)) throw new TypeError(`workflow ${key} must be an object`);
-  rejectUnknownFields(value, WORKFLOW_FIELDS, `workflow ${key}`);
   if (!Array.isArray(value.stages) || value.stages.length < 1 || value.stages.length > 20) {
     throw new RangeError(`workflow ${key} stages must contain from 1 to 20 role keys`);
   }
@@ -278,7 +302,6 @@ function parseWorkflow(key: string, value: unknown): Workflow {
   let previousCycles = 0;
   const escalation = value.escalation.map((entry, index) => {
     if (!isRecord(entry)) throw new TypeError(`workflow ${key} escalation ${index + 1} must be an object`);
-    rejectUnknownFields(entry, ESCALATION_FIELDS, `workflow ${key} escalation ${index + 1}`);
     if (!Number.isSafeInteger(entry.afterCycles) || (entry.afterCycles as number) <= previousCycles) {
       throw new RangeError(`workflow ${key} escalation afterCycles must be strictly increasing positive integers`);
     }
@@ -349,16 +372,6 @@ function optionalRecord(value: unknown, label: string): Record<string, unknown> 
   return value;
 }
 
-function rejectUnknownFields(
-  value: Record<string, unknown>,
-  allowed: ReadonlySet<string>,
-  label: string,
-): void {
-  for (const key of Object.keys(value)) {
-    if (!allowed.has(key)) throw new TypeError(`unknown ${label} field ${key}`);
-  }
-}
-
 function boundedText(value: unknown, label: string, maximum: number): string {
   if (typeof value !== "string") throw new TypeError(`${label} must be a string`);
   const text = value.replace(/\r\n?/gu, "\n").trim();
@@ -386,6 +399,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isMissingFile(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+async function readJsonObject(path: string, label: string): Promise<Record<string, unknown>> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if (isMissingFile(error)) return {};
+    throw error;
+  }
+  const value: unknown = JSON.parse(text);
+  if (!isRecord(value)) throw new TypeError(`${label} must be a JSON object`);
+  return value;
 }
 
 function errorMessage(error: unknown): string {

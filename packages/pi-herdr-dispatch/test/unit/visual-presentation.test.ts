@@ -16,10 +16,12 @@ import {
   formatDispatchTable,
   formatInspectionText,
   outcomeMark,
+  parkedTaskMark,
   parseResultCard,
   relativeDeadline,
   shortenId,
   shortenPath,
+  taskStateMark,
 } from "../../src/pi/visual.js";
 import type { StoredDispatch, StoredTask } from "../../src/registry/types.js";
 
@@ -73,6 +75,15 @@ const boardTask: StoredTask = {
 };
 
 describe("visual vocabulary", () => {
+  it("gives plain review its own non-warning mark and keeps parked review as attention", () => {
+    const review = taskStateMark("review");
+    const parked = parkedTaskMark("review-failed");
+
+    expect(review).toEqual({ glyph: "◆", color: "accent", label: "待验收" });
+    expect(parked).toEqual({ glyph: "▲", color: "warning", label: "评审未过" });
+    expect(review.glyph).not.toBe(parked.glyph);
+  });
+
   it("formats relative deadlines in both directions", () => {
     expect(relativeDeadline(1_000_000 + 22 * 60_000, 1_000_000)).toBe("22 分钟后");
     expect(relativeDeadline(1_000_000, 1_000_000 + 8 * 60_000)).toBe("超期 8 分钟");
