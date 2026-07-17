@@ -27,6 +27,8 @@ describe("Task Board tools", () => {
         task: "检查解析器边界。",
         mode: "non-mutating",
         preferredWorktree: "/repo/task-a",
+        role: "researcher",
+        workflow: "research",
       },
       undefined,
       undefined,
@@ -38,6 +40,8 @@ describe("Task Board tools", () => {
       task: "检查解析器边界。",
       mode: "non-mutating",
       preferredWorktreePath: "/repo/task-a",
+      role: "researcher",
+      workflow: "research",
       createdBy: "model",
     }));
     expect(result.details).toEqual({ taskId: "hdt_created", title: "检查解析器" });
@@ -50,6 +54,64 @@ describe("Task Board tools", () => {
       { mode: "print" } as ExtensionContext,
     )).rejects.toThrow("仅在 TUI 模式下可用");
     expect(createTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes role, workflow stage, rework cycles, and parked reason in board status", async () => {
+    const tools: ToolDefinition[] = [];
+    const pi = {
+      registerTool: (tool: ToolDefinition) => tools.push(tool),
+    } as unknown as ExtensionAPI;
+    const task = {
+      id: "hdt_review",
+      workspaceId: "w1",
+      title: "Review parser",
+      task: "Review the parser",
+      mode: "non-mutating" as const,
+      state: "review" as const,
+      role: "coder",
+      workflow: "dev",
+      stageIndex: 1,
+      reworkCycles: 2,
+      parkedReason: "no-verdict" as const,
+      createdBy: "model" as const,
+      createdAt: 100,
+      updatedAt: 200,
+    };
+    const runtime = {
+      application: {
+        listUnsettled: () => [],
+        listTasks: () => [task],
+        listAttention: () => [],
+      },
+      registryRuntime: {
+        registry: {
+          teamCatalog: () => ({
+            roles: { reviewer: { key: "reviewer", label: "评审", mode: "non-mutating", brief: "Review." } },
+            workflows: {
+              dev: { key: "dev", stages: ["coder", "reviewer"], maxReworkCycles: 2, escalation: [] },
+            },
+          }),
+        },
+      },
+    };
+    registerDispatchTools(pi, runtime as never, {} as never);
+    const status = tools.find((tool) => tool.name === "herdr_dispatch_status")!;
+    const result = await status.execute(
+      "call_status",
+      {},
+      undefined,
+      undefined,
+      {
+        mode: "tui",
+        sessionManager: { getSessionId: () => "session-origin" },
+      } as ExtensionContext,
+    );
+    const text = result.content?.map((item) => item.type === "text" ? item.text : "").join("\n") ?? "";
+    expect(text).toContain("role coder");
+    expect(text).toContain("workflow dev");
+    expect(text).toContain("stage 2/2 reviewer");
+    expect(text).toContain("rework cycles 2");
+    expect(text).toContain("parked no-verdict");
   });
 
   it("notifies once as soon as the last Run Quota unit is consumed", async () => {

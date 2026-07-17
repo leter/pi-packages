@@ -1,6 +1,5 @@
 import { MAX_INSPECTION_LINES, type DispatchConfig } from "../domain/config.js";
 import { resolveCanonicalWorktree } from "../domain/worktree.js";
-import { seedReturnedTask } from "../domain/task-board.js";
 import {
   captureWorktreeSnapshot,
   type WorktreeSnapshot,
@@ -266,6 +265,9 @@ export class DispatchApplication {
     const boardTask = request.taskId === undefined
       ? undefined
       : this.#registry.getTask(request.taskId);
+    let preparedBoardTask:
+      | { task: string; roleKey?: string; reviewerStage: boolean; stageMode: DispatchMode }
+      | undefined;
     if (request.taskId !== undefined) {
       if (!boardTask) throw new ProposalTargetError(`Task ${safeText(request.taskId)} was not found`);
       if (boardTask.workspaceId !== this.#workspaceId) {
@@ -276,8 +278,15 @@ export class DispatchApplication {
       if (boardTask.state !== "queued") {
         throw new ProposalTargetError(`Task ${safeText(request.taskId)} is ${boardTask.state}, not queued`);
       }
-      if (boardTask.mode !== request.mode) {
-        throw new ProposalTargetError(`Task ${safeText(request.taskId)} mode does not match the proposal`);
+      try {
+        preparedBoardTask = this.#registry.prepareTaskDispatch(request.taskId);
+      } catch (error) {
+        throw new ProposalTargetError(errorMessage(error));
+      }
+      if (preparedBoardTask.stageMode !== request.mode) {
+        throw new ProposalTargetError(
+          `Task ${safeText(request.taskId)} current stage requires mode ${preparedBoardTask.stageMode}`,
+        );
       }
     }
     const eligible = await this.listEligibleAgents();
@@ -317,11 +326,12 @@ export class DispatchApplication {
     const factoryInput: DispatchProposalInput = {
       target,
       mode: request.mode,
-      task: boardTask ? seedReturnedTask(boardTask.task, boardTask.returnFeedback) : request.task,
+      task: preparedBoardTask?.task ?? request.task,
       deadlineMinutes,
       allowProjectDependencyInstall: request.allowProjectDependencyInstall ?? false,
       wakeOnSettle: request.wakeOnSettle ?? true,
       ...(request.taskId === undefined ? {} : { taskId: request.taskId }),
+      ...(preparedBoardTask?.reviewerStage === true ? { reviewerStage: true } : {}),
     };
     const now = this.#now();
     const proposal = createDispatchProposal(factoryInput, {

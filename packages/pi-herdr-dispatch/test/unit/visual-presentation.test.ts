@@ -64,6 +64,8 @@ const boardTask: StoredTask = {
   mode: "non-mutating",
   state: "queued",
   queuePosition: 1,
+  stageIndex: 0,
+  reworkCycles: 0,
   createdBy: "model",
   createdAt: 1_000_000,
   approvedAt: 1_000_000,

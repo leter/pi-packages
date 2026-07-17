@@ -1,4 +1,4 @@
-import type { FinalOutcome } from "../registry/types.js";
+import type { FinalOutcome, ReviewVerdict } from "../registry/types.js";
 
 export interface SanitizedDispatchResult {
   id: string;
@@ -8,6 +8,7 @@ export interface SanitizedDispatchResult {
   changedFiles?: readonly string[];
   artifacts?: readonly string[];
   blocker?: string;
+  verdict?: ReviewVerdict;
 }
 
 export type ParsedResultLine =
@@ -60,6 +61,7 @@ export function parseResultLine(line: string, expectedId: string): ParsedResultL
       ...optionalList(value, "changedFiles"),
       ...optionalList(value, "artifacts"),
       ...optionalText(value, "blocker", MAX_SUMMARY_LENGTH),
+      ...optionalVerdict(value),
     };
     return { status: "valid", raw, result };
   } catch (error) {
@@ -167,6 +169,16 @@ function optionalText<K extends "blocker">(
   maximum: number,
 ): Partial<Record<K, string>> {
   return value[key] === undefined ? {} : ({ [key]: boundedText(value[key], key, maximum) } as Record<K, string>);
+}
+
+function optionalVerdict(
+  value: Record<string, unknown>,
+): { verdict?: ReviewVerdict } {
+  if (value.verdict === undefined) return {};
+  if (value.verdict !== "pass" && value.verdict !== "needs-rework") {
+    throw new TypeError("verdict must be pass or needs-rework");
+  }
+  return { verdict: value.verdict };
 }
 
 function boundedText(value: unknown, label: string, maximum: number): string {

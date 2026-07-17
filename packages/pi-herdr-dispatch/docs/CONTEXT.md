@@ -188,6 +188,22 @@ _Avoid_: autonomous scheduler, model-approved task
 The human-facing unit of work on the Task Board. It progresses through `draft`, `queued`, `dispatched`, `review`, and `accepted`; a user may withdraw `queued → draft`, and one or more fresh dispatches may implement it after a user return.
 _Avoid_: dispatch alias, mutable dispatch
 
+**Role**:
+A configured advisory profile binding a brief, mode default, and pane-name routing hint to Board Tasks.
+_Avoid_: enforced identity, per-role permissions
+
+**Workflow**:
+A named linear stage list a Board Task progresses through before human acceptance.
+_Avoid_: autonomous pipeline, branching DAG
+
+**Review Verdict**:
+The structured `pass` / `needs-rework` field of a reviewer-stage result.
+_Avoid_: inferred approval
+
+**Rework Budget**:
+The per-task `needs-rework` allowance, separate from Auto Run Depth.
+_Avoid_: depth budget, retry count
+
 **Task Approval**:
 The explicit user checkbox action that moves a draft to queued and pre-authorizes one task-bound dispatch at a time, subject to Run Quota while Auto Run is armed.
 _Avoid_: model approval, automatic queue promotion
@@ -296,3 +312,17 @@ Product copy (UI strings, notifications) is Simplified Chinese ([ADR 0011](./adr
 | Task Return | 打回 |
 | Draft Withdrawal | 撤回草稿 |
 | Run Quota | 本次额度 |
+| Role | 角色 |
+| role `coder` | 开发 |
+| role `reviewer` | 评审 |
+| role `bugfix` | 修bug |
+| role `chore` | 杂活 |
+| role `researcher` | 资料 |
+| role `advisor` | 顾问 |
+| role `oracle` | 终审 |
+| Workflow | 工作流 |
+| Workflow stage | 阶段 |
+| Review Verdict | 评审结论 |
+| Rework Budget | 返工预算 |
+| parked reason `no-verdict` | 评审未给结论 |
+| parked reason `review-failed` | 评审未过 |

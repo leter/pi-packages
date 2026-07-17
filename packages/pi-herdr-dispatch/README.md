@@ -2,7 +2,7 @@
 
 A Pi extension under staged development for automatically dispatching work through a typed, Registry-backed path to coding Agents in one local Herdr workspace, including an explicit TUI path that can create one new Agent before dispatch.
 
-> **Status:** Experimental. Auto Run ([ADR 0014](./docs/adr/0014-auto-run-settlement-continuation.md)) and Task Worktree isolation ([ADR 0015](./docs/adr/0015-task-worktree-isolation.md)) passed live acceptance on 2026-07-17. The persistent Task Board ([ADR 0016](./docs/adr/0016-task-board.md)) is implemented; its L16 live acceptance remains pending. The package remains `private` at `0.0.0-development`; no package has been published.
+> **Status:** Experimental. Auto Run ([ADR 0014](./docs/adr/0014-auto-run-settlement-continuation.md)) and Task Worktree isolation ([ADR 0015](./docs/adr/0015-task-worktree-isolation.md)) passed live acceptance on 2026-07-17. The persistent Task Board ([ADR 0016](./docs/adr/0016-task-board.md)) and staged Roles and Workflows ([ADR 0017](./docs/adr/0017-roles-and-workflows.md)) are implemented; ADR 0017 live acceptance remains pending. The package remains `private` at `0.0.0-development`; no package has been published.
 
 ## Requirements
 
@@ -54,7 +54,7 @@ The readable `hd-*` aliases are the recommended interactive commands; the origin
 - `/hd-create` (`/herdr-dispatch-create`) — complete the wizard, optionally create a Task Worktree for write mode, create a supported integrated Agent there, wait until it is eligible, then send through the same automatic dispatch path.
 - `/hd-agents` (`/herdr-agents`) — list current-workspace Eligible Agents and each canonical worktree.
 - `/hd-manager` (`/herdr-dispatches`, or `alt+h`) — open the current-workspace Dispatch Manager, browse human-readable tasks, and perform explicit bounded output reads (`r` for 50 lines, `R` for 200).
-- `/hd-task` (`/herdr-task`) — manually create a Task Board draft or open the board listing. TUI-only.
+- `/hd-task` (`/herdr-task`) — manually create a Task Board draft, optionally choose its Role and Workflow, or open the board listing. TUI-only.
 - `/hd-auto [on [N]|off]` (`/herdr-dispatch-auto`) — report or toggle Auto Run and, while armed, its remaining Run Quota. `on N` resets the current session to N task-bound dispatches; omitted N uses `defaultRunQuota`.
 - `/hd-clean` (`/herdr-dispatch-clean`) — inspect retained Task Worktrees and remove selected clean, merged, unheld entries after one confirmation.
 - `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — choose, preview, and confirm a reply when an Active Dispatch has attention.
@@ -119,11 +119,21 @@ The shared `/hd-new` and `/hd-create` deadline prompt shows the configured defau
 
 The Task Board makes a multi-task run durable. Ask the model to split work into tasks and it creates `草稿` rows with `herdr_task_draft`. Open `/hd-task` or `alt+h`, select drafts with `space`/`a`/`A`, then press `Enter` to `批准` them into `排队`. Drafts consume no Agent, lease, depth, or quota before approval.
 
-The forward lifecycle is `草稿 → 排队 → 已派出 → 待验收 → 已验收`. A user can press `x` on a queued task, confirm `撤回草稿`, and then either revise/reapprove it or use the existing draft-only `x` deletion. Every dispatch outcome—including blocked, failed, cancelled, manual resolution, and emergency resolution—moves its bound task to `待验收`. That does not stop the model from routing the next queued task. Acceptance only records bookkeeping; it never merges, pushes, cleans a Task Worktree, switches branches, or marks a dispatch result as seen.
+The human lifecycle is `草稿 → 排队 → 已派出 → 待验收 → 已验收`. A staged task may repeat `已派出 → 排队` between Workflow stages before entering `待验收`. A user can press `x` on a queued task, confirm `撤回草稿`, and then either revise/reapprove it or use the existing draft-only `x` deletion. A non-`done` outcome always moves its bound task to `待验收`; a `done` outcome advances its Workflow as described below. Acceptance only records bookkeeping; it never merges, pushes, cleans a Task Worktree, switches branches, or marks a dispatch result as seen.
 
 Press `x` on a reviewed task to `打回` it with feedback. The task returns to the end of the queue. Its next attempt is a fresh typed dispatch seeded with the feedback as untrusted data, preferring the previous Agent and Task Worktree. Internal `hdt_` identifiers stay out of ordinary rows and widget text.
 
 Assignment remains model-routed. After a settlement wake, the model reads the oldest queued task, musters Eligible Agents, and proposes a task-bound dispatch. The extension validates and binds the queued task in the same transaction as durable dispatch intent, records depth 0, and consumes one unit of `本次额度` because Auto Run is armed; it never chooses or sends to an Agent on its own.
+
+### Roles and staged workflows
+
+Every Board Task may carry a **Role** (`角色`) and a named linear **Workflow** (`工作流`). The built-in roles are `coder` (`开发`), `reviewer` (`评审`), `bugfix` (`修bug`), `chore` (`杂活`), `researcher` (`资料`), `advisor` (`顾问`), and `oracle` (`终审`). A role supplies an advisory mode, an English brief prepended to the immutable dispatch task, and a pane-name routing hint. It does not create identity or permissions.
+
+The built-in Workflows are `dev` (`coder → reviewer`), `research` (`researcher`), and `quick` (`chore`). Drafting a `coder`, `researcher`, or `chore` task defaults to its matching Workflow; an unassigned task keeps the original single-stage behavior. `/hd-task` exposes both selections. Manager rows show the current Role and stage counter without exposing `hdt_` or `hd_` identifiers.
+
+On `done`, a non-review stage advances and returns the task to the queue tail when another stage remains. A reviewer stage must return the structured Review Verdict `pass` or `needs-rework`. `pass` advances. `needs-rework` returns to the implement stage with the review summary framed as untrusted feedback. The default `dev` Workflow escalates its executor to `bugfix` after two cycles and `oracle` after four, then parks after cycle six. Missing verdict parks as `评审未给结论`; exhausted rework parks as `评审未过`. Both stay in `待验收` for a human decision.
+
+The `hd-crew` Skill routes the current stage to an Eligible Agent whose pane name contains the Role key. If no named pane fits, it may use another suitable Eligible Agent with a plain fallback disclosure. `advisor` and `oracle` panes are excluded from ordinary-stage fallback, and the extension itself still never schedules or creates capacity.
 
 Dispatch is automatic by default in TUI mode. `herdr_dispatch_propose` and a completed `/hd-new` wizard build one immutable outbound message and send it without a proposal confirmation, grant setup, count limit, expiry, or renewal. The typed path still revalidates current-workspace target identity, status provenance, cwd/canonical worktree, occupancy, leases, and concurrency before durable intent and delivery. Non-TUI modes cannot reserve, send, reply, cancel, resolve, or monitor.
 
@@ -164,6 +174,32 @@ Optional file: `~/.config/pi-herdr-dispatch/config.json`
 ```
 
 Unknown fields, invalid types, unsafe bounds, or inconsistent minimum/default/maximum values disable state-changing behavior. Safe state reads remain available when their dependencies are healthy.
+
+Optional team catalog: `~/.config/pi-herdr-dispatch/team.json`. Missing means the built-ins above. Entries replace a built-in with the same key wholesale; custom keys are allowed.
+
+```json
+{
+  "roles": {
+    "reviewer": {
+      "label": "评审",
+      "mode": "non-mutating",
+      "brief": "You are acting as an independent reviewer. Inspect the work without mutating files and report concrete findings."
+    }
+  },
+  "workflows": {
+    "dev": {
+      "stages": ["coder", "reviewer"],
+      "maxReworkCycles": 2,
+      "escalation": [
+        { "afterCycles": 2, "role": "bugfix" },
+        { "afterCycles": 4, "role": "oracle" }
+      ]
+    }
+  }
+}
+```
+
+An invalid `team.json` emits one warning and blocks only drafts or binds that carry a Role or Workflow. Plain Board Tasks and non-task dispatches keep working.
 
 The Registry defaults to `~/.local/state/pi-herdr-dispatch/registry.sqlite` with directory mode `0700`, database mode `0600`, WAL, foreign keys, backups, transactional migrations, and integrity checks.
 

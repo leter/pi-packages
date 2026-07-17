@@ -16,6 +16,7 @@ import {
   REGISTRY_SCHEMA_V3,
   REGISTRY_SCHEMA_V4,
   REGISTRY_SCHEMA_V5,
+  REGISTRY_SCHEMA_V6,
   REGISTRY_SCHEMA_VERSION,
 } from "../../src/registry/schema.js";
 
@@ -38,7 +39,7 @@ afterEach(async () => {
 });
 
 describe("Dispatch Registry migrations and fail-closed opening", () => {
-  it("backs up and migrates schema v5 to the schema v6 Task Board", async () => {
+  it("backs up and migrates schema v5 through the current Task Board schema", async () => {
     const location = await temporaryDatabasePath();
     const versionFive = openRaw(location.path);
     versionFive.exec(
@@ -51,7 +52,7 @@ describe("Dispatch Registry migrations and fail-closed opening", () => {
     });
     openRegistries.push(registry);
 
-    expect(registry.health().schemaVersion).toBe(6);
+    expect(registry.health().schemaVersion).toBe(REGISTRY_SCHEMA_VERSION);
     const raw = openRaw(location.path);
     expect(raw.prepare("SELECT name FROM sqlite_master WHERE name = 'tasks'").get()).toBeDefined();
     expect(raw.prepare("PRAGMA table_info(auto_run_sessions)").all()).toEqual(
@@ -63,6 +64,40 @@ describe("Dispatch Registry migrations and fail-closed opening", () => {
     raw.close();
     expect((await readdir(location.directory)).filter((name) => name.includes("backup"))).toEqual([
       "registry.sqlite.backup-2026-07-17T08-00-00.000Z",
+    ]);
+  });
+
+  it("backs up and migrates schema v6 to schema v7 roles and workflows", async () => {
+    const location = await temporaryDatabasePath();
+    const versionSix = openRaw(location.path);
+    versionSix.exec(
+      `${REGISTRY_SCHEMA_V1}\n${REGISTRY_SCHEMA_V2}\n${REGISTRY_SCHEMA_V3}\n${REGISTRY_SCHEMA_V4}\n${REGISTRY_SCHEMA_V5}\n${REGISTRY_SCHEMA_V6}\nPRAGMA user_version = 6;`,
+    );
+    versionSix.close();
+
+    const registry = await openDispatchRegistry(location.path, {
+      now: () => new Date("2026-07-17T09:00:00.000Z"),
+    });
+    openRegistries.push(registry);
+
+    expect(registry.health().schemaVersion).toBe(7);
+    const raw = openRaw(location.path);
+    expect(raw.prepare("PRAGMA table_info(tasks)").all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "role" }),
+        expect.objectContaining({ name: "workflow" }),
+        expect.objectContaining({ name: "stage_index", dflt_value: "0" }),
+        expect.objectContaining({ name: "rework_cycles", dflt_value: "0" }),
+        expect.objectContaining({ name: "stage_feedback" }),
+        expect.objectContaining({ name: "parked_reason" }),
+      ]),
+    );
+    expect(raw.prepare("PRAGMA table_info(dispatch_results)").all()).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "verdict" })]),
+    );
+    raw.close();
+    expect((await readdir(location.directory)).filter((name) => name.includes("backup"))).toEqual([
+      "registry.sqlite.backup-2026-07-17T09-00-00.000Z",
     ]);
   });
 

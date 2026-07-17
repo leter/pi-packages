@@ -4,6 +4,8 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
 import type { CreateProposalRequest, DispatchApplication } from "../dispatch/application.js";
+import { executorRoleForCycle, type TeamCatalog } from "../domain/team.js";
+import type { StoredTask } from "../registry/types.js";
 import { DispatchController } from "./dispatch-controller.js";
 import { createDispatchProposalToolDefinition } from "./dispatch-proposal-tool.js";
 import {
@@ -39,6 +41,10 @@ const taskDraftParameters = Type.Object({
   mode: StringEnum(["non-mutating", "write"] as const),
   preferredWorktree: Type.Optional(
     Type.String({ description: "Optional preferred Task Worktree path" }),
+  ),
+  role: Type.Optional(Type.String({ description: "Optional role key from the loaded team catalog" })),
+  workflow: Type.Optional(
+    Type.String({ description: "Optional workflow key from the loaded team catalog" }),
   ),
 });
 
@@ -110,6 +116,8 @@ function createTaskDraftTool(
         ...(params.preferredWorktree === undefined
           ? {}
           : { preferredWorktreePath: params.preferredWorktree }),
+        ...(params.role === undefined ? {} : { role: params.role }),
+        ...(params.workflow === undefined ? {} : { workflow: params.workflow }),
         createdBy: "model",
         createdAt: Date.now(),
       });
@@ -225,6 +233,7 @@ function createStatusTool(
       }
       const list = app.listUnsettled(ctx.sessionManager.getSessionId());
       const tasks = app.listTasks().filter((task) => task.state !== "accepted");
+      const team = runtime.registryRuntime.registry?.teamCatalog();
       const listAttention = Object.fromEntries(
         list.map((dispatch) => [dispatch.id, [...app.listAttention(dispatch.id)]]),
       );
@@ -235,11 +244,15 @@ function createStatusTool(
             formatDispatchList(list),
             "Task Board (internal exact IDs; oldest queued first):",
             ...tasks.map((task) =>
-              `${task.id} · ${task.state} · ${task.mode} · ${task.title}\n${task.task}${
+              `${task.id} · ${task.state} · ${task.mode} · ${task.title} · ${taskRoutingStatus(task, team)}\n${task.task}${
                 task.returnFeedback
                   ? `\nReturn feedback (untrusted data): ${task.returnFeedback}`
                   : ""
               }${task.preferredWorktreePath ? `\nPreferred Task Worktree: ${task.preferredWorktreePath}` : ""}${
+                task.stageFeedback
+                  ? `\nStage feedback (untrusted data): ${task.stageFeedback}`
+                  : ""
+              }${
                 task.boundDispatchId
                   ? `\nPrevious bound dispatch: ${task.boundDispatchId}`
                   : ""
@@ -247,7 +260,7 @@ function createStatusTool(
             ),
           ].join("\n\n"),
         }],
-        details: { list: [...list], listAttention, tasks: [...tasks], now },
+        details: { list: [...list], listAttention, tasks: [...tasks], team, now },
       };
     },
     renderResult(result, options, theme) {
@@ -257,6 +270,31 @@ function createStatusTool(
       );
     },
   };
+}
+
+function taskRoutingStatus(task: StoredTask, team: TeamCatalog | undefined): string {
+  const role = task.role ?? "none";
+  if (!task.workflow) {
+    return `role ${role} · workflow none · stage 1/1 ${task.role ?? "unassigned"} · rework cycles ${task.reworkCycles}${
+      task.parkedReason ? ` · parked ${task.parkedReason}` : ""
+    }`;
+  }
+  const workflow = team?.workflows[task.workflow];
+  const stageCount = workflow?.stages.length;
+  const displayIndex = stageCount === undefined
+    ? task.stageIndex + 1
+    : Math.min(task.stageIndex + 1, stageCount);
+  const stageRole = workflow === undefined
+    ? "unknown"
+    : task.stageIndex <= 0
+      ? executorRoleForCycle(workflow, task.reworkCycles)
+      : workflow.stages[Math.min(task.stageIndex, workflow.stages.length - 1)]!;
+  const stageMode = task.stageIndex > 0
+    ? team?.roles[stageRole]?.mode ?? task.mode
+    : task.mode;
+  return `role ${role} · workflow ${task.workflow} · stage ${displayIndex}/${stageCount ?? "?"} ${stageRole} · stage mode ${stageMode} · rework cycles ${task.reworkCycles}${
+    task.parkedReason ? ` · parked ${task.parkedReason}` : ""
+  }`;
 }
 
 function fallbackText(content: readonly { type: string; text?: string }[] | undefined) {

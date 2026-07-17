@@ -1,4 +1,5 @@
 import { isTaskWorktreePath } from "../domain/task-worktree-path.js";
+import { taskStageInfo, type TeamCatalog } from "../domain/team.js";
 import type { AttentionCondition, AttentionRecord, StoredDispatch, StoredTask } from "../registry/types.js";
 import {
   ATTENTION_GLYPH,
@@ -42,6 +43,7 @@ export interface DispatchViewSnapshot {
   /** Whether this Origin Session has Auto Run armed; shown in the top border. */
   autoRunArmed?: boolean;
   tasks?: readonly StoredTask[];
+  team?: TeamCatalog;
   runQuotaRemaining?: number;
 }
 
@@ -184,6 +186,7 @@ export function buildListLines(
     selectedId,
     visibleIds,
     taskSelection,
+    snapshot.team,
   );
 
   if (entries.length > 0) {
@@ -310,6 +313,7 @@ function appendTaskBoard(
   selectedId: string | undefined,
   visibleIds: ReadonlySet<string> | undefined,
   selection: ReadonlySet<string>,
+  team: TeamCatalog | undefined,
 ): void {
   const visible = tasks.filter(
     (task) => task.state !== "accepted" && (visibleIds === undefined || visibleIds.has(task.id)),
@@ -323,6 +327,13 @@ function appendTaskBoard(
     lines.push({ spans: [span(UI_COPY.manager.taskGroup(state), "muted", true)] });
     for (const task of group) {
       const mark = taskStateMark(task.state);
+      const stage = taskStageInfo(task, team);
+      const roleLabel = stage.roleKey === undefined
+        ? undefined
+        : team?.roles[stage.roleKey]?.label ?? UI_COPY.state.role(stage.roleKey);
+      const stateLabel = task.parkedReason === undefined
+        ? mark.label
+        : UI_COPY.state.parkedReason(task.parkedReason);
       const checkbox = task.state === "draft" || task.state === "review"
         ? selection.has(task.id) ? "[✓] " : "[ ] "
         : "    ";
@@ -340,8 +351,12 @@ function appendTaskBoard(
         selected,
         spans: [
           span(META_INDENT, "dim"),
-          span(mark.label, mark.color),
+          span(stateLabel, mark.color),
           span(` · ${UI_COPY.state.mode(task.mode)}`, "dim"),
+          ...(roleLabel === undefined ? [] : [span(` · ${roleLabel}`, "dim")]),
+          ...(task.workflow === undefined
+            ? []
+            : [span(` · ${UI_COPY.state.workflowStage(stage.stageNumber, stage.stageCount)}`, "dim")]),
           ...(task.preferredWorktreePath
             ? [span(` · ${shortenPath(task.preferredWorktreePath, 42)}`, "dim")]
             : []),

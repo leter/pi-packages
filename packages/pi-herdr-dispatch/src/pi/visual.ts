@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 
 import type { ProposalTarget } from "../dispatch/proposal.js";
+import { taskStageInfo, type TeamCatalog } from "../domain/team.js";
 import type {
   AttentionRecord,
   DispatchLifecycle,
@@ -240,15 +241,27 @@ export interface BoardTaskRow {
   title: string;
   state: string;
   mode: string;
+  role?: string;
+  stage?: string;
 }
 
-export function boardTaskRow(task: StoredTask): BoardTaskRow {
+export function boardTaskRow(task: StoredTask, team?: TeamCatalog): BoardTaskRow {
   const state = taskStateMark(task.state);
+  const stage = taskStageInfo(task, team);
+  const role = stage.roleKey === undefined
+    ? undefined
+    : team?.roles[stage.roleKey]?.label ?? UI_COPY.state.role(stage.roleKey);
   return {
     mark: state,
     title: sanitizeLine(task.title, 80),
-    state: state.label,
+    state: task.parkedReason === undefined
+      ? state.label
+      : UI_COPY.state.parkedReason(task.parkedReason),
     mode: UI_COPY.state.mode(task.mode),
+    ...(role === undefined ? {} : { role }),
+    ...(task.workflow === undefined
+      ? {}
+      : { stage: UI_COPY.state.workflowStage(stage.stageNumber, stage.stageCount) }),
   };
 }
 

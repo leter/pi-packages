@@ -2,6 +2,8 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 
+import { DEFAULT_TEAM_CATALOG } from "../../src/domain/team.js";
+
 import type { AttentionRecord, StoredDispatch, StoredTask } from "../../src/registry/types.js";
 import {
   attentionPriority,
@@ -63,6 +65,8 @@ function boardTask(overrides: Partial<StoredTask> = {}): StoredTask {
     task: "Implement the parser",
     mode: "write",
     state: "draft",
+    stageIndex: 0,
+    reworkCycles: 0,
     createdBy: "model",
     createdAt: 1_000,
     updatedAt: 1_000,
@@ -146,6 +150,29 @@ describe("dispatch view model", () => {
     expect(rendered).toContain("任务板");
     expect(rendered).toContain("草稿");
     expect(rendered).toContain("待验收");
+    expect(rendered).not.toContain("hdt_");
+  });
+
+  it("renders the current workflow role, stage counter, and parked label", () => {
+    const snapshot: DispatchViewSnapshot = {
+      originSessionId: "session_origin",
+      unsettled: [],
+      settled: [],
+      team: DEFAULT_TEAM_CATALOG,
+      tasks: [boardTask({
+        id: "hdt_hidden_review",
+        state: "review",
+        approvedAt: 100,
+        reviewedAt: 200,
+        role: "coder",
+        workflow: "dev",
+        stageIndex: 1,
+        reworkCycles: 2,
+        parkedReason: "no-verdict",
+      })],
+    };
+    const rendered = plainAll(buildListLines(snapshot, undefined, false, 1_000_000)).join("\n");
+    expect(rendered).toContain("评审未给结论 · 写入 · 评审 · 阶段 2/2");
     expect(rendered).not.toContain("hdt_");
   });
   it("sorts attention first, then active, then delivering by deadline", () => {

@@ -1,6 +1,6 @@
 ---
 name: hd-crew
-description: Route a user's natural-language work request to role-suited Herdr Agents through pi-herdr-dispatch (Codex = executor/reviewer, AMP = bug hunter, Grok = researcher), answer progress questions, and digest already-delivered dispatch results. Use when the user asks to delegate, assign, or dispatch work (派发/安排/分派/交给), asks how dispatched work is going, or wants delivered results summarized. It cannot wait for or fetch results that have not yet been delivered. Requires the pi-herdr-dispatch extension running inside a Herdr pane.
+description: Route a user's natural-language work request and staged Board Tasks to role-named Herdr Agents through pi-herdr-dispatch, answer progress questions, and digest already-delivered dispatch results. Use when the user asks to delegate, assign, or dispatch work (派发/安排/分派/交给), asks how dispatched work is going, or wants delivered results summarized. It cannot wait for or fetch results that have not yet been delivered. Requires the pi-herdr-dispatch extension running inside a Herdr pane.
 ---
 
 # Herdr Dispatch Crew
@@ -9,18 +9,26 @@ You are the natural-language router for the current user request: decompose it, 
 
 ## Roles
 
-Identify roles from the `agent` field returned by `herdr_agents_list`.
+Board Task roles come from the loaded team catalog. The built-in catalog is:
 
-| Role | `agent` | Handles | Dispatch mode |
+| Role key | Label | Handles | Default mode |
 |---|---|---|---|
-| Executor / reviewer | `codex` | implementation, refactors, test writing, code review | `write` for implementation, `non-mutating` for review |
-| Bug hunter | `amp` | complex bug investigation, root-cause analysis | `non-mutating` |
-| Researcher | `grok` | data / docs / code search, fact gathering | `non-mutating` |
+| `coder` | 开发 | implementation, refactors, and tests | `write` |
+| `reviewer` | 评审 | independent review and a structured pass / needs-rework verdict | `non-mutating` |
+| `bugfix` | 修bug | escalated fixes and root-cause-driven corrections | `write` |
+| `chore` | 杂活 | bounded maintenance and upkeep | `write` |
+| `researcher` | 资料 | docs, code search, and fact gathering | `non-mutating` |
+| `advisor` | 顾问 | focused consultation | `non-mutating` |
+| `oracle` | 终审 | exhausted escalation and verdict arbitration | `non-mutating` |
+
+Role briefs and modes are advisory. They do not create identity, permissions, or authority.
 
 Routing rules:
 
-- If the user names a specific Agent or Agent type, obey that choice whenever that Agent is Eligible; fall back to the default roles above only when the user leaves the choice to you.
-- Otherwise match a task to a role by its nature, not by which agent happens to be free. Torn between executor and bug hunter: investigating → AMP, fixing → Codex.
+- If the user names a specific Agent or Agent type for an ordinary dispatch, obey that choice whenever that Agent is Eligible. A role-carrying Board Task instead follows its stored current-stage role.
+- For a role-carrying Board Task, first choose an Eligible Agent whose pane name (`displayName`) contains the exact role key, such as `coder-1`, `reviewer`, or `oracle`. If none matches, use another suitable Eligible Agent and disclose exactly: "no pane named for role X; using <name>".
+- Do not use a pane whose name contains `advisor` or `oracle` as the fallback for an ordinary stage. `advisor` and `oracle` panes never take ordinary stages. An `oracle` pane is used only for an exhausted escalation or verdict arbitration.
+- For an ordinary request without a stored role, match the task to the catalog role by its nature before choosing an Eligible Agent.
 - **Task Worktree routing:** for a `write` task, prefer an Eligible Agent whose `canonicalWorktree` is a Task Worktree under an `<origin>.worktrees` container. Keep one write stream per worktree. Independent write tasks may run in parallel only when they target distinct Task Worktrees.
 - If no suitable Eligible Agent is seated in a Task Worktree, fall back to the existing shared-worktree dispatch and say plainly: "No Eligible Agent is seated in a Task Worktree; using the serialized shared worktree."
 - **Single-writer policy:** at most one `write` dispatch in flight per worktree at any time (normally Codex). Worktree Write Leases would serialize same-worktree writers anyway — do not create the contention in the first place.
@@ -38,7 +46,7 @@ Routing rules:
 ## Task Board rules
 
 - `herdr_task_draft` creates one bounded draft only. Use it for task-sized work discovered in an ordinary user turn or while handling an Auto Run settlement. A draft is not approved and cannot be dispatched until the user selects it in `/hd-task` or the Dispatch Manager.
-- After handling a settlement, call `herdr_dispatch_status` without an ID to read the durable board, then choose the oldest `queued` task that fits an Eligible Agent. Muster immediately before proposing. Bind the exact `hdt_` identifier through `herdr_dispatch_propose.taskId`; never alter the approved task text.
+- After handling a settlement, call `herdr_dispatch_status` without an ID to read the durable board, then choose the oldest `queued` task that fits an Eligible Agent. Read its current `stage N/M role` field and route by that role, including an escalated executor role, and propose with the listed `stage mode` — a workflow's later stages dispatch under the stage role's mode (a dev reviewer stage is `non-mutating` even though the task itself is `write`). Muster immediately before proposing. Bind the exact `hdt_` identifier through `herdr_dispatch_propose.taskId`; never alter the approved task text.
 - Respect `preferredWorktreePath`. For a returned task, prefer the Agent and Task Worktree from its previous bound dispatch when they are eligible; otherwise report the fallback plainly. The fresh dispatch still passes every occupancy, lease, workspace, and cwd check.
 - Work smaller than half a normal Board Task—especially verification of the current attempt—rides as an in-chain follow-up dispatch and therefore consumes Auto Run Depth. Work large enough to stand alone becomes a new `herdr_task_draft` and waits for user approval.
 - Research that needs long output should be a `write` Board Task. Tell the Agent to write the report to a file and return that path in the Result Envelope instead of placing a long report in the bounded summary.

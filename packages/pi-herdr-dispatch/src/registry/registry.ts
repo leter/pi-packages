@@ -5,10 +5,20 @@ import { DatabaseSync, type StatementSync } from "node:sqlite";
 import {
   assertTaskTransition,
   generateTaskId,
-  seedReturnedTask,
   validateTaskDraft,
   validateTaskFeedback,
 } from "../domain/task-board.js";
+import {
+  DEFAULT_TEAM_CATALOG,
+  defaultWorkflowForRole,
+  executorRoleForCycle,
+  isReworkExhausted,
+  type Role,
+  type TeamCatalog,
+  type TeamConfigState,
+  type Workflow,
+} from "../domain/team.js";
+import { composeBoardTaskText } from "../dispatch/proposal.js";
 import { migrateRegistry } from "./migrations.js";
 import type {
   AttentionCondition,
@@ -27,6 +37,7 @@ import type {
   StoredDispatch,
   StoredTask,
   RunQuotaState,
+  ReviewVerdict,
   TargetOccupancyRecord,
   WriteLeaseRecord,
 } from "./types.js";
@@ -92,10 +103,48 @@ export class DispatchRegistry {
   readonly #database: DatabaseSync;
   #closed = false;
   #mutationsDisabledReason?: string;
+  #teamState: TeamConfigState = { status: "ready", team: DEFAULT_TEAM_CATALOG };
 
   constructor(path: string, database: DatabaseSync) {
     this.path = path;
     this.#database = database;
+  }
+
+  setTeamConfigState(state: TeamConfigState): void {
+    this.#teamState = state;
+  }
+
+  teamCatalog(): TeamCatalog | undefined {
+    return this.#teamState.status === "ready" ? this.#teamState.team : undefined;
+  }
+
+  prepareTaskDispatch(taskId: string): {
+    task: string;
+    roleKey?: string;
+    reviewerStage: boolean;
+    stageMode: DispatchMode;
+  } {
+    validateTaskIds([taskId]);
+    return this.#read("prepare board task dispatch", () => {
+      const task = this.#database.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as
+        | TaskRow
+        | undefined;
+      if (!task) throw new RegistryStateError(`Task ${taskId} does not exist`);
+      const stage = this.#resolveTaskStage(task);
+      return {
+        task: composeBoardTaskText({
+          task: task.task,
+          ...(stage.role === undefined ? {} : { roleBrief: stage.role.brief }),
+          ...(task.return_feedback === null ? {} : { returnFeedback: task.return_feedback }),
+          ...(task.stage_feedback === null ? {} : { stageFeedback: task.stage_feedback }),
+        }),
+        ...(stage.role === undefined ? {} : { roleKey: stage.role.key }),
+        reviewerStage: stage.role?.key === "reviewer",
+        // The implement stage keeps the task's approved mode; later stages
+        // dispatch under their stage role's mode (a dev reviewer never writes).
+        stageMode: task.stage_index > 0 && stage.role !== undefined ? stage.role.mode : task.mode,
+      };
+    });
   }
 
   health(): RegistryHealth {
@@ -206,7 +255,7 @@ export class DispatchRegistry {
           .prepare(
             `UPDATE tasks
              SET state = 'dispatched', bound_dispatch_id = ?, return_feedback = NULL,
-                 reviewed_at = NULL, updated_at = ?
+                 parked_reason = NULL, reviewed_at = NULL, updated_at = ?
              WHERE id = ? AND state = 'queued'`,
           )
           .run(intent.id, intent.confirmedAt, boundTask.id);
@@ -255,13 +304,14 @@ export class DispatchRegistry {
     const preferredWorktreePath = validated.preferredWorktreePath
       ? resolve(validated.preferredWorktreePath)
       : undefined;
+    const assignment = this.#validateTaskAssignment(input.role, input.workflow);
     return this.#mutate("create task draft", () => {
       this.#database
         .prepare(
           `INSERT INTO tasks(
             id, workspace_id, title, task, mode, preferred_worktree_path, state,
-            created_by, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
+            role, workflow, created_by, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -270,6 +320,8 @@ export class DispatchRegistry {
           validated.task,
           validated.mode,
           preferredWorktreePath ?? null,
+          assignment.role ?? null,
+          assignment.workflow ?? null,
           input.createdBy,
           input.createdAt,
           input.createdAt,
@@ -353,7 +405,8 @@ export class DispatchRegistry {
     return this.#mutate("accept reviewed tasks", () => {
       const tasks = ids.map((id) => this.#requireTaskState(id, workspaceId, "review"));
       const update = this.#database.prepare(
-        `UPDATE tasks SET state = 'accepted', accepted_at = ?, updated_at = ?
+        `UPDATE tasks SET state = 'accepted', accepted_at = ?, stage_feedback = NULL,
+         parked_reason = NULL, updated_at = ?
          WHERE id = ? AND state = 'review'`,
       );
       for (const task of tasks) {
@@ -387,7 +440,9 @@ export class DispatchRegistry {
       this.#database
         .prepare(
           `UPDATE tasks SET state = 'queued', queue_position = ?, return_feedback = ?,
-             preferred_worktree_path = COALESCE(?, preferred_worktree_path), updated_at = ?
+             preferred_worktree_path = COALESCE(?, preferred_worktree_path),
+             stage_index = CASE WHEN workflow IS NULL THEN stage_index ELSE 0 END,
+             stage_feedback = NULL, parked_reason = NULL, reviewed_at = NULL, updated_at = ?
            WHERE id = ? AND state = 'review'`,
         )
         .run(queuePosition, validatedFeedback, previous?.worktree_path ?? null, returnedAt, taskId);
@@ -591,6 +646,7 @@ export class DispatchRegistry {
   ): { status: "settled" | "already-settled"; outcome: FinalOutcome } {
     validateTimestamp(input.settledAt, "settledAt");
     const sanitizedJson = serializeJson(input.sanitizedResult, "sanitized result");
+    const verdict = reviewVerdictFrom(input.sanitizedResult);
 
     return this.#mutate("settle dispatch", () => {
       const dispatch = this.#database
@@ -617,8 +673,9 @@ export class DispatchRegistry {
       this.#database
         .prepare(
           `INSERT INTO dispatch_results(
-            dispatch_id, outcome, source_terminal_id, raw_envelope, sanitized_json, accepted_at
-          ) VALUES (?, ?, ?, ?, ?, ?)`,
+            dispatch_id, outcome, source_terminal_id, raw_envelope, sanitized_json, accepted_at,
+            verdict
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.dispatchId,
@@ -627,6 +684,7 @@ export class DispatchRegistry {
           input.rawEnvelope ?? null,
           sanitizedJson,
           input.settledAt,
+          verdict ?? null,
         );
 
       const updated = this.#database
@@ -647,24 +705,12 @@ export class DispatchRegistry {
         .run(input.dispatchId);
       const task = this.#database
         .prepare(
-          `SELECT id, state FROM tasks
+          `SELECT * FROM tasks
            WHERE bound_dispatch_id = ? AND state = 'dispatched'`,
         )
-        .get(input.dispatchId) as { id: string; state: "dispatched" } | undefined;
+        .get(input.dispatchId) as TaskRow | undefined;
       if (task) {
-        assertTaskTransition(task.state, "review");
-        this.#database
-          .prepare(
-            `UPDATE tasks SET state = 'review', reviewed_at = ?, updated_at = ?
-             WHERE id = ? AND state = 'dispatched'`,
-          )
-          .run(input.settledAt, input.settledAt, task.id);
-        this.#appendTaskAudit(
-          task.id,
-          "task_review",
-          { dispatchId: input.dispatchId, outcome: input.outcome, kind: input.kind },
-          input.settledAt,
-        );
+        this.#settleBoundTask(task, input, verdict);
       }
       this.#appendAudit(
         input.dispatchId,
@@ -1101,6 +1147,229 @@ export class DispatchRegistry {
     this.#closed = true;
   }
 
+  #settleBoundTask(
+    task: TaskRow,
+    input: SettleDispatchInput,
+    verdict: ReviewVerdict | undefined,
+  ): void {
+    const auditData = {
+      dispatchId: input.dispatchId,
+      outcome: input.outcome,
+      kind: input.kind,
+    };
+    if (input.outcome !== "done" || task.workflow === null) {
+      this.#moveTaskToReview(task, input.settledAt, auditData);
+      return;
+    }
+
+    let workflow: Workflow;
+    let currentRole: string;
+    try {
+      const stage = this.#resolveTaskStage(task);
+      if (!stage.workflow || !stage.role) {
+        this.#moveTaskToReview(task, input.settledAt, auditData);
+        return;
+      }
+      workflow = stage.workflow;
+      currentRole = stage.role.key;
+    } catch (error) {
+      this.#moveTaskToReview(task, input.settledAt, {
+        ...auditData,
+        workflowResolutionFailed: errorMessage(error),
+      });
+      return;
+    }
+
+    if (currentRole !== "reviewer" || verdict === "pass") {
+      this.#advanceTaskStage(task, workflow, input, currentRole);
+      return;
+    }
+
+    if (verdict !== "needs-rework") {
+      this.#moveTaskToReview(task, input.settledAt, auditData, "no-verdict");
+      return;
+    }
+
+    const cycles = task.rework_cycles + 1;
+    const feedback = appendStageFeedback(task.stage_feedback, resultSummary(input.sanitizedResult));
+    const previousExecutor = executorRoleForCycle(workflow, task.rework_cycles);
+    const nextExecutor = executorRoleForCycle(workflow, cycles);
+    this.#appendTaskAudit(
+      task.id,
+      "task_rework",
+      { ...auditData, reworkCycles: cycles, feedback: resultSummary(input.sanitizedResult) },
+      input.settledAt,
+    );
+    if (nextExecutor !== previousExecutor) {
+      this.#appendTaskAudit(
+        task.id,
+        "task_escalated",
+        { fromRole: previousExecutor, toRole: nextExecutor, reworkCycles: cycles },
+        input.settledAt,
+      );
+    }
+
+    if (isReworkExhausted(workflow, cycles)) {
+      assertTaskTransition(task.state, "review");
+      this.#database
+        .prepare(
+          `UPDATE tasks SET state = 'review', rework_cycles = ?, stage_feedback = ?,
+           parked_reason = 'review-failed', reviewed_at = ?, updated_at = ?
+           WHERE id = ? AND state = 'dispatched'`,
+        )
+        .run(cycles, feedback, input.settledAt, input.settledAt, task.id);
+      this.#appendTaskAudit(
+        task.id,
+        "task_parked",
+        { ...auditData, reason: "review-failed", reworkCycles: cycles },
+        input.settledAt,
+      );
+      this.#appendTaskAudit(task.id, "task_review", auditData, input.settledAt);
+      return;
+    }
+
+    assertTaskTransition(task.state, "queued");
+    const queuePosition = this.#nextQueuePosition(task.workspace_id);
+    this.#database
+      .prepare(
+        `UPDATE tasks SET state = 'queued', queue_position = ?, stage_index = 0,
+         rework_cycles = ?, stage_feedback = ?, parked_reason = NULL,
+         reviewed_at = NULL, updated_at = ?
+         WHERE id = ? AND state = 'dispatched'`,
+      )
+      .run(queuePosition, cycles, feedback, input.settledAt, task.id);
+  }
+
+  #advanceTaskStage(
+    task: TaskRow,
+    workflow: Workflow,
+    input: SettleDispatchInput,
+    currentRole: string,
+  ): void {
+    const nextIndex = task.stage_index + 1;
+    const hasNextStage = nextIndex < workflow.stages.length;
+    this.#appendTaskAudit(
+      task.id,
+      "task_stage_advanced",
+      {
+        dispatchId: input.dispatchId,
+        fromStage: task.stage_index,
+        toStage: nextIndex,
+        fromRole: currentRole,
+        ...(hasNextStage ? { toRole: workflow.stages[nextIndex] } : {}),
+      },
+      input.settledAt,
+    );
+    if (hasNextStage) {
+      assertTaskTransition(task.state, "queued");
+      this.#database
+        .prepare(
+          `UPDATE tasks SET state = 'queued', queue_position = ?, stage_index = ?,
+           parked_reason = NULL, reviewed_at = NULL, updated_at = ?
+           WHERE id = ? AND state = 'dispatched'`,
+        )
+        .run(this.#nextQueuePosition(task.workspace_id), nextIndex, input.settledAt, task.id);
+      return;
+    }
+    assertTaskTransition(task.state, "review");
+    this.#database
+      .prepare(
+        `UPDATE tasks SET state = 'review', stage_index = ?, stage_feedback = NULL,
+         parked_reason = NULL, reviewed_at = ?, updated_at = ?
+         WHERE id = ? AND state = 'dispatched'`,
+      )
+      .run(nextIndex, input.settledAt, input.settledAt, task.id);
+    this.#appendTaskAudit(
+      task.id,
+      "task_review",
+      { dispatchId: input.dispatchId, outcome: input.outcome, kind: input.kind },
+      input.settledAt,
+    );
+  }
+
+  #moveTaskToReview(
+    task: TaskRow,
+    settledAt: number,
+    auditData: Record<string, unknown>,
+    parkedReason?: "no-verdict" | "review-failed",
+  ): void {
+    assertTaskTransition(task.state, "review");
+    this.#database
+      .prepare(
+        `UPDATE tasks SET state = 'review', parked_reason = ?, reviewed_at = ?, updated_at = ?
+         WHERE id = ? AND state = 'dispatched'`,
+      )
+      .run(parkedReason ?? null, settledAt, settledAt, task.id);
+    if (parkedReason !== undefined) {
+      this.#appendTaskAudit(
+        task.id,
+        "task_parked",
+        { ...auditData, reason: parkedReason },
+        settledAt,
+      );
+    }
+    this.#appendTaskAudit(task.id, "task_review", auditData, settledAt);
+  }
+
+  #nextQueuePosition(workspaceId: string): number {
+    return count(
+      this.#database.prepare(
+        "SELECT COALESCE(MAX(queue_position), 0) AS count FROM tasks WHERE workspace_id = ?",
+      ),
+      workspaceId,
+    ) + 1;
+  }
+
+  #validateTaskAssignment(
+    roleValue: string | undefined,
+    workflowValue: string | undefined,
+  ): { role?: string; workflow?: string } {
+    if (roleValue === undefined && workflowValue === undefined) return {};
+    if (this.#teamState.status === "invalid") {
+      throw new RegistryStateError(`Team catalog is invalid: ${this.#teamState.reason}`);
+    }
+    const role = optionalCatalogKey(roleValue, "role");
+    if (role !== undefined && !this.#teamState.team.roles[role]) {
+      throw new RegistryStateError(`Unknown Board Task role ${role}`);
+    }
+    const workflow = optionalCatalogKey(
+      workflowValue ?? defaultWorkflowForRole(role),
+      "workflow",
+    );
+    if (workflow !== undefined && !this.#teamState.team.workflows[workflow]) {
+      throw new RegistryStateError(`Unknown Board Task workflow ${workflow}`);
+    }
+    return {
+      ...(role === undefined ? {} : { role }),
+      ...(workflow === undefined ? {} : { workflow }),
+    };
+  }
+
+  #resolveTaskStage(task: TaskRow): { role?: Role; workflow?: Workflow } {
+    if (task.role === null && task.workflow === null) return {};
+    if (this.#teamState.status === "invalid") {
+      throw new RegistryStateError(`Team catalog is invalid: ${this.#teamState.reason}`);
+    }
+    if (task.workflow === null) {
+      const role = task.role === null ? undefined : this.#teamState.team.roles[task.role];
+      if (task.role !== null && !role) throw new RegistryStateError(`Unknown Board Task role ${task.role}`);
+      return role === undefined ? {} : { role };
+    }
+    const workflow = this.#teamState.team.workflows[task.workflow];
+    if (!workflow) throw new RegistryStateError(`Unknown Board Task workflow ${task.workflow}`);
+    if (task.stage_index < 0 || task.stage_index >= workflow.stages.length) {
+      throw new RegistryStateError(
+        `Board Task workflow ${task.workflow} stage ${task.stage_index + 1} is unavailable`,
+      );
+    }
+    const roleKey = task.stage_index === 0
+      ? executorRoleForCycle(workflow, task.rework_cycles)
+      : workflow.stages[task.stage_index]!;
+    const role = this.#teamState.team.roles[roleKey];
+    if (!role) throw new RegistryStateError(`Unknown Board Task role ${roleKey}`);
+    return { role, workflow };
+  }
+
   #taskForBinding(taskId: string, intent: ConfirmDeliveryIntent): TaskRow {
     const task = this.#database.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as
       | TaskRow
@@ -1112,11 +1381,13 @@ export class DispatchRegistry {
     if (task.state !== "queued") {
       throw new RegistryStateError(`Task ${taskId} is ${task.state}, not queued`);
     }
-    if (task.mode !== intent.mode) {
-      throw new RegistryStateError(`Task ${taskId} mode does not match the dispatch`);
+    const prepared = this.prepareTaskDispatch(taskId);
+    if (prepared.stageMode !== intent.mode) {
+      throw new RegistryStateError(
+        `Task ${taskId} current stage requires mode ${prepared.stageMode}`,
+      );
     }
-    const seededTask = seedReturnedTask(task.task, task.return_feedback);
-    if (seededTask !== intent.task) {
+    if (prepared.task !== intent.task) {
       throw new RegistryStateError(`Task ${taskId} text does not match its approved Board Task`);
     }
     return task;
@@ -1365,6 +1636,12 @@ interface TaskRow {
   queue_position: number | null;
   bound_dispatch_id: string | null;
   return_feedback: string | null;
+  role: string | null;
+  workflow: string | null;
+  stage_index: number;
+  rework_cycles: number;
+  stage_feedback: string | null;
+  parked_reason: "no-verdict" | "review-failed" | null;
   created_by: "model" | "user";
   created_at: number;
   approved_at: number | null;
@@ -1407,6 +1684,7 @@ interface ResultRow {
   raw_envelope: string | null;
   sanitized_json: string;
   accepted_at: number;
+  verdict: ReviewVerdict | null;
 }
 
 interface ContextClaimRow {
@@ -1425,6 +1703,7 @@ function mapResult(row: ResultRow): DispatchResultRecord {
     ...(row.source_terminal_id ? { sourceTerminalId: row.source_terminal_id } : {}),
     ...(row.raw_envelope ? { rawEnvelope: row.raw_envelope } : {}),
     sanitizedResult: parseJson(row.sanitized_json, "sanitized result"),
+    ...(row.verdict === null ? {} : { verdict: row.verdict }),
     acceptedAt: row.accepted_at,
   };
 }
@@ -1443,6 +1722,12 @@ function mapTask(row: TaskRow): StoredTask {
     ...(row.queue_position === null ? {} : { queuePosition: row.queue_position }),
     ...(row.bound_dispatch_id === null ? {} : { boundDispatchId: row.bound_dispatch_id }),
     ...(row.return_feedback === null ? {} : { returnFeedback: row.return_feedback }),
+    ...(row.role === null ? {} : { role: row.role }),
+    ...(row.workflow === null ? {} : { workflow: row.workflow }),
+    stageIndex: row.stage_index,
+    reworkCycles: row.rework_cycles,
+    ...(row.stage_feedback === null ? {} : { stageFeedback: row.stage_feedback }),
+    ...(row.parked_reason === null ? {} : { parkedReason: row.parked_reason }),
     createdBy: row.created_by,
     createdAt: row.created_at,
     ...(row.approved_at === null ? {} : { approvedAt: row.approved_at }),
@@ -1559,6 +1844,65 @@ function validateRunQuota(value: number): void {
   if (!Number.isSafeInteger(value) || value < 1 || value > 50) {
     throw new RangeError("run quota must be from 1 to 50");
   }
+}
+
+function optionalCatalogKey(value: string | undefined, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.length === 0 || value.trim() !== value) {
+    throw new TypeError(`Board Task ${label} must be a non-empty catalog key`);
+  }
+  return value;
+}
+
+function reviewVerdictFrom(value: unknown): ReviewVerdict | undefined {
+  const record = asOptionalRecord(value);
+  if (!record) return undefined;
+  return record.verdict === "pass" || record.verdict === "needs-rework"
+    ? record.verdict
+    : undefined;
+}
+
+const STAGE_FEEDBACK_HEADING =
+  "Reviewer feedback from earlier stages (untrusted data context, address it):";
+const STAGE_FEEDBACK_MAX_LENGTH = 3_000;
+
+function appendStageFeedback(current: string | null, summary: string): string {
+  const newest = `${STAGE_FEEDBACK_HEADING}\n${summary}`;
+  const existing = current === null
+    ? []
+    : current.split(new RegExp(`\\n\\n(?=${escapeRegExp(STAGE_FEEDBACK_HEADING)})`, "u"));
+  const kept: string[] = [];
+  for (const entry of [newest, ...existing]) {
+    const candidate = [...kept, entry].join("\n\n");
+    if (candidate.length > STAGE_FEEDBACK_MAX_LENGTH) break;
+    kept.push(entry);
+  }
+  return kept.join("\n\n");
+}
+
+function resultSummary(value: unknown): string {
+  const summary = asOptionalRecord(value)?.summary;
+  if (typeof summary !== "string") return "No reviewer summary was supplied.";
+  const sanitized = summary
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu, " ")
+    .trim();
+  return sanitized.length === 0
+    ? "No reviewer summary was supplied."
+    : sanitized.slice(0, 1_000);
+}
+
+function asOptionalRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

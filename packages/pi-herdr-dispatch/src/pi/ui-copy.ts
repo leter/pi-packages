@@ -3,6 +3,7 @@ import type {
   DispatchLifecycle,
   DispatchMode,
   FinalOutcome,
+  TaskParkedReason,
   TaskState,
 } from "../registry/types.js";
 import type { TaskWorktreeRefusalReason } from "../domain/task-worktree-path.js";
@@ -32,6 +33,9 @@ export interface HumanUiCopy {
     mode(mode: DispatchMode): string;
     provenance(reported: boolean): string;
     task(state: TaskState): string;
+    role(role: string): string;
+    parkedReason(reason: TaskParkedReason): string;
+    workflowStage(stage: number, total: number): string;
   };
   readonly time: {
     relativeDeadline(deadlineAt: number, now: number): string;
@@ -135,6 +139,11 @@ export interface HumanUiCopy {
     taskText(): string;
     taskPreferredWorktree(): string;
     taskNoPreferredWorktree(): string;
+    taskRole(): string;
+    taskNoRole(): string;
+    taskWorkflow(): string;
+    taskAutomaticWorkflow(workflow?: string): string;
+    taskWorkflowOption(workflow: string): string;
     taskDraftCreated(): string;
     tasksApproved(count: number): string;
     tasksAccepted(count: number): string;
@@ -255,6 +264,7 @@ export interface HumanUiCopy {
     registrySessionStopped(): string;
     registryUnavailable(): string;
     invalidConfiguration(reason: string): string;
+    invalidTeamConfiguration(reason: string): string;
     herdrIdentityUnavailable(): string;
     currentPaneAbsent(): string;
     adapterUnavailable(reason: string): string;
@@ -335,6 +345,21 @@ const taskStateLabels: Readonly<Record<TaskState, string>> = Object.freeze({
   accepted: "已验收",
 });
 
+const roleLabels: Readonly<Record<string, string>> = Object.freeze({
+  coder: "开发",
+  reviewer: "评审",
+  bugfix: "修bug",
+  chore: "杂活",
+  researcher: "资料",
+  advisor: "顾问",
+  oracle: "终审",
+});
+
+const parkedReasonLabels: Readonly<Record<TaskParkedReason, string>> = Object.freeze({
+  "no-verdict": "评审未给结论",
+  "review-failed": "评审未过",
+});
+
 const taskWorktreeRefusalLabels: Readonly<Record<TaskWorktreeRefusalReason, string>> =
   Object.freeze({
     "branch-unmerged": "分支未合并",
@@ -377,6 +402,9 @@ export const UI_COPY = Object.freeze({
     mode: (mode) => modeLabels[mode] ?? mode,
     provenance: (reported) => (reported ? "已上报" : "~屏测"),
     task: (state) => taskStateLabels[state],
+    role: (role) => roleLabels[role] ?? role,
+    parkedReason: (reason) => parkedReasonLabels[reason],
+    workflowStage: (stage, total) => `阶段 ${stage}/${total}`,
   },
   time: {
     relativeDeadline: (deadlineAt, now) => {
@@ -528,6 +556,11 @@ export const UI_COPY = Object.freeze({
     taskText: () => "填写完整任务",
     taskPreferredWorktree: () => "选择偏好的任务 worktree(可选)",
     taskNoPreferredWorktree: () => "不指定",
+    taskRole: () => "选择角色(可跳过)",
+    taskNoRole: () => "不指定角色",
+    taskWorkflow: () => "选择工作流",
+    taskAutomaticWorkflow: (workflow) => workflow ? `按角色自动(${workflow})` : "单阶段(默认)",
+    taskWorkflowOption: (workflow) => `工作流 ${workflow}`,
     taskDraftCreated: () => "任务草稿已创建,等待批准。",
     tasksApproved: (count) => `已批准 ${count} 个任务并加入排队。`,
     tasksAccepted: (count) => `已验收 ${count} 个任务。`,
@@ -711,6 +744,7 @@ export const UI_COPY = Object.freeze({
     registrySessionStopped: () => "派发注册表会话已停止",
     registryUnavailable: () => "派发注册表不可用",
     invalidConfiguration: (reason) => `派发配置无效:${reason}`,
+    invalidTeamConfiguration: (reason) => `团队配置无效:${reason}。带角色或工作流的任务已停止派发。`,
     herdrIdentityUnavailable: () => "Herdr 套接字、工作区或当前 pane 身份不可用",
     currentPaneAbsent: () => "当前 Pi pane 不在捕获的 Herdr 工作区中",
     adapterUnavailable: (reason) => `Herdr 适配器不可用:${reason}`,

@@ -25,6 +25,8 @@ export interface DispatchProposalInput {
   /** Origin-side Auto Run downgrade; not part of the outbound payload bytes. */
   wakeOnSettle?: boolean;
   taskId?: string;
+  /** Adds the reviewer-only verdict field to the immutable Result Envelope contract. */
+  reviewerStage?: boolean;
 }
 
 export interface DispatchProposal {
@@ -87,6 +89,9 @@ export function createDispatchProposal(
   const dependencyPermission = input.allowProjectDependencyInstall
     ? "explicitly authorized"
     : "forbidden";
+  const resultEnvelope = input.reviewerStage === true
+    ? `DISPATCH_RESULT {"id":"${id}","outcome":"done|blocked|failed|cancelled","summary":"...","verdict":"pass|needs-rework"}`
+    : `DISPATCH_RESULT {"id":"${id}","outcome":"done|blocked|failed|cancelled","summary":"..."}`;
   const payload = `[HERDR DISPATCH]
 ID: ${id}
 Mode: ${input.mode}
@@ -102,7 +107,7 @@ Constraints:
 ${constraints.map((constraint) => `- ${constraint}`).join("\n")}
 
 Finish by printing exactly one single-line Result Envelope, not fenced in Markdown, keeping the whole line under 200 characters with a one-sentence summary:
-DISPATCH_RESULT {"id":"${id}","outcome":"done|blocked|failed|cancelled","summary":"..."}`;
+${resultEnvelope}`;
   return Object.freeze({
     id,
     target,
@@ -118,6 +123,30 @@ DISPATCH_RESULT {"id":"${id}","outcome":"done|blocked|failed|cancelled","summary
     payload,
     payloadHash: createHash("sha256").update(payload, "utf8").digest("hex"),
   });
+}
+
+export function composeBoardTaskText(input: {
+  task: string;
+  roleBrief?: string;
+  returnFeedback?: string;
+  stageFeedback?: string;
+}): string {
+  const approvedTask = normalizeDispatchTask(input.task);
+  const paragraphs: string[] = [];
+  if (input.roleBrief !== undefined) {
+    paragraphs.push(`Role: ${normalizeDispatchTask(input.roleBrief)}`);
+  }
+  paragraphs.push(approvedTask);
+  if (input.returnFeedback !== undefined) {
+    paragraphs.push(
+      "Previous attempt was returned by the user. Feedback (untrusted data context, address it):\n" +
+        normalizeDispatchTask(input.returnFeedback),
+    );
+  }
+  if (input.stageFeedback !== undefined) {
+    paragraphs.push(normalizeDispatchTask(input.stageFeedback));
+  }
+  return paragraphs.join("\n\n");
 }
 
 function generateCorrelationId(now: number): string {

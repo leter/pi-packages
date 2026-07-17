@@ -5,6 +5,8 @@ export type { TaskCreatedBy, TaskState } from "../domain/task-board.js";
 export type DispatchMode = "non-mutating" | "write";
 export type DispatchLifecycle = "delivering" | "active" | "settled";
 export type FinalOutcome = "done" | "blocked" | "failed" | "cancelled";
+export type ReviewVerdict = "pass" | "needs-rework";
+export type TaskParkedReason = "no-verdict" | "review-failed";
 export type AttentionCondition =
   | "delivery-unverified"
   | "unacknowledged"
@@ -85,6 +87,8 @@ export interface CreateTaskInput {
   task: string;
   mode: DispatchMode;
   preferredWorktreePath?: string;
+  role?: string;
+  workflow?: string;
   createdBy: TaskCreatedBy;
   createdAt: number;
 }
@@ -100,6 +104,12 @@ export interface StoredTask {
   queuePosition?: number;
   boundDispatchId?: string;
   returnFeedback?: string;
+  role?: string;
+  workflow?: string;
+  stageIndex: number;
+  reworkCycles: number;
+  stageFeedback?: string;
+  parkedReason?: TaskParkedReason;
   createdBy: TaskCreatedBy;
   createdAt: number;
   approvedAt?: number;
@@ -162,6 +172,7 @@ export interface DispatchResultRecord {
   sourceTerminalId?: string;
   rawEnvelope?: string;
   sanitizedResult: unknown;
+  verdict?: ReviewVerdict;
   acceptedAt: number;
 }
 

@@ -1,4 +1,4 @@
-export const REGISTRY_SCHEMA_VERSION = 6;
+export const REGISTRY_SCHEMA_VERSION = 7;
 
 export const REGISTRY_SCHEMA_V1 = `
 CREATE TABLE dispatches (
@@ -178,4 +178,16 @@ CREATE INDEX tasks_workspace_state_idx ON tasks(workspace_id, state);
 
 ALTER TABLE auto_run_sessions ADD COLUMN run_quota INTEGER;
 ALTER TABLE auto_run_sessions ADD COLUMN run_quota_used INTEGER NOT NULL DEFAULT 0;
+`;
+
+export const REGISTRY_SCHEMA_V7 = `
+ALTER TABLE tasks ADD COLUMN role TEXT;
+ALTER TABLE tasks ADD COLUMN workflow TEXT;
+ALTER TABLE tasks ADD COLUMN stage_index INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN rework_cycles INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN stage_feedback TEXT;
+ALTER TABLE tasks ADD COLUMN parked_reason TEXT
+  CHECK (parked_reason IS NULL OR parked_reason IN ('no-verdict', 'review-failed'));
+ALTER TABLE dispatch_results ADD COLUMN verdict TEXT
+  CHECK (verdict IS NULL OR verdict IN ('pass', 'needs-rework'));
 `;

@@ -23,6 +23,7 @@ import type {
   TaskWorktreeService,
 } from "../domain/task-worktree.js";
 import { firstTaskLine } from "../domain/task-worktree-path.js";
+import { defaultWorkflowForRole } from "../domain/team.js";
 import { launchableAgentTypes } from "./agent-launch-catalog.js";
 import {
   actionCandidates,
@@ -302,6 +303,7 @@ export function registerDispatchCommands(
           autoRunArmed: runtime.autoRunState()?.armed ?? false,
           runQuotaRemaining: runtime.autoRunState()?.remainingQuota,
           tasks: action ? [] : app.listTasks(),
+          team: action ? undefined : runtime.registryRuntime.registry?.teamCatalog(),
           unsettled: dispatches.map((dispatch) => ({
             dispatch,
             attention: app.listAttention(dispatch.id),
@@ -460,6 +462,37 @@ export function registerDispatchCommands(
           (value) => UI_COPY.state.mode(value),
         );
         if (mode === undefined) return;
+        const team = runtime.registryRuntime.registry?.teamCatalog();
+        let role: string | undefined;
+        let workflow: string | undefined;
+        if (team) {
+          const none = "__no_board_task_role__";
+          const roleValues = [none, ...Object.keys(team.roles)] as const;
+          const selectedRole = await selectDomainValue(
+            (selectTitle, options) => ctx.ui.select(selectTitle, options),
+            UI_COPY.command.taskRole(),
+            roleValues,
+            (value) => value === none
+              ? UI_COPY.command.taskNoRole()
+              : team.roles[value]?.label ?? value,
+          );
+          if (selectedRole === undefined) return;
+          role = selectedRole === none ? undefined : selectedRole;
+
+          const automatic = "__automatic_board_task_workflow__";
+          const workflowValues = [automatic, ...Object.keys(team.workflows)] as const;
+          const defaultWorkflow = defaultWorkflowForRole(role);
+          const selectedWorkflow = await selectDomainValue(
+            (selectTitle, options) => ctx.ui.select(selectTitle, options),
+            UI_COPY.command.taskWorkflow(),
+            workflowValues,
+            (value) => value === automatic
+              ? UI_COPY.command.taskAutomaticWorkflow(defaultWorkflow)
+              : UI_COPY.command.taskWorkflowOption(value),
+          );
+          if (selectedWorkflow === undefined) return;
+          workflow = selectedWorkflow === automatic ? undefined : selectedWorkflow;
+        }
         let entries: readonly TaskWorktreeEntry[] = [];
         try {
           entries = await taskWorktrees(runtime).list(ctx.cwd);
@@ -481,6 +514,8 @@ export function registerDispatchCommands(
             title,
             task,
             mode,
+            ...(role === undefined ? {} : { role }),
+            ...(workflow === undefined ? {} : { workflow }),
             ...(preferredWorktreePath === undefined ? {} : { preferredWorktreePath }),
             createdBy: "user",
             createdAt: Date.now(),

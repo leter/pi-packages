@@ -43,6 +43,29 @@ describe("Result Envelope", () => {
     expect(parseResultLine("ordinary output", "hd_1")).toEqual({ status: "ignore" });
   });
 
+  it.each([
+    ["absent", undefined],
+    ["pass", "pass"],
+    ["needs-rework", "needs-rework"],
+  ] as const)("accepts the %s reviewer verdict", (_label, verdict) => {
+    const field = verdict === undefined ? "" : `,"verdict":"${verdict}"`;
+    const parsed = parseResultLine(
+      `DISPATCH_RESULT {"id":"hd_1","outcome":"done","summary":"reviewed"${field}}`,
+      "hd_1",
+    );
+    expect(parsed).toEqual(expect.objectContaining({ status: "valid" }));
+    if (parsed.status === "valid") expect(parsed.result.verdict).toBe(verdict);
+  });
+
+  it.each([
+    'DISPATCH_RESULT {"id":"hd_1","outcome":"done","summary":"x","verdict":"approved"}',
+    'DISPATCH_RESULT {"id":"hd_1","outcome":"done","summary":"x","verdict":true}',
+  ])("marks a bad reviewer verdict malformed: %s", (line) => {
+    expect(parseResultLine(line, "hd_1")).toEqual(
+      expect.objectContaining({ status: "malformed", reason: "verdict must be pass or needs-rework" }),
+    );
+  });
+
   it("reconstructs a bounded Result Envelope hard-wrapped by a narrow TUI", () => {
     const tail = `DISPATCH_RESULT
  {"id":"hd_1","outcome":"done",

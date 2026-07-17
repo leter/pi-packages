@@ -10,6 +10,7 @@ import {
   type DispatchConfig,
 } from "../domain/config.js";
 import { TaskWorktreeService } from "../domain/task-worktree.js";
+import { defaultTeamConfigPath, loadTeamConfig } from "../domain/team.js";
 import { HerdrAdapter } from "../herdr/adapter.js";
 import { OriginMonitor } from "../monitor/origin-monitor.js";
 import { AutoRunCoordinator } from "../settlement/auto-run.js";
@@ -30,6 +31,7 @@ import { UI_COPY } from "./ui-copy.js";
 export interface DispatchRuntimeOptions {
   registry?: RegistryRuntime;
   configPath?: string;
+  teamConfigPath?: string;
   environment?: NodeJS.ProcessEnv;
   sendContextMessage?: OriginContextPort["sendMessage"];
 }
@@ -37,6 +39,7 @@ export interface DispatchRuntimeOptions {
 export class DispatchRuntime {
   readonly registryRuntime: RegistryRuntime;
   readonly #configPath: string;
+  readonly #teamConfigPath: string;
   readonly #environment: NodeJS.ProcessEnv;
   readonly #sendContextMessage?: OriginContextPort["sendMessage"];
   #adapter?: HerdrAdapter;
@@ -61,6 +64,7 @@ export class DispatchRuntime {
   constructor(options: DispatchRuntimeOptions = {}) {
     this.registryRuntime = options.registry ?? new RegistryRuntime();
     this.#configPath = options.configPath ?? defaultConfigPath();
+    this.#teamConfigPath = options.teamConfigPath ?? defaultTeamConfigPath();
     this.#environment = options.environment ?? process.env;
     this.#sendContextMessage = options.sendContextMessage;
   }
@@ -102,6 +106,8 @@ export class DispatchRuntime {
     this.stop();
     const registryReady = await this.registryRuntime.start();
     const configState = await loadDispatchConfig(this.#configPath);
+    const teamState = await loadTeamConfig(this.#teamConfigPath);
+    this.registryRuntime.registry?.setTeamConfigState(teamState);
     const config = configState.status === "ready" ? configState.config : { ...DEFAULT_DISPATCH_CONFIG };
     this.#config = config;
     if (!registryReady) {
@@ -130,6 +136,9 @@ export class DispatchRuntime {
         this.#ui = ctx.ui;
         this.#originSessionId = ctx.sessionManager.getSessionId();
         this.#workspaceId = workspaceId;
+        if (teamState.status === "invalid") {
+          ctx.ui.notify(UI_COPY.runtime.invalidTeamConfiguration(teamState.reason), "warning");
+        }
       }
       if (this.registryRuntime.registry) {
         const registry = this.registryRuntime.registry;

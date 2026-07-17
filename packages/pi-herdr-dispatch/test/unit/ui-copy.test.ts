@@ -30,6 +30,12 @@ describe("human UI copy catalog", () => {
     expect(["draft", "queued", "dispatched", "review", "accepted"].map(
       (state) => UI_COPY.state.task(state as never),
     )).toEqual(["草稿", "排队", "已派出", "待验收", "已验收"]);
+    expect(["coder", "reviewer", "bugfix", "chore", "researcher", "advisor", "oracle"].map(
+      (role) => UI_COPY.state.role(role),
+    )).toEqual(["开发", "评审", "修bug", "杂活", "资料", "顾问", "终审"]);
+    expect(UI_COPY.state.parkedReason("no-verdict")).toBe("评审未给结论");
+    expect(UI_COPY.state.parkedReason("review-failed")).toBe("评审未过");
+    expect(UI_COPY.state.workflowStage(2, 2)).toBe("阶段 2/2");
     expect([
       "target-lost",
       "delivery-unverified",

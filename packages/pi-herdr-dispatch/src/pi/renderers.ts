@@ -2,6 +2,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 
 import type { ProposalTarget } from "../dispatch/proposal.js";
+import type { TeamCatalog } from "../domain/team.js";
 import type { AttentionRecord, StoredDispatch, StoredTask } from "../registry/types.js";
 import {
   ATTENTION_GLYPH,
@@ -99,6 +100,7 @@ export interface StatusResultDetails {
   list?: readonly StoredDispatch[];
   listAttention?: Readonly<Record<string, readonly AttentionRecord[]>>;
   tasks?: readonly StoredTask[];
+  team?: TeamCatalog;
   now?: number;
 }
 
@@ -141,8 +143,8 @@ export function renderStatusResult(
       UI_COPY.count.unsettledDispatches(details.list.length),
     );
     const taskLines = (details.tasks ?? []).map((task) => {
-      const row = boardTaskRow(task);
-      return ` ${mark(theme, row.mark)} ${theme.bold(row.title)}  ${paint(row.mark.color, row.state)}  ${paint("muted", row.mode)}`;
+      const row = boardTaskRow(task, details.team);
+      return ` ${mark(theme, row.mark)} ${theme.bold(row.title)}  ${paint(row.mark.color, row.state)}  ${paint("muted", [row.mode, row.role, row.stage].filter(Boolean).join(" · "))}`;
     });
     return new Text(
       [

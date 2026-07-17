@@ -7,11 +7,12 @@ import {
 } from "../../src/domain/task-board.js";
 
 describe("Task Board domain", () => {
-  it("allows only the ADR 0016 task state transitions", () => {
+  it("allows the Task Board transitions including staged requeue", () => {
     expect(() => assertTaskTransition("draft", "queued")).not.toThrow();
     expect(() => assertTaskTransition("queued", "draft")).not.toThrow();
     expect(() => assertTaskTransition("queued", "dispatched")).not.toThrow();
     expect(() => assertTaskTransition("dispatched", "review")).not.toThrow();
+    expect(() => assertTaskTransition("dispatched", "queued")).not.toThrow();
     expect(() => assertTaskTransition("review", "accepted")).not.toThrow();
     expect(() => assertTaskTransition("review", "queued")).not.toThrow();
     expect(() => assertTaskTransition("draft", "dispatched")).toThrow(/draft.*dispatched/u);
