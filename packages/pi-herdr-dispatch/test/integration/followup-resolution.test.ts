@@ -78,7 +78,7 @@ async function harness(taskId?: string) {
   const registry = await openDispatchRegistry(join(root, "registry.sqlite"));
   registries.push(registry);
   if (taskId) {
-    registry.armAutoRun("session-origin", 1, 900);
+    registry.armAutoRun("session-origin", 1, 2, 900);
     registry.createTask({
       id: taskId,
       workspaceId: "w1",

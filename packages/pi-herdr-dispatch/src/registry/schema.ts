@@ -1,4 +1,4 @@
-export const REGISTRY_SCHEMA_VERSION = 7;
+export const REGISTRY_SCHEMA_VERSION = 8;
 
 export const REGISTRY_SCHEMA_V1 = `
 CREATE TABLE dispatches (
@@ -190,4 +190,9 @@ ALTER TABLE tasks ADD COLUMN parked_reason TEXT
   CHECK (parked_reason IS NULL OR parked_reason IN ('no-verdict', 'review-failed'));
 ALTER TABLE dispatch_results ADD COLUMN verdict TEXT
   CHECK (verdict IS NULL OR verdict IN ('pass', 'needs-rework'));
+`;
+
+export const REGISTRY_SCHEMA_V8 = `
+ALTER TABLE auto_run_sessions ADD COLUMN launch_budget INTEGER;
+ALTER TABLE auto_run_sessions ADD COLUMN launch_budget_used INTEGER NOT NULL DEFAULT 0;
 `;

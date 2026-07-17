@@ -51,6 +51,7 @@ describe("Pi extension Phase 4 registration", () => {
       "herdr_agent_output_inspect",
       "herdr_dispatch_status",
       "herdr_task_draft",
+      "herdr_agent_launch_readonly",
     ]);
     expect(tools.map((tool) => tool.label)).toEqual([
       "提议 Herdr 派发",
@@ -58,6 +59,7 @@ describe("Pi extension Phase 4 registration", () => {
       "查看 Herdr Agent 输出",
       "Herdr 派发状态",
       "创建任务草稿",
+      "创建只读角色 Agent",
     ]);
     expect(commands).toEqual([
       "herdr-dispatch",

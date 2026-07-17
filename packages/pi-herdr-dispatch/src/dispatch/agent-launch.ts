@@ -224,6 +224,16 @@ export function adaptiveSplitDirection(rect: { width: number; height: number }):
   return rect.width / rect.height >= 2 ? "right" : "down";
 }
 
+export function nextReadonlyAgentLabel(
+  role: string,
+  currentWorkspacePaneLabels: readonly string[],
+): string {
+  const key = required(role, "role");
+  const prefix = `${key}-auto-`;
+  const sequence = currentWorkspacePaneLabels.filter((label) => label.startsWith(prefix)).length + 1;
+  return `${prefix}${sequence}`;
+}
+
 function assertNotAborted(signal?: AbortSignal, createdPane?: HerdrPane): void {
   if (signal?.aborted) throw new AgentLaunchCancelledError(createdPane);
 }

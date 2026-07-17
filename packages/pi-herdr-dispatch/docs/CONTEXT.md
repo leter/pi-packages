@@ -1,6 +1,6 @@
 # Agent Workspace Orchestration
 
-This context coordinates automatically dispatched work sent to coding agents in one local Herdr workspace. A user may launch one new Agent as part of a typed TUI dispatch; the context does not create workspaces and creates a worktree only as a user-selected Agent Launch step.
+This context coordinates automatically dispatched work sent to coding agents in one local Herdr workspace. A user may launch one new Agent as part of a typed TUI dispatch. While Auto Run is armed, a model may launch bounded missing read-only-role capacity. The context does not create workspaces and creates a worktree only as a user-selected Agent Launch step.
 
 ## Actors and scope
 
@@ -9,8 +9,8 @@ A coding agent already running in a Herdr pane, whether it predated the Origin S
 _Avoid_: worker, subagent
 
 **Agent Launch**:
-A user-initiated TUI operation that optionally creates one user-selected Task Worktree for write mode, creates one Agent pane or tab in the Workspace Scope and selected directory, starts one supported Agent with either current Herdr integration provenance or an explicitly reviewed screen-detection fallback, waits until it is eligible, and then submits a fresh Automatic Dispatch. The created Agent and any Task Worktree remain after failure or settlement; launch never implies automatic cleanup or ownership.
-_Avoid_: model-created Agent, temporary worker, autonomous scaling, model-created worktree
+A typed TUI operation that creates one Agent pane or tab in the Workspace Scope, starts one supported Agent, and waits until it is eligible. `/hd-create` is user-initiated and may create one user-selected Task Worktree for write mode before submitting a fresh Automatic Dispatch. The model-callable exception is limited to an armed, budgeted, reuse-first launch for a loaded non-mutating Role in the Origin cwd. Created Agents and any Task Worktree remain after failure or settlement; launch never implies automatic cleanup or ownership.
+_Avoid_: temporary worker, autonomous scaling, model-created worktree, write-role model launch
 
 **Workspace Scope**:
 The local Herdr workspace containing the Origin Session and every Agent eligible for its dispatches.
@@ -135,7 +135,7 @@ Any path that tasks or waits on another Agent outside a typed Registry-backed di
 _Avoid_: manual shell only, harmless command
 
 **Herdr Command Gate**:
-The best-effort Origin-side rule that allows scoped metadata inspection and reads of the current Pi pane while denying foreign output reads, cross-workspace snapshots, raw tasking, raw Agent creation, foreign-pane control, and blocking waits that would bypass typed policies. It does not block the typed, user-initiated Agent Launch path.
+The best-effort Origin-side rule that allows scoped metadata inspection and reads of the current Pi pane while denying foreign output reads, cross-workspace snapshots, raw tasking, raw Agent creation, foreign-pane control, and blocking waits that would bypass typed policies. It does not block typed Agent Launch through `/hd-create` or `herdr_agent_launch_readonly`.
 _Avoid_: shell sandbox, target-side enforcement
 
 ## Results and resolution
@@ -223,6 +223,10 @@ _Avoid_: Task Return, 打回, model demotion
 **Run Quota**:
 The number of task-bound dispatches remaining in the currently armed Auto Run session. Re-arming resets it; reaching zero leaves queued tasks quiet and unchanged.
 _Avoid_: Auto Run Depth, concurrency limit
+
+**Launch Budget**:
+The user-set number of model-initiated read-only-role Agent launches remaining in the currently armed Auto Run session. Re-arming resets it; reaching zero leaves work needing missing role capacity queued. Zero disables the capability.
+_Avoid_: unlimited scaling, write-role launch
 
 **Dispatch Reply**:
 A separately confirmed follow-up sent to an unsettled dispatch with attention, retaining the same correlation ID and reservations.
@@ -312,6 +316,7 @@ Product copy (UI strings, notifications) is Simplified Chinese ([ADR 0011](./adr
 | Task Return | 打回 |
 | Draft Withdrawal | 撤回草稿 |
 | Run Quota | 本次额度 |
+| Launch Budget | 创建额度 |
 | Role | 角色 |
 | role `coder` | 开发 |
 | role `reviewer` | 评审 |

@@ -103,6 +103,8 @@ describe("human UI copy catalog", () => {
     expect(UI_COPY.command.taskDemoteConfirmBody()).toContain("重新批准或删除");
     expect(UI_COPY.command.taskDemoted()).toBe("任务已撤回草稿。");
     expect(UI_COPY.command.autoStatus(false, 5, 7)).not.toContain("本次额度");
+    expect(UI_COPY.command.autoStatus(true, 5, 7, 2)).toContain("创建额度剩余 2");
+    expect(UI_COPY.command.autoStatus(false, 5, 7, 2)).not.toContain("创建额度");
     expect(UI_COPY.manager.technicalLabel("workspace")).toBe("工作区");
     expect(UI_COPY.manager.technicalLabel("worktree")).toBe("任务 worktree");
     expect(UI_COPY.command.newTaskWorktreePlacement()).toContain("node_modules 等依赖不会带过去");
@@ -118,6 +120,10 @@ describe("human UI copy catalog", () => {
     expect(UI_COPY.presentation.resultCounts(2, 3)).toBe("2 个文件 · 3 个测试(展开查看详情)");
     expect(UI_COPY.notification.outcomeTitle("claude", "done")).toBe("claude 完成");
     expect(UI_COPY.notification.attentionTitle("claude")).toBe("claude 需要处理");
+    expect(UI_COPY.notification.readonlyAgentLaunchedTitle()).toBe("已创建只读角色窗格");
+    expect(UI_COPY.notification.readonlyAgentLaunchedBody("评审", "claude", "reviewer-auto-1"))
+      .toContain("评审 · claude · reviewer-auto-1");
+    expect(UI_COPY.notification.launchBudgetExhaustedTitle()).toBe("创建额度已用完");
     expect(UI_COPY.followup.replyCancelled()).toBe("回复已取消。");
     expect(UI_COPY.followup.deliveryVerified("reply")).toBe("回复的投递回显已验证。");
     expect(UI_COPY.followup.settled("claude", "受阻")).toBe("claude 的派发已结算:受阻。");

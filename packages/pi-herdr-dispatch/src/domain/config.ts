@@ -16,6 +16,7 @@ export interface DispatchConfig {
   livenessPollMs: number;
   maxAutoRunDepth: number;
   defaultRunQuota: number;
+  defaultLaunchBudget: number;
 }
 
 /** Adapter hard limit for bounded output reads (contract: 50 or 200 lines). */
@@ -39,6 +40,7 @@ export const DEFAULT_DISPATCH_CONFIG: DispatchConfig = Object.freeze({
   livenessPollMs: 5_000,
   maxAutoRunDepth: 5,
   defaultRunQuota: 10,
+  defaultLaunchBudget: 2,
 });
 
 const CONFIG_KEYS = new Set(Object.keys(DEFAULT_DISPATCH_CONFIG));
@@ -88,6 +90,7 @@ export function parseDispatchConfig(value: unknown): DispatchConfig {
   range(config.livenessPollMs, 1_000, 60_000, "livenessPollMs");
   range(config.maxAutoRunDepth, 1, 20, "maxAutoRunDepth");
   range(config.defaultRunQuota, 1, 50, "defaultRunQuota");
+  range(config.defaultLaunchBudget, 0, 10, "defaultLaunchBudget");
   return config;
 }
 

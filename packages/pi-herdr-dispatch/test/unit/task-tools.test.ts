@@ -2,8 +2,168 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-w
 import { describe, expect, it, vi } from "vitest";
 
 import { registerDispatchTools } from "../../src/pi/tools.js";
+import { ReadonlyAgentLaunchRefusalError } from "../../src/dispatch/application.js";
 
 describe("Task Board tools", () => {
+  it("launches a read-only-role Agent only after armed, role/reuse, and budget checks", async () => {
+    const tools: ToolDefinition[] = [];
+    const pi = {
+      registerTool: (tool: ToolDefinition) => tools.push(tool),
+      exec: vi.fn(async () => {
+        order.push("launchable-agent");
+        return { stdout: "claude: current", stderr: "", code: 0 };
+      }),
+    } as unknown as ExtensionAPI;
+    const order: string[] = [];
+    const launched = {
+      terminalId: "term-reviewer",
+      paneId: "p-reviewer",
+      agentLabel: "claude",
+      statusProvenance: "reported" as const,
+      paneName: "reviewer-auto-1",
+      role: "reviewer",
+      roleLabel: "评审",
+    };
+    const runtime = {
+      application: {
+        assertReadonlyAgentLaunchAllowed: vi.fn(async () => { order.push("role-and-reuse"); }),
+        launchReadonlyAgent: vi.fn(async () => { order.push("launch"); return launched; }),
+      },
+      launchBudgetState: vi.fn(() => {
+        order.push("budget-state");
+        return { armed: true, remaining: 1 };
+      }),
+      consumeLaunchBudget: vi.fn(() => { order.push("consume"); return 0; }),
+      notifyReadonlyAgentLaunched: vi.fn(async () => { order.push("notify"); }),
+      notifyLaunchBudgetExhaustedOnce: vi.fn(async () => undefined),
+      runReadonlyLaunchExclusive: <T>(action: () => Promise<T>) => action(),
+    };
+    registerDispatchTools(pi, runtime as never, {} as never);
+    const tool = tools.find((candidate) => candidate.name === "herdr_agent_launch_readonly")!;
+
+    const result = await tool.execute(
+      "call_launch",
+      { role: "reviewer", agentType: "claude" },
+      undefined,
+      undefined,
+      { mode: "tui" } as ExtensionContext,
+    );
+
+    expect(order).toEqual([
+      "budget-state",
+      "role-and-reuse",
+      "launchable-agent",
+      "budget-state",
+      "launch",
+      "consume",
+      "notify",
+    ]);
+    expect(result.content).toEqual([expect.objectContaining({
+      text: expect.stringContaining("Launch Budget remaining: 0"),
+    })]);
+    expect(result.details).toEqual(expect.objectContaining({ status: "launched", remainingBudget: 0 }));
+  });
+
+  it("refuses disarmed, invalid-role, reuse-first, and exhausted calls before launch", async () => {
+    const cases = [
+      {
+        name: "disarmed",
+        state: { armed: false },
+        refusal: undefined,
+        expected: "user's /hd-create",
+        notify: false,
+      },
+      {
+        name: "write role",
+        state: { armed: true, remaining: 1 },
+        refusal: new ReadonlyAgentLaunchRefusalError("write-role", "Role coder is write-role capacity"),
+        expected: "write-role",
+        notify: false,
+      },
+      {
+        name: "reuse first",
+        state: { armed: true, remaining: 1 },
+        refusal: new ReadonlyAgentLaunchRefusalError(
+          "eligible-role-agent",
+          "Eligible Agent pane reviewer-1 already matches role reviewer; dispatch to it instead",
+          "reviewer-1",
+        ),
+        expected: "reviewer-1",
+        notify: false,
+      },
+      {
+        name: "exhausted",
+        state: { armed: true, remaining: 0 },
+        refusal: undefined,
+        expected: "Launch Budget is exhausted",
+        notify: true,
+      },
+    ];
+
+    for (const item of cases) {
+      const tools: ToolDefinition[] = [];
+      const pi = {
+        registerTool: (tool: ToolDefinition) => tools.push(tool),
+        exec: vi.fn(async () => ({ stdout: "claude: current", stderr: "", code: 0 })),
+      } as unknown as ExtensionAPI;
+      const launchReadonlyAgent = vi.fn();
+      const notifyLaunchBudgetExhaustedOnce = vi.fn(async () => undefined);
+      const runtime = {
+        application: {
+          assertReadonlyAgentLaunchAllowed: item.refusal
+            ? vi.fn(async () => { throw item.refusal; })
+            : vi.fn(async () => undefined),
+          launchReadonlyAgent,
+        },
+        launchBudgetState: () => item.state,
+        notifyLaunchBudgetExhaustedOnce,
+        runReadonlyLaunchExclusive: <T>(action: () => Promise<T>) => action(),
+      };
+      registerDispatchTools(pi, runtime as never, {} as never);
+      const tool = tools.find((candidate) => candidate.name === "herdr_agent_launch_readonly")!;
+      const result = await tool.execute(
+        `call_${item.name}`,
+        { role: item.name === "write role" ? "coder" : "reviewer", agentType: "claude" },
+        undefined,
+        undefined,
+        { mode: "tui" } as ExtensionContext,
+      );
+      const text = result.content?.map((content) => content.type === "text" ? content.text : "").join("") ?? "";
+      expect(text).toContain(item.expected);
+      expect(result.details).toEqual(expect.objectContaining({ status: "refused" }));
+      expect(launchReadonlyAgent).not.toHaveBeenCalled();
+      expect(notifyLaunchBudgetExhaustedOnce).toHaveBeenCalledTimes(item.notify ? 1 : 0);
+    }
+  });
+
+  it("does not consume Launch Budget when Agent launch fails", async () => {
+    const tools: ToolDefinition[] = [];
+    const pi = {
+      registerTool: (tool: ToolDefinition) => tools.push(tool),
+      exec: vi.fn(async () => ({ stdout: "claude: current", stderr: "", code: 0 })),
+    } as unknown as ExtensionAPI;
+    const consumeLaunchBudget = vi.fn();
+    const runtime = {
+      application: {
+        assertReadonlyAgentLaunchAllowed: vi.fn(async () => undefined),
+        launchReadonlyAgent: vi.fn(async () => { throw new Error("startup failed"); }),
+      },
+      launchBudgetState: () => ({ armed: true, remaining: 1 }),
+      consumeLaunchBudget,
+      runReadonlyLaunchExclusive: <T>(action: () => Promise<T>) => action(),
+    };
+    registerDispatchTools(pi, runtime as never, {} as never);
+    const tool = tools.find((candidate) => candidate.name === "herdr_agent_launch_readonly")!;
+
+    await expect(tool.execute(
+      "call_failed",
+      { role: "reviewer", agentType: "claude" },
+      undefined,
+      undefined,
+      { mode: "tui" } as ExtensionContext,
+    )).rejects.toThrow("startup failed");
+    expect(consumeLaunchBudget).not.toHaveBeenCalled();
+  });
   it("creates one model draft through the application only in TUI mode", async () => {
     const tools: ToolDefinition[] = [];
     const pi = {

@@ -88,6 +88,62 @@ describe("DispatchRuntime team config", () => {
       createdAt: 101,
     })).toThrow(/Team catalog is invalid/u);
   });
+
+  it("notifies Launch Budget exhaustion only once per armed session", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-herdr-runtime-launch-budget-"));
+    cleanupPaths.push(directory);
+    const configPath = join(directory, "config.json");
+    await writeFile(configPath, JSON.stringify({ defaultLaunchBudget: 0 }), "utf8");
+    const socketPath = join(directory, "herdr.sock");
+    const fake = new FakeHerdrServer(socketPath, (request, connection) => {
+      if (request.method === "session.snapshot") {
+        connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() });
+      } else if (request.method === "notification.show") {
+        connection.sendResponse(request.id, {
+          type: "notification_show",
+          shown: true,
+          reason: "shown",
+        });
+      }
+    });
+    servers.push(fake);
+    await fake.start();
+
+    const runtime = new DispatchRuntime({
+      registry: new RegistryRuntime(join(directory, "registry.sqlite")),
+      configPath,
+      teamConfigPath: join(directory, "missing-team.json"),
+      environment: {
+        HERDR_SOCKET_PATH: socketPath,
+        HERDR_WORKSPACE_ID: "w1",
+        HERDR_PANE_ID: "p-origin",
+      },
+      sendContextMessage: vi.fn(async () => undefined),
+    });
+    runtimes.push(runtime);
+    const ctx = {
+      mode: "tui",
+      cwd: "/repo",
+      ui: { notify: vi.fn(), setWidget: vi.fn() },
+      isIdle: () => true,
+      sessionManager: {
+        getSessionId: () => "session-origin",
+        getLeafId: () => "leaf",
+        getBranch: () => [],
+      },
+    } as unknown as ExtensionContext;
+
+    await runtime.start(ctx);
+    runtime.setAutoRunArmed(true);
+    await runtime.notifyLaunchBudgetExhaustedOnce();
+    await runtime.notifyLaunchBudgetExhaustedOnce();
+
+    expect(fake.requests.filter((request) => request.method === "notification.show")).toEqual([
+      expect.objectContaining({
+        params: expect.objectContaining({ title: "创建额度已用完" }),
+      }),
+    ]);
+  });
 });
 
 function snapshot(): Record<string, unknown> {

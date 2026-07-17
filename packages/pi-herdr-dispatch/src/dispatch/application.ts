@@ -30,7 +30,13 @@ import type {
   FinalOutcome,
   StoredDispatch,
 } from "../registry/types.js";
-import { hasReportedProvenance } from "./agent-launch.js";
+import {
+  hasReportedProvenance,
+  nextReadonlyAgentLabel,
+  SUPPORTED_AGENT_TYPES,
+  type AgentLaunchService,
+  type SupportedAgentType,
+} from "./agent-launch.js";
 import {
   createDispatchProposal,
   normalizeDispatchTask,
@@ -88,6 +94,8 @@ export interface DispatchApplicationOptions {
   herdr: HerdrDispatchPort;
   workspaceId: string;
   originTerminalId: string;
+  originCwd?: string;
+  agentLauncher?: Pick<AgentLaunchService, "launch">;
   now?: () => number;
   nextCorrelationId?: () => string;
   resolveWorktree?: (cwd: string) => Promise<string>;
@@ -97,6 +105,22 @@ export interface DispatchApplicationOptions {
   onSettled?: (dispatchId: string, outcome: FinalOutcome) => void;
   /** Auto Run Depth for proposals confirmed right now: 0 in a user turn, parent depth + 1 in an Auto Run turn. */
   currentAutoRunDepth?: () => number;
+}
+
+export interface ReadonlyAgentLaunchRequest {
+  role: string;
+  agentType: string;
+  signal?: AbortSignal;
+}
+
+export interface ReadonlyAgentLaunchResult {
+  terminalId: string;
+  paneId: string;
+  agentLabel: string;
+  statusProvenance: "reported" | "screen-detected";
+  paneName: string;
+  role: string;
+  roleLabel: string;
 }
 
 export class ProposalTargetError extends Error {
@@ -113,12 +137,36 @@ export class StaleProposalError extends Error {
   }
 }
 
+export class ReadonlyAgentLaunchRefusalError extends Error {
+  readonly code:
+    | "invalid-team"
+    | "unknown-role"
+    | "write-role"
+    | "unsupported-agent"
+    | "eligible-role-agent"
+    | "launch-unavailable";
+  readonly paneName?: string;
+
+  constructor(
+    code: ReadonlyAgentLaunchRefusalError["code"],
+    message: string,
+    paneName?: string,
+  ) {
+    super(message);
+    this.name = "ReadonlyAgentLaunchRefusalError";
+    this.code = code;
+    this.paneName = paneName;
+  }
+}
+
 export class DispatchApplication {
   readonly #config: DispatchConfig;
   readonly #registry: DispatchRegistry;
   readonly #herdr: HerdrDispatchPort;
   readonly #workspaceId: string;
   readonly #originTerminalId: string;
+  readonly #originCwd?: string;
+  readonly #agentLauncher?: Pick<AgentLaunchService, "launch">;
   readonly #now: () => number;
   readonly #nextCorrelationId?: () => string;
   readonly #resolveWorktree: (cwd: string) => Promise<string>;
@@ -135,6 +183,8 @@ export class DispatchApplication {
     this.#herdr = options.herdr;
     this.#workspaceId = required(options.workspaceId, "workspaceId");
     this.#originTerminalId = required(options.originTerminalId, "originTerminalId");
+    this.#originCwd = options.originCwd;
+    this.#agentLauncher = options.agentLauncher;
     this.#now = options.now ?? Date.now;
     this.#nextCorrelationId = options.nextCorrelationId;
     this.#resolveWorktree = options.resolveWorktree ?? resolveCanonicalWorktree;
@@ -224,6 +274,94 @@ export class DispatchApplication {
     if (snapshot.workspace.workspaceId !== this.#workspaceId) {
       throw new ProposalTargetError("Herdr returned a different workspace scope");
     }
+    return this.#eligibleAgentsFromSnapshot(snapshot);
+  }
+
+  async assertReadonlyAgentLaunchAllowed(
+    request: ReadonlyAgentLaunchRequest,
+  ): Promise<void> {
+    await this.#readonlyLaunchPlan(request);
+  }
+
+  async launchReadonlyAgent(
+    request: ReadonlyAgentLaunchRequest,
+  ): Promise<ReadonlyAgentLaunchResult> {
+    const plan = await this.#readonlyLaunchPlan(request);
+    if (!this.#agentLauncher || !this.#originCwd) {
+      throw new ReadonlyAgentLaunchRefusalError(
+        "launch-unavailable",
+        "Read-only Agent launch is unavailable in this session",
+      );
+    }
+    const paneName = nextReadonlyAgentLabel(
+      plan.role.key,
+      plan.snapshot.panes.flatMap((pane) => pane.label === undefined ? [] : [pane.label]),
+    );
+    const launched = await this.#agentLauncher.launch({
+      agentType: request.agentType as SupportedAgentType,
+      layout: "adaptive",
+      cwd: this.#originCwd,
+      label: paneName,
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
+    });
+    return {
+      terminalId: launched.terminalId,
+      paneId: launched.paneId,
+      agentLabel: launched.agentLabel,
+      statusProvenance: launched.statusProvenance,
+      paneName,
+      role: plan.role.key,
+      roleLabel: plan.role.label,
+    };
+  }
+
+  async #readonlyLaunchPlan(request: ReadonlyAgentLaunchRequest) {
+    const teamState = this.#registry.teamConfigState();
+    if (teamState.status === "invalid") {
+      throw new ReadonlyAgentLaunchRefusalError(
+        "invalid-team",
+        `Team catalog is invalid: ${teamState.reason}`,
+      );
+    }
+    const role = teamState.team.roles[request.role];
+    if (!role) {
+      throw new ReadonlyAgentLaunchRefusalError(
+        "unknown-role",
+        `Unknown team role ${safeText(request.role)}`,
+      );
+    }
+    if (role.mode !== "non-mutating") {
+      throw new ReadonlyAgentLaunchRefusalError(
+        "write-role",
+        `Role ${role.key} is write-role capacity and cannot be model-launched`,
+      );
+    }
+    if (!(SUPPORTED_AGENT_TYPES as readonly string[]).includes(request.agentType)) {
+      throw new ReadonlyAgentLaunchRefusalError(
+        "unsupported-agent",
+        `Agent type ${safeText(request.agentType)} is not in the supported launch catalog`,
+      );
+    }
+    const snapshot = await this.#herdr.currentWorkspaceSnapshot();
+    if (snapshot.workspace.workspaceId !== this.#workspaceId) {
+      throw new ProposalTargetError("Herdr returned a different workspace scope");
+    }
+    const eligible = await this.#eligibleAgentsFromSnapshot(snapshot);
+    const reusable = eligible.find((target) => target.displayName?.includes(role.key));
+    if (reusable) {
+      const paneName = reusable.displayName!;
+      throw new ReadonlyAgentLaunchRefusalError(
+        "eligible-role-agent",
+        `Eligible Agent pane ${paneName} already matches role ${role.key}; dispatch to it instead`,
+        paneName,
+      );
+    }
+    return { role, snapshot };
+  }
+
+  async #eligibleAgentsFromSnapshot(
+    snapshot: CurrentWorkspaceSnapshot,
+  ): Promise<readonly ProposalTarget[]> {
     const occupied = new Set(
       this.#registry.listTargetOccupancy().map((record) => record.targetTerminalId),
     );

@@ -34,6 +34,7 @@ describe("dispatch configuration", () => {
         maxActiveGlobal: 10,
         maxAutoRunDepth: 20,
         defaultRunQuota: 50,
+        defaultLaunchBudget: 0,
       }),
     ).toEqual({
       ...DEFAULT_DISPATCH_CONFIG,
@@ -43,6 +44,7 @@ describe("dispatch configuration", () => {
       maxActiveGlobal: 10,
       maxAutoRunDepth: 20,
       defaultRunQuota: 50,
+      defaultLaunchBudget: 0,
     });
   });
 
@@ -62,6 +64,9 @@ describe("dispatch configuration", () => {
     { defaultRunQuota: 0 },
     { defaultRunQuota: 51 },
     { defaultRunQuota: 1.5 },
+    { defaultLaunchBudget: -1 },
+    { defaultLaunchBudget: 11 },
+    { defaultLaunchBudget: 1.5 },
   ])("rejects unsafe config instead of partially applying it: %j", (value) => {
     expect(() => parseDispatchConfig(value)).toThrow();
   });

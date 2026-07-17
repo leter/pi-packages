@@ -17,6 +17,7 @@ import {
   REGISTRY_SCHEMA_V4,
   REGISTRY_SCHEMA_V5,
   REGISTRY_SCHEMA_V6,
+  REGISTRY_SCHEMA_V7,
   REGISTRY_SCHEMA_VERSION,
 } from "../../src/registry/schema.js";
 
@@ -80,7 +81,7 @@ describe("Dispatch Registry migrations and fail-closed opening", () => {
     });
     openRegistries.push(registry);
 
-    expect(registry.health().schemaVersion).toBe(7);
+    expect(registry.health().schemaVersion).toBe(REGISTRY_SCHEMA_VERSION);
     const raw = openRaw(location.path);
     expect(raw.prepare("PRAGMA table_info(tasks)").all()).toEqual(
       expect.arrayContaining([
@@ -98,6 +99,33 @@ describe("Dispatch Registry migrations and fail-closed opening", () => {
     raw.close();
     expect((await readdir(location.directory)).filter((name) => name.includes("backup"))).toEqual([
       "registry.sqlite.backup-2026-07-17T09-00-00.000Z",
+    ]);
+  });
+
+  it("backs up and migrates schema v7 to schema v8 Launch Budget columns", async () => {
+    const location = await temporaryDatabasePath();
+    const versionSeven = openRaw(location.path);
+    versionSeven.exec(
+      `${REGISTRY_SCHEMA_V1}\n${REGISTRY_SCHEMA_V2}\n${REGISTRY_SCHEMA_V3}\n${REGISTRY_SCHEMA_V4}\n${REGISTRY_SCHEMA_V5}\n${REGISTRY_SCHEMA_V6}\n${REGISTRY_SCHEMA_V7}\nPRAGMA user_version = 7;`,
+    );
+    versionSeven.close();
+
+    const registry = await openDispatchRegistry(location.path, {
+      now: () => new Date("2026-07-17T10:00:00.000Z"),
+    });
+    openRegistries.push(registry);
+
+    expect(registry.health().schemaVersion).toBe(8);
+    const raw = openRaw(location.path);
+    expect(raw.prepare("PRAGMA table_info(auto_run_sessions)").all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "launch_budget" }),
+        expect.objectContaining({ name: "launch_budget_used", dflt_value: "0" }),
+      ]),
+    );
+    raw.close();
+    expect((await readdir(location.directory)).filter((name) => name.includes("backup"))).toEqual([
+      "registry.sqlite.backup-2026-07-17T10-00-00.000Z",
     ]);
   });
 

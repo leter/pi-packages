@@ -1,6 +1,6 @@
 # pi-herdr-dispatch
 
-A Pi extension under staged development for automatically dispatching work through a typed, Registry-backed path to coding Agents in one local Herdr workspace, including an explicit TUI path that can create one new Agent before dispatch.
+A Pi extension under staged development for automatically dispatching work through a typed, Registry-backed path to coding Agents in one local Herdr workspace, including explicit user launch and tightly bounded model launch paths.
 
 > **Status:** Experimental. Auto Run ([ADR 0014](./docs/adr/0014-auto-run-settlement-continuation.md)) and Task Worktree isolation ([ADR 0015](./docs/adr/0015-task-worktree-isolation.md)) passed live acceptance on 2026-07-17. The persistent Task Board ([ADR 0016](./docs/adr/0016-task-board.md)) and staged Roles and Workflows ([ADR 0017](./docs/adr/0017-roles-and-workflows.md)) are implemented; ADR 0017 live acceptance remains pending. The package remains `private` at `0.0.0-development`; no package has been published.
 
@@ -11,7 +11,7 @@ A Pi extension under staged development for automatically dispatching work throu
 - Herdr `0.7.4`, socket protocol `16`.
 - Pi running inside Herdr with `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID`, and `HERDR_PANE_ID`
 
-The extension normally dispatches to Existing Agents in the captured current workspace. `/hd-create` is the sole creation exception: a user may explicitly create one Agent pane or tab and, for write mode, may first create one isolated Task Worktree. The extension never creates workspaces or coordinators, and models cannot invoke Agent or worktree creation.
+The extension normally dispatches to Existing Agents in the captured current workspace. `/hd-create` lets a user create one Agent pane or tab and, for write mode, may first create one isolated Task Worktree. While Auto Run is armed, `herdr_agent_launch_readonly` is the sole model creation exception: it may create missing `non-mutating` Role capacity in the Origin cwd within the user-owned Launch Budget. Models can never create write-role panes, worktrees, workspaces, or coordinators.
 
 ## Language
 
@@ -55,7 +55,7 @@ The readable `hd-*` aliases are the recommended interactive commands; the origin
 - `/hd-agents` (`/herdr-agents`) — list current-workspace Eligible Agents and each canonical worktree.
 - `/hd-manager` (`/herdr-dispatches`, or `alt+h`) — open the current-workspace Dispatch Manager, browse human-readable tasks, and perform explicit bounded output reads (`r` for 50 lines, `R` for 200).
 - `/hd-task` (`/herdr-task`) — manually create a Task Board draft, optionally choose its Role and Workflow, or open the board listing. TUI-only.
-- `/hd-auto [on [N]|off]` (`/herdr-dispatch-auto`) — report or toggle Auto Run and, while armed, its remaining Run Quota. `on N` resets the current session to N task-bound dispatches; omitted N uses `defaultRunQuota`.
+- `/hd-auto [on [N]|off]` (`/herdr-dispatch-auto`) — report or toggle Auto Run and, while armed, its remaining Run Quota and Launch Budget. `on N` resets Run Quota to N and Launch Budget to `defaultLaunchBudget`; omitted N uses `defaultRunQuota`.
 - `/hd-clean` (`/herdr-dispatch-clean`) — inspect retained Task Worktrees and remove selected clean, merged, unheld entries after one confirmation.
 - `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — choose, preview, and confirm a reply when an Active Dispatch has attention.
 - `/hd-cancel [id-or-prefix]` (`/herdr-dispatch-cancel`) — choose and confirm a normal cancellation request; this never sends `Ctrl+C`.
@@ -71,7 +71,9 @@ The command never steals focus, waits up to `agentStartupTimeoutMs` for the perm
 
 `/hd-new` remains valid for shared-worktree write work. When the selected Agent's canonical worktree equals the Origin's, it gives one non-blocking hint that `/hd-create` can prepare isolation and that continuing serializes on the shared lease. Agents already seated in Task Worktrees pass through silently. `/hd-clean` is the only cleanup path: it shows why dirty, unmerged, or unsettled-dispatch-held entries are refused, asks once, then uses `git worktree remove` without `--force` followed by `git branch -d`. Settlement never removes a Task Worktree.
 
-Model tools expose scoped listing, proposal, status, one-shot inspection, and `herdr_task_draft`. The model may draft one bounded Board Task per call, but cannot approve, accept, withdraw, return, edit, reorder, or delete tasks. Reply, cancellation, resolution, Agent Launch, worktree creation or cleanup, waits, and force interruption are never model tools.
+Model tools expose scoped listing, proposal, status, one-shot inspection, `herdr_task_draft`, and `herdr_agent_launch_readonly`. The launch tool is TUI-only and works only while Auto Run is armed. It accepts a loaded team Role and an Agent type that passes the same fixed catalog, current-integration, and PATH-executable checks as `/hd-create`; it refuses write or unknown Roles, refuses when a role-named Eligible Agent can be reused, and refuses at zero Launch Budget. Each Origin serializes launch calls. A successful launch uses adaptive layout in the Origin cwd, names the retained pane `<role>-auto-<n>`, consumes one budget unit, records `readonly_launch`, notifies the user, and returns the exact terminal for immediate routing. Failed launches consume nothing and disclose any already-created retained pane. Retained panes become the reuse pool on later runs.
+
+The model may draft one bounded Board Task per call, but cannot approve, accept, withdraw, return, edit, reorder, or delete tasks. Reply, cancellation, resolution, write-role Agent Launch, worktree creation or cleanup, waits, and force interruption are never model tools.
 
 ## Using the Dispatch Manager
 
@@ -169,9 +171,12 @@ Optional file: `~/.config/pi-herdr-dispatch/config.json`
   "retentionDays": 30,
   "livenessPollMs": 5000,
   "maxAutoRunDepth": 5,
-  "defaultRunQuota": 10
+  "defaultRunQuota": 10,
+  "defaultLaunchBudget": 2
 }
 ```
+
+`defaultLaunchBudget` accepts 0–10. Zero disables model-initiated launch. Re-arming resets its usage; a legacy armed row with no stored value uses the configured default.
 
 Unknown fields, invalid types, unsafe bounds, or inconsistent minimum/default/maximum values disable state-changing behavior. Safe state reads remain available when their dependencies are healthy.
 

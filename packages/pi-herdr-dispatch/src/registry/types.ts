@@ -128,6 +128,19 @@ export type RunQuotaState =
       legacyDefaulted: boolean;
     };
 
+export type LaunchBudgetState =
+  | { armed: false }
+  | { armed: true; remaining: number };
+
+export interface ReadonlyLaunchAuditData {
+  defaultLaunchBudget: number;
+  role: string;
+  agentType: string;
+  paneId: string;
+  terminalId: string;
+  paneName: string;
+}
+
 export interface TargetOccupancyRecord {
   targetTerminalId: string;
   dispatchId: string;

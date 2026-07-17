@@ -542,7 +542,12 @@ export function registerDispatchCommands(
             );
           }
           ctx.ui.notify(
-            UI_COPY.command.autoStatus(state.armed, state.maxDepth, state.remainingQuota),
+            UI_COPY.command.autoStatus(
+              state.armed,
+              state.maxDepth,
+              state.remainingQuota,
+              state.remainingLaunchBudget,
+            ),
             "info",
           );
           return;
@@ -563,6 +568,7 @@ export function registerDispatchCommands(
             ? UI_COPY.command.autoEnabled(
                 state?.maxDepth ?? 0,
                 state?.remainingQuota ?? quota ?? 0,
+                state?.remainingLaunchBudget,
               )
             : UI_COPY.command.autoDisabled(),
           "info",

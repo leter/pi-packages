@@ -229,7 +229,7 @@ describe("Task Board Registry", () => {
       createdAt: 100,
     });
     registry.approveTasks(["hdt_a"], "w1", 200);
-    registry.armAutoRun("session_origin", 1, 300);
+    registry.armAutoRun("session_origin", 1, 2, 300);
 
     registry.confirmDeliveryIntent(intent({ taskId: "hdt_a", autoRunDepth: 9, defaultRunQuota: 10 }));
 
@@ -290,7 +290,7 @@ describe("Task Board Registry", () => {
       createdAt: 100,
     });
     registry.approveTasks(["hdt_a"], "w1", 200);
-    registry.armAutoRun("session_origin", 2, 300);
+    registry.armAutoRun("session_origin", 2, 2, 300);
     registry.confirmDeliveryIntent(intent({ taskId: "hdt_a", defaultRunQuota: 10 }));
     registry.settle({
       dispatchId: "hd_task_1",
@@ -351,7 +351,7 @@ describe("Task Board Registry", () => {
 
   it("moves result, manual, and emergency settlements to review and accepts them atomically", async () => {
     const registry = await openRegistry();
-    registry.armAutoRun("session_origin", 3, 50);
+    registry.armAutoRun("session_origin", 3, 2, 50);
     const kinds = ["result", "manual", "emergency"] as const;
     for (const [index, kind] of kinds.entries()) {
       const taskId = `hdt_${kind}`;
@@ -411,7 +411,7 @@ describe("Task Board Registry", () => {
 
   it("purges accepted tasks by retention cutoff but retains unaccepted tasks and their dispatches", async () => {
     const registry = await openRegistry();
-    registry.armAutoRun("session_origin", 2, 50);
+    registry.armAutoRun("session_origin", 2, 2, 50);
     for (const [index, suffix] of ["accepted", "review"].entries()) {
       const taskId = `hdt_${suffix}`;
       const dispatchId = `hd_${suffix}`;

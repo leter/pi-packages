@@ -3,9 +3,18 @@ import { Text } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
-import type { CreateProposalRequest, DispatchApplication } from "../dispatch/application.js";
+import {
+  ReadonlyAgentLaunchRefusalError,
+  type CreateProposalRequest,
+  type DispatchApplication,
+} from "../dispatch/application.js";
+import { AgentLaunchError, SUPPORTED_AGENT_TYPES } from "../dispatch/agent-launch.js";
 import { executorRoleForCycle, type TeamCatalog } from "../domain/team.js";
 import type { StoredTask } from "../registry/types.js";
+import {
+  AutoRunDisarmedError,
+  LaunchBudgetExhaustedError,
+} from "../registry/registry.js";
 import { DispatchController } from "./dispatch-controller.js";
 import { createDispatchProposalToolDefinition } from "./dispatch-proposal-tool.js";
 import {
@@ -26,6 +35,7 @@ import {
 } from "./renderers.js";
 import type { DispatchRuntime } from "./dispatch-runtime.js";
 import { UI_COPY } from "./ui-copy.js";
+import { launchableAgentTypes } from "./agent-launch-catalog.js";
 
 const emptyParameters = Type.Object({});
 const inspectParameters = Type.Object({
@@ -47,6 +57,20 @@ const taskDraftParameters = Type.Object({
     Type.String({ description: "Optional workflow key from the loaded team catalog" }),
   ),
 });
+const readonlyLaunchParameters = Type.Object({
+  role: Type.String({ description: "Non-mutating role key from the loaded team catalog" }),
+  agentType: StringEnum(SUPPORTED_AGENT_TYPES),
+});
+
+interface ReadonlyLaunchToolDetails {
+  status: "launched" | "refused";
+  reason?: string;
+  terminalId?: string;
+  paneId?: string;
+  paneName?: string;
+  remainingBudget?: number;
+  roleLabel?: string;
+}
 
 export function registerDispatchTools(
   pi: ExtensionAPI,
@@ -95,6 +119,136 @@ export function registerDispatchTools(
   pi.registerTool(createInspectionTool(runtime));
   pi.registerTool(createStatusTool(runtime));
   pi.registerTool(createTaskDraftTool(runtime));
+  pi.registerTool(createReadonlyLaunchTool(pi, runtime));
+}
+
+function createReadonlyLaunchTool(
+  pi: ExtensionAPI,
+  runtime: DispatchRuntime,
+): ToolDefinition<typeof readonlyLaunchParameters, ReadonlyLaunchToolDetails> {
+  return {
+    name: "herdr_agent_launch_readonly",
+    label: UI_COPY.tool.label("readonly-launch"),
+    description:
+      "Launch one Agent for a read-only role only when no role-named Eligible Agent exists. Reuse comes first, creation is bounded by the user-set Launch Budget, and created panes are retained for reuse.",
+    promptSnippet: "Launch missing read-only role capacity only as the last resort while Auto Run is armed",
+    parameters: readonlyLaunchParameters,
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      if (ctx.mode !== "tui") throw new Error(UI_COPY.command.readonlyLaunchTuiOnly());
+      return runtime.runReadonlyLaunchExclusive(async () => {
+
+        const armed = runtime.launchBudgetState();
+        if (!armed.armed) {
+          return readonlyLaunchRefusal(
+            "Auto Run is disarmed; daytime capacity is the user's /hd-create decision.",
+          );
+        }
+
+        const app = application(runtime);
+        try {
+          await app.assertReadonlyAgentLaunchAllowed(params);
+        } catch (error) {
+          if (error instanceof ReadonlyAgentLaunchRefusalError) {
+            return readonlyLaunchRefusal(error.message);
+          }
+          throw error;
+        }
+
+        const integrationStatus = await pi.exec("herdr", ["integration", "status"], { cwd: ctx.cwd });
+        if (integrationStatus.code !== 0) {
+          return readonlyLaunchRefusal(
+            `Herdr integration status is unavailable: ${integrationStatus.stderr || `exit ${integrationStatus.code}`}`,
+          );
+        }
+        const launchable = await launchableAgentTypes(integrationStatus.stdout);
+        if (!launchable.includes(params.agentType)) {
+          return readonlyLaunchRefusal(
+            `Agent type ${params.agentType} is not launchable with the current integration and executable catalog. Ask the user to use /hd-setup or choose another installed type.`,
+          );
+        }
+
+        const budget = runtime.launchBudgetState();
+        if (!budget.armed) {
+          return readonlyLaunchRefusal(
+            "Auto Run was disarmed before launch; daytime capacity is the user's /hd-create decision.",
+          );
+        }
+        if (budget.remaining <= 0) {
+          await runtime.notifyLaunchBudgetExhaustedOnce();
+          return readonlyLaunchRefusal(
+            "Launch Budget is exhausted; the task must remain queued until the user rearms capacity.",
+          );
+        }
+
+        let launched;
+        try {
+          launched = await app.launchReadonlyAgent({ ...params, signal });
+        } catch (error) {
+          if (error instanceof ReadonlyAgentLaunchRefusalError) {
+            return readonlyLaunchRefusal(error.message);
+          }
+          if (error instanceof AgentLaunchError && error.createdPane) {
+            throw new Error(
+              `${error.message}. Created pane ${error.createdPane.paneId} (terminal ${error.createdPane.terminalId}) is retained for user inspection and reuse.`,
+              { cause: error },
+            );
+          }
+          throw error;
+        }
+        let remainingBudget: number;
+        try {
+          remainingBudget = runtime.consumeLaunchBudget(launched);
+        } catch (error) {
+          if (error instanceof LaunchBudgetExhaustedError) {
+            await runtime.notifyLaunchBudgetExhaustedOnce();
+            return readonlyLaunchRefusal(
+              `The Agent pane ${launched.paneName} was retained, but Launch Budget was exhausted before consumption could be recorded. Do not route work until the user reviews capacity.`,
+            );
+          }
+          if (error instanceof AutoRunDisarmedError) {
+            return readonlyLaunchRefusal(
+              `The Agent pane ${launched.paneName} was retained, but Auto Run was disarmed before consumption could be recorded. Daytime capacity is the user's /hd-create decision.`,
+            );
+          }
+          throw error;
+        }
+        await runtime.notifyReadonlyAgentLaunched(launched);
+        return {
+          content: [{
+            type: "text",
+            text: `Read-only role Agent launched: role ${launched.role}; Agent type ${launched.agentLabel}; pane ${launched.paneName}; terminal ${launched.terminalId}; status provenance ${launched.statusProvenance}. Launch Budget remaining: ${remainingBudget}. Route the stage to this exact terminal now.`,
+          }],
+          details: {
+            status: "launched",
+            terminalId: launched.terminalId,
+            paneId: launched.paneId,
+            paneName: launched.paneName,
+            remainingBudget,
+            roleLabel: launched.roleLabel,
+          },
+        };
+      });
+    },
+    renderResult(result, _options, theme) {
+      if (result.details?.status === "launched") {
+        return new Text(theme.fg(
+          "success",
+          UI_COPY.tool.readonlyAgentLaunched(
+            result.details.roleLabel ?? UI_COPY.state.role("unknown"),
+            result.details.paneName ?? "pane",
+          ),
+        ), 0, 0);
+      }
+      return new Text(theme.fg("warning", UI_COPY.tool.readonlyAgentLaunchRefused()), 0, 0);
+    },
+  };
+}
+
+function readonlyLaunchRefusal(reason: string) {
+  return {
+    content: [{ type: "text" as const, text: `Read-only Agent launch refused: ${reason}` }],
+    details: { status: "refused" as const, reason },
+  };
 }
 
 function createTaskDraftTool(

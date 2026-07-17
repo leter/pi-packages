@@ -1,13 +1,15 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   DispatchApplication,
+  ReadonlyAgentLaunchRefusalError,
   StaleProposalError,
   type HerdrDispatchPort,
 } from "../../src/dispatch/application.js";
+import type { AgentLaunchService } from "../../src/dispatch/agent-launch.js";
 import { DEFAULT_DISPATCH_CONFIG } from "../../src/domain/config.js";
 import type { HerdrDeliveryResult } from "../../src/herdr/delivery.js";
 import type {
@@ -115,7 +117,10 @@ class FakeHerdr implements HerdrDispatchPort {
 
 async function harness(
   configOverrides: Partial<typeof DEFAULT_DISPATCH_CONFIG> = {},
-  applicationOverrides: { currentAutoRunDepth?: () => number } = {},
+  applicationOverrides: {
+    currentAutoRunDepth?: () => number;
+    agentLauncher?: AgentLaunchService;
+  } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "pi-herdr-application-"));
   roots.push(root);
@@ -130,6 +135,7 @@ async function harness(
     herdr,
     workspaceId: "w-current",
     originTerminalId: "term-origin",
+    originCwd: "/repo/origin",
     now: () => now,
     nextCorrelationId: () => `hd_test_${++sequence}`,
     resolveWorktree: async () => "/canonical/worktree",
@@ -152,6 +158,89 @@ const origin = {
 };
 
 describe("DispatchApplication", () => {
+  it("launches catalog non-mutating roles on fixed ground with an adaptive role pane name", async () => {
+    const launch = vi.fn(async () => ({
+      terminalId: "term-launched",
+      paneId: "p-launched",
+      workspaceId: "w-current",
+      agentLabel: "claude",
+      displayName: "reviewer-auto-1",
+      cwd: "/repo/origin",
+      status: "idle" as const,
+      statusProvenance: "reported" as const,
+    }));
+    const { application } = await harness({}, {
+      agentLauncher: { launch } as unknown as AgentLaunchService,
+    });
+
+    await expect(application.launchReadonlyAgent({
+      role: "reviewer",
+      agentType: "claude",
+    })).resolves.toEqual({
+      terminalId: "term-launched",
+      paneId: "p-launched",
+      agentLabel: "claude",
+      statusProvenance: "reported",
+      paneName: "reviewer-auto-1",
+      role: "reviewer",
+      roleLabel: "评审",
+    });
+    expect(launch).toHaveBeenCalledWith({
+      agentType: "claude",
+      layout: "adaptive",
+      cwd: "/repo/origin",
+      label: "reviewer-auto-1",
+    });
+  });
+
+  it.each([
+    ["coder", "write-role"],
+    ["missing", "unknown-role"],
+  ] as const)("refuses role %s before launch with reason %s", async (role, code) => {
+    const launch = vi.fn();
+    const { application } = await harness({}, {
+      agentLauncher: { launch } as unknown as AgentLaunchService,
+    });
+
+    await expect(application.launchReadonlyAgent({ role, agentType: "claude" })).rejects.toEqual(
+      expect.objectContaining({ name: "ReadonlyAgentLaunchRefusalError", code }),
+    );
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("refuses every role when the loaded team config is invalid", async () => {
+    const launch = vi.fn();
+    const { application, registry } = await harness({}, {
+      agentLauncher: { launch } as unknown as AgentLaunchService,
+    });
+    registry.setTeamConfigState({ status: "invalid", reason: "roles is malformed" });
+
+    await expect(application.launchReadonlyAgent({
+      role: "reviewer",
+      agentType: "claude",
+    })).rejects.toEqual(expect.objectContaining({
+      name: "ReadonlyAgentLaunchRefusalError",
+      code: "invalid-team",
+    } satisfies Partial<ReadonlyAgentLaunchRefusalError>));
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("enforces reuse-first when an Eligible Agent pane name contains the role key", async () => {
+    const launch = vi.fn();
+    const { application, herdr } = await harness({}, {
+      agentLauncher: { launch } as unknown as AgentLaunchService,
+    });
+    herdr.snapshotPaneLabel = "night-reviewer-1";
+
+    await expect(application.launchReadonlyAgent({
+      role: "reviewer",
+      agentType: "claude",
+    })).rejects.toEqual(expect.objectContaining({
+      code: "eligible-role-agent",
+      paneName: "night-reviewer-1",
+    }));
+    expect(launch).not.toHaveBeenCalled();
+  });
   it("creates proposals only for current-workspace idle-like unoccupied non-self Agents", async () => {
     const { application } = await harness();
 
@@ -217,7 +306,7 @@ describe("DispatchApplication", () => {
       createdAt: 100,
     });
     application.approveTasks([task.id], 200);
-    registry.armAutoRun(origin.sessionId, 2, 300);
+    registry.armAutoRun(origin.sessionId, 2, 2, 300);
 
     const proposal = await application.createProposal({
       target: "term-target",

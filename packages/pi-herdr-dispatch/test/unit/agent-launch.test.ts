@@ -5,6 +5,7 @@ import {
   AgentLaunchCancelledError,
   AgentLaunchService,
   AgentLaunchTimeoutError,
+  nextReadonlyAgentLabel,
   hasReportedProvenance,
   type HerdrAgentLaunchPort,
 } from "../../src/dispatch/agent-launch.js";
@@ -281,6 +282,26 @@ describe("AgentLaunchService", () => {
       name: "AgentLaunchCancelledError",
       createdPane: expect.objectContaining({ paneId: "p-created" }),
     } satisfies Partial<AgentLaunchCancelledError>);
+  });
+});
+
+describe("read-only Agent pane naming", () => {
+  it("uses the first sequence number when no matching pane exists", () => {
+    expect(nextReadonlyAgentLabel("reviewer", [])).toBe("reviewer-auto-1");
+  });
+
+  it("uses one plus the number of current-workspace labels with the role prefix", () => {
+    expect(nextReadonlyAgentLabel("reviewer", [
+      "reviewer-auto-1",
+      "reviewer-auto-custom",
+      "researcher-auto-1",
+    ])).toBe("reviewer-auto-3");
+  });
+
+  it("moves past a user-created pane that collides with the generated name", () => {
+    expect(nextReadonlyAgentLabel("reviewer", ["reviewer-auto-1"])).toBe(
+      "reviewer-auto-2",
+    );
   });
 });
 

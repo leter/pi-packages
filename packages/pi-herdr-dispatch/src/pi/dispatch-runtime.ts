@@ -2,6 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { AgentLaunchService } from "../dispatch/agent-launch.js";
 import { DispatchApplication } from "../dispatch/application.js";
+import type { ReadonlyAgentLaunchResult } from "../dispatch/application.js";
 import { DispatchFollowupService } from "../dispatch/followup.js";
 import {
   DEFAULT_DISPATCH_CONFIG,
@@ -60,6 +61,8 @@ export class DispatchRuntime {
   #mutationUnavailableReason = UI_COPY.runtime.dispatchSessionNotStarted();
   readonly #stateListeners = new Set<() => void>();
   #runQuotaExhaustedNotified = false;
+  #launchBudgetExhaustedNotified = false;
+  #readonlyLaunchQueue: Promise<void> = Promise.resolve();
 
   constructor(options: DispatchRuntimeOptions = {}) {
     this.registryRuntime = options.registry ?? new RegistryRuntime();
@@ -170,12 +173,22 @@ export class DispatchRuntime {
             void this.deliverPendingContext(ctx, dispatchId).catch(() => undefined);
           },
         });
+        if (ctx.mode === "tui") {
+          this.#agentLauncher = new AgentLaunchService({
+            herdr: this.#adapter,
+            workspaceId,
+            originPaneId: originPane.paneId,
+            startupTimeoutMs: config.agentStartupTimeoutMs,
+          });
+        }
         this.#application = new DispatchApplication({
           config,
           registry,
           herdr: this.#adapter,
           workspaceId,
           originTerminalId: originPane.terminalId,
+          originCwd: originPane.cwd,
+          ...(this.#agentLauncher === undefined ? {} : { agentLauncher: this.#agentLauncher }),
           currentAutoRunDepth: () => this.#autoRun.currentDepth(),
           ...(this.#monitor === undefined
             ? {}
@@ -192,12 +205,6 @@ export class DispatchRuntime {
           },
         });
         if (ctx.mode === "tui") {
-          this.#agentLauncher = new AgentLaunchService({
-            herdr: this.#adapter,
-            workspaceId,
-            originPaneId: originPane.paneId,
-            startupTimeoutMs: config.agentStartupTimeoutMs,
-          });
           this.#taskWorktrees = new TaskWorktreeService({
             unsettledWorktreePaths: () =>
               registry
@@ -265,6 +272,10 @@ export class DispatchRuntime {
       sessionId,
       this.#config.defaultRunQuota,
     );
+    const launchBudget = registry.getLaunchBudgetState(
+      sessionId,
+      this.#config.defaultLaunchBudget,
+    );
     this.#autoRun.deliverPending({
       armed: armedAt !== undefined,
       ...(armedAt === undefined ? {} : { armedAt }),
@@ -277,6 +288,7 @@ export class DispatchRuntime {
         (task) => task.state === "queued",
       ).length,
       remainingRunQuota: runQuota.armed ? runQuota.remaining : 0,
+      remainingLaunchBudget: launchBudget.armed ? launchBudget.remaining : 0,
     });
   }
 
@@ -291,18 +303,58 @@ export class DispatchRuntime {
     await this.deliverPendingContext(ctx);
   }
 
-  autoRunState(): { armed: boolean; maxDepth: number; remainingQuota?: number } | undefined {
+  autoRunState(): {
+    armed: boolean;
+    maxDepth: number;
+    remainingQuota?: number;
+    remainingLaunchBudget?: number;
+  } | undefined {
     const registry = this.registryRuntime.registry;
     if (!registry || !this.#originSessionId) return undefined;
     const quota = registry.getRunQuotaState(
       this.#originSessionId,
       this.#config.defaultRunQuota,
     );
+    const launchBudget = registry.getLaunchBudgetState(
+      this.#originSessionId,
+      this.#config.defaultLaunchBudget,
+    );
     return {
       armed: quota.armed,
       maxDepth: this.#config.maxAutoRunDepth,
       ...(quota.armed ? { remainingQuota: quota.remaining } : {}),
+      ...(launchBudget.armed ? { remainingLaunchBudget: launchBudget.remaining } : {}),
     };
+  }
+
+  launchBudgetState() {
+    const registry = this.registryRuntime.registry;
+    if (!registry || !this.#originSessionId) return { armed: false } as const;
+    return registry.getLaunchBudgetState(
+      this.#originSessionId,
+      this.#config.defaultLaunchBudget,
+    );
+  }
+
+  runReadonlyLaunchExclusive<T>(action: () => Promise<T>): Promise<T> {
+    const run = this.#readonlyLaunchQueue.then(action);
+    this.#readonlyLaunchQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  consumeLaunchBudget(launch: ReadonlyAgentLaunchResult): number {
+    const registry = this.registryRuntime.registry;
+    if (!registry || !this.#originSessionId) {
+      throw new Error(UI_COPY.command.runtimeUnavailable());
+    }
+    return registry.consumeLaunchBudget(this.#originSessionId, Date.now(), {
+      defaultLaunchBudget: this.#config.defaultLaunchBudget,
+      role: launch.role,
+      agentType: launch.agentLabel,
+      paneId: launch.paneId,
+      terminalId: launch.terminalId,
+      paneName: launch.paneName,
+    });
   }
 
   setAutoRunArmed(armed: boolean, quota = this.#config.defaultRunQuota): void {
@@ -312,8 +364,14 @@ export class DispatchRuntime {
       throw new Error(UI_COPY.command.runtimeUnavailable());
     }
     if (armed) {
-      registry.armAutoRun(this.#originSessionId, quota, Date.now());
+      registry.armAutoRun(
+        this.#originSessionId,
+        quota,
+        this.#config.defaultLaunchBudget,
+        Date.now(),
+      );
       this.#runQuotaExhaustedNotified = false;
+      this.#launchBudgetExhaustedNotified = false;
     }
     else registry.disarmAutoRun(this.#originSessionId, Date.now());
     this.#updateWidget();
@@ -342,6 +400,39 @@ export class DispatchRuntime {
     }
   }
 
+  async notifyLaunchBudgetExhaustedOnce(): Promise<void> {
+    const state = this.launchBudgetState();
+    if (!state.armed || state.remaining > 0 || this.#launchBudgetExhaustedNotified) return;
+    this.#launchBudgetExhaustedNotified = true;
+    if (!this.#adapter) return;
+    try {
+      await this.#adapter.showNotification({
+        title: UI_COPY.notification.launchBudgetExhaustedTitle(),
+        body: UI_COPY.notification.launchBudgetExhaustedBody(),
+        sound: "request",
+      });
+    } catch {
+      // The armed session and durable Launch Budget remain authoritative.
+    }
+  }
+
+  async notifyReadonlyAgentLaunched(launch: ReadonlyAgentLaunchResult): Promise<void> {
+    if (!this.#adapter) return;
+    try {
+      await this.#adapter.showNotification({
+        title: UI_COPY.notification.readonlyAgentLaunchedTitle(),
+        body: UI_COPY.notification.readonlyAgentLaunchedBody(
+          launch.roleLabel,
+          launch.agentLabel,
+          launch.paneName,
+        ),
+        sound: "none",
+      });
+    } catch {
+      // The retained pane and readonly_launch audit event remain authoritative.
+    }
+  }
+
   stop(): void {
     if (this.#ui) clearDispatchWidget(this.#ui);
     this.#ui = undefined;
@@ -349,6 +440,7 @@ export class DispatchRuntime {
     this.#workspaceId = undefined;
     this.#autoRun.reset();
     this.#runQuotaExhaustedNotified = false;
+    this.#launchBudgetExhaustedNotified = false;
     if (this.#pendingDeliveryTimer) clearInterval(this.#pendingDeliveryTimer);
     this.#pendingDeliveryTimer = undefined;
     this.#monitor?.stop();

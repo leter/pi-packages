@@ -37,6 +37,8 @@ import type {
   StoredDispatch,
   StoredTask,
   RunQuotaState,
+  LaunchBudgetState,
+  ReadonlyLaunchAuditData,
   ReviewVerdict,
   TargetOccupancyRecord,
   WriteLeaseRecord,
@@ -98,6 +100,20 @@ export class RegistryStateError extends Error {
   }
 }
 
+export class AutoRunDisarmedError extends RegistryStateError {
+  constructor() {
+    super("Auto Run is disarmed");
+    this.name = "AutoRunDisarmedError";
+  }
+}
+
+export class LaunchBudgetExhaustedError extends RegistryStateError {
+  constructor() {
+    super("Launch Budget exhausted");
+    this.name = "LaunchBudgetExhaustedError";
+  }
+}
+
 export class DispatchRegistry {
   readonly path: string;
   readonly #database: DatabaseSync;
@@ -116,6 +132,10 @@ export class DispatchRegistry {
 
   teamCatalog(): TeamCatalog | undefined {
     return this.#teamState.status === "ready" ? this.#teamState.team : undefined;
+  }
+
+  teamConfigState(): TeamConfigState {
+    return this.#teamState;
   }
 
   prepareTaskDispatch(taskId: string): {
@@ -1036,23 +1056,38 @@ export class DispatchRegistry {
     });
   }
 
-  /** Arms Auto Run for one exact Origin Session; re-arming resets the Board Run Quota. */
-  armAutoRun(originSessionId: string, quota: number, armedAt: number): void {
+  /** Arms Auto Run for one exact Origin Session; re-arming resets both user-owned budgets. */
+  armAutoRun(
+    originSessionId: string,
+    quota: number,
+    launchBudget: number,
+    armedAt: number,
+  ): void {
     if (!originSessionId) throw new TypeError("originSessionId must not be empty");
     validateRunQuota(quota);
+    validateLaunchBudget(launchBudget);
     validateTimestamp(armedAt, "armedAt");
     this.#mutate("arm auto run", () => {
       this.#database
         .prepare(
-          `INSERT INTO auto_run_sessions(origin_session_id, armed_at, run_quota, run_quota_used)
-           VALUES (?, ?, ?, 0)
+          `INSERT INTO auto_run_sessions(
+             origin_session_id, armed_at, run_quota, run_quota_used,
+             launch_budget, launch_budget_used
+           ) VALUES (?, ?, ?, 0, ?, 0)
            ON CONFLICT(origin_session_id) DO UPDATE SET
              armed_at = excluded.armed_at,
              run_quota = excluded.run_quota,
-             run_quota_used = 0`,
+             run_quota_used = 0,
+             launch_budget = excluded.launch_budget,
+             launch_budget_used = 0`,
         )
-        .run(originSessionId, armedAt, quota);
-      this.#appendAudit(null, "auto-run-armed", { originSessionId, quota }, armedAt);
+        .run(originSessionId, armedAt, quota, launchBudget);
+      this.#appendAudit(
+        null,
+        "auto-run-armed",
+        { originSessionId, quota, launchBudget },
+        armedAt,
+      );
     });
   }
 
@@ -1111,6 +1146,86 @@ export class DispatchRegistry {
         remaining: Math.max(0, quota - row.run_quota_used),
         legacyDefaulted: row.run_quota === null,
       };
+    });
+  }
+
+  getLaunchBudgetState(
+    originSessionId: string,
+    defaultLaunchBudget = 2,
+  ): LaunchBudgetState {
+    if (!originSessionId) throw new TypeError("originSessionId must not be empty");
+    validateLaunchBudget(defaultLaunchBudget);
+    return this.#read("read launch budget state", () => {
+      const row = this.#database
+        .prepare(
+          `SELECT launch_budget, launch_budget_used
+           FROM auto_run_sessions WHERE origin_session_id = ?`,
+        )
+        .get(originSessionId) as
+        | { launch_budget: number | null; launch_budget_used: number }
+        | undefined;
+      if (!row) return { armed: false };
+      const budget = row.launch_budget ?? defaultLaunchBudget;
+      return {
+        armed: true,
+        remaining: Math.max(0, budget - row.launch_budget_used),
+      };
+    });
+  }
+
+  consumeLaunchBudget(
+    originSessionId: string,
+    consumedAt: number,
+    launch: ReadonlyLaunchAuditData,
+  ): number {
+    if (!originSessionId) throw new TypeError("originSessionId must not be empty");
+    validateTimestamp(consumedAt, "consumedAt");
+    validateLaunchBudget(launch.defaultLaunchBudget);
+    for (const [name, value] of Object.entries({
+      role: launch.role,
+      agentType: launch.agentType,
+      paneId: launch.paneId,
+      terminalId: launch.terminalId,
+      paneName: launch.paneName,
+    })) {
+      if (typeof value !== "string" || value.length === 0) {
+        throw new TypeError(`${name} must not be empty`);
+      }
+    }
+    return this.#mutate("consume launch budget", () => {
+      const row = this.#database
+        .prepare(
+          `SELECT launch_budget, launch_budget_used FROM auto_run_sessions
+           WHERE origin_session_id = ?`,
+        )
+        .get(originSessionId) as
+        | { launch_budget: number | null; launch_budget_used: number }
+        | undefined;
+      if (!row) throw new AutoRunDisarmedError();
+      const budget = row.launch_budget ?? launch.defaultLaunchBudget;
+      if (row.launch_budget_used >= budget) throw new LaunchBudgetExhaustedError();
+      this.#database
+        .prepare(
+          `UPDATE auto_run_sessions SET launch_budget_used = launch_budget_used + 1
+           WHERE origin_session_id = ?`,
+        )
+        .run(originSessionId);
+      const remaining = budget - row.launch_budget_used - 1;
+      this.#appendAudit(
+        null,
+        "readonly_launch",
+        {
+          originSessionId,
+          role: launch.role,
+          agentType: launch.agentType,
+          paneId: launch.paneId,
+          terminalId: launch.terminalId,
+          paneName: launch.paneName,
+          remaining,
+        },
+        consumedAt,
+      );
+      return remaining;
     });
   }
 
@@ -1843,6 +1958,12 @@ function validateTaskIds(taskIds: readonly string[]): void {
 function validateRunQuota(value: number): void {
   if (!Number.isSafeInteger(value) || value < 1 || value > 50) {
     throw new RangeError("run quota must be from 1 to 50");
+  }
+}
+
+function validateLaunchBudget(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 10) {
+    throw new RangeError("launch budget must be from 0 to 10");
   }
 }
 

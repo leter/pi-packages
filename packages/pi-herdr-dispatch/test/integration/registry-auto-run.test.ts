@@ -15,6 +15,8 @@ import {
   REGISTRY_SCHEMA_V3,
   REGISTRY_SCHEMA_V4,
   REGISTRY_SCHEMA_V5,
+  REGISTRY_SCHEMA_V6,
+  REGISTRY_SCHEMA_V7,
   REGISTRY_SCHEMA_VERSION,
 } from "../../src/registry/schema.js";
 import type { ConfirmDeliveryIntent } from "../../src/registry/types.js";
@@ -67,8 +69,8 @@ describe("Auto Run session state", () => {
     const registry = await openRegistry();
 
     expect(registry.isAutoRunArmed("session_origin")).toBe(false);
-    registry.armAutoRun("session_origin", 10, 1_000);
-    registry.armAutoRun("session_origin", 10, 1_100);
+    registry.armAutoRun("session_origin", 10, 2, 1_000);
+    registry.armAutoRun("session_origin", 10, 2, 1_100);
     expect(registry.isAutoRunArmed("session_origin")).toBe(true);
     expect(registry.isAutoRunArmed("session_other")).toBe(false);
 
@@ -87,9 +89,9 @@ describe("Auto Run session state", () => {
     const registry = await openRegistry();
 
     expect(registry.autoRunArmedAt("session_origin")).toBeUndefined();
-    registry.armAutoRun("session_origin", 10, 1_700);
+    registry.armAutoRun("session_origin", 10, 2, 1_700);
     // Re-arming resets both the timestamp and Run Quota.
-    registry.armAutoRun("session_origin", 10, 9_999);
+    registry.armAutoRun("session_origin", 10, 2, 9_999);
     expect(registry.autoRunArmedAt("session_origin")).toBe(9_999);
 
     registry.disarmAutoRun("session_origin", 2_000);
@@ -100,7 +102,7 @@ describe("Auto Run session state", () => {
     const path = await temporaryDatabasePath();
     const first = await openDispatchRegistry(path, { busyTimeoutMs: 100 });
     registries.push(first);
-    first.armAutoRun("session_origin", 10, 1_000);
+    first.armAutoRun("session_origin", 10, 2, 1_000);
     first.close();
 
     const resumed = await openDispatchRegistry(path, { busyTimeoutMs: 100 });
@@ -198,7 +200,7 @@ describe("schema v6 Run Quota migration", () => {
       legacyDefaulted: true,
     });
 
-    registry.armAutoRun("session_origin", 3, 2_000);
+    registry.armAutoRun("session_origin", 3, 2, 2_000);
     expect(registry.getRunQuotaState("session_origin", 12)).toEqual({
       armed: true,
       quota: 3,
@@ -206,5 +208,83 @@ describe("schema v6 Run Quota migration", () => {
       remaining: 3,
       legacyDefaulted: false,
     });
+  });
+});
+
+describe("schema v8 Launch Budget", () => {
+  const launched = {
+    defaultLaunchBudget: 2,
+    role: "reviewer",
+    agentType: "claude",
+    paneId: "w1:p-reviewer",
+    terminalId: "term-reviewer",
+    paneName: "reviewer-auto-1",
+  };
+
+  it("stores the budget on arm, consumes with audit, and resets usage on rearm", async () => {
+    const registry = await openRegistry();
+    registry.armAutoRun("session_origin", 10, 1, 1_000);
+
+    expect(registry.getLaunchBudgetState("session_origin", 2)).toEqual({
+      armed: true,
+      remaining: 1,
+    });
+    expect(registry.consumeLaunchBudget("session_origin", 1_100, launched)).toBe(0);
+    expect(registry.getLaunchBudgetState("session_origin", 2)).toEqual({
+      armed: true,
+      remaining: 0,
+    });
+    expect(registry.listAuditEvents()).toContainEqual(expect.objectContaining({
+      eventType: "readonly_launch",
+      data: expect.objectContaining({
+        role: "reviewer",
+        agentType: "claude",
+        paneId: "w1:p-reviewer",
+        terminalId: "term-reviewer",
+        paneName: "reviewer-auto-1",
+      }),
+    }));
+
+    registry.armAutoRun("session_origin", 10, 3, 1_200);
+    expect(registry.getLaunchBudgetState("session_origin", 2)).toEqual({
+      armed: true,
+      remaining: 3,
+    });
+  });
+
+  it("refuses consumption while disarmed or exhausted", async () => {
+    const registry = await openRegistry();
+    expect(() => registry.consumeLaunchBudget("session_origin", 1_000, launched)).toThrow(
+      /Auto Run is disarmed/u,
+    );
+
+    registry.armAutoRun("session_origin", 10, 0, 1_100);
+    expect(() => registry.consumeLaunchBudget("session_origin", 1_200, launched)).toThrow(
+      /Launch Budget exhausted/u,
+    );
+    expect(registry.listAuditEvents().filter((event) => event.eventType === "readonly_launch")).toEqual([]);
+  });
+
+  it("uses the configured default for a migrated NULL budget", async () => {
+    const path = await temporaryDatabasePath();
+    const legacy = new DatabaseSync(path, { timeout: 100 });
+    legacy.exec(
+      `${REGISTRY_SCHEMA_V1}\n${REGISTRY_SCHEMA_V2}\n${REGISTRY_SCHEMA_V3}\n${REGISTRY_SCHEMA_V4}\n${REGISTRY_SCHEMA_V5}\n${REGISTRY_SCHEMA_V6}\n${REGISTRY_SCHEMA_V7}\nPRAGMA user_version = 7;`,
+    );
+    legacy.prepare(
+      "INSERT INTO auto_run_sessions(origin_session_id, armed_at, run_quota) VALUES (?, ?, ?)",
+    ).run("session_origin", 1_000, 10);
+    legacy.close();
+
+    const registry = await openDispatchRegistry(path, { busyTimeoutMs: 100 });
+    registries.push(registry);
+    expect(registry.getLaunchBudgetState("session_origin", 4)).toEqual({
+      armed: true,
+      remaining: 4,
+    });
+    expect(registry.consumeLaunchBudget("session_origin", 1_100, {
+      ...launched,
+      defaultLaunchBudget: 4,
+    })).toBe(3);
   });
 });

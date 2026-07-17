@@ -68,6 +68,7 @@ export interface HumanUiCopy {
     createTuiOnly(): string;
     cleanTuiOnly(): string;
     proposalTuiOnly(): string;
+    readonlyLaunchTuiOnly(): string;
     managerTuiOnly(): string;
     setupTuiOnly(): string;
     followupTuiOnly(): string;
@@ -128,8 +129,13 @@ export interface HumanUiCopy {
     redispatchTargetGone(): string;
     autoUsage(): string;
     autoTuiOnly(): string;
-    autoStatus(armed: boolean, maxDepth: number, remainingQuota?: number): string;
-    autoEnabled(maxDepth: number, remainingQuota?: number): string;
+    autoStatus(
+      armed: boolean,
+      maxDepth: number,
+      remainingQuota?: number,
+      remainingLaunchBudget?: number,
+    ): string;
+    autoEnabled(maxDepth: number, remainingQuota?: number, remainingLaunchBudget?: number): string;
     autoDisabled(): string;
     taskTuiOnly(): string;
     taskAction(): string;
@@ -252,10 +258,16 @@ export interface HumanUiCopy {
     autoRunDepthExhaustedBody(task: string): string;
     runQuotaExhaustedTitle(): string;
     runQuotaExhaustedBody(): string;
+    launchBudgetExhaustedTitle(): string;
+    launchBudgetExhaustedBody(): string;
+    readonlyAgentLaunchedTitle(): string;
+    readonlyAgentLaunchedBody(roleLabel: string, agentType: string, paneName: string): string;
   };
   readonly tool: {
-    label(tool: "propose" | "agents" | "inspect" | "status" | "task-draft"): string;
+    label(tool: "propose" | "agents" | "inspect" | "status" | "task-draft" | "readonly-launch"): string;
     taskDraftCreated(title: string): string;
+    readonlyAgentLaunched(roleLabel: string, paneName: string): string;
+    readonlyAgentLaunchRefused(): string;
   };
   readonly runtime: {
     dispatchSessionNotStarted(): string;
@@ -447,6 +459,7 @@ export const UI_COPY = Object.freeze({
     createTuiOnly: () => "Agent 创建和派发仅在 TUI 模式下可用",
     cleanTuiOnly: () => "任务 worktree 清理仅在 TUI 模式下可用",
     proposalTuiOnly: () => "Herdr 派发投递仅在 TUI 模式下可用",
+    readonlyLaunchTuiOnly: () => "只读角色 Agent 创建仅在 TUI 模式下可用",
     managerTuiOnly: () => "派发管理器仅在 TUI 模式下可用",
     setupTuiOnly: () => "集成安装仅在 TUI 模式下可用",
     followupTuiOnly: () => "派发后续操作仅在 TUI 模式下可用",
@@ -540,12 +553,21 @@ export const UI_COPY = Object.freeze({
     redispatchTargetGone: () => "目标 Agent 已不在当前工作区——它的 pane 可能已被关闭。",
     autoUsage: () => "用法:/hd-auto [on [1-50]|off]",
     autoTuiOnly: () => "自动运行切换仅在 TUI 模式下可用",
-    autoStatus: (armed, maxDepth, remainingQuota: number | undefined = undefined) =>
+    autoStatus: (
+      armed,
+      maxDepth,
+      remainingQuota: number | undefined = undefined,
+      remainingLaunchBudget: number | undefined = undefined,
+    ) =>
       armed
-        ? `⚡自动运行:已开启 · 深度上限 ${maxDepth}${remainingQuota === undefined ? "" : ` · 本次额度剩余 ${remainingQuota}`}。结算结果会自动唤醒模型;达到限制后安静排队等待人工查看。`
+        ? `⚡自动运行:已开启 · 深度上限 ${maxDepth}${remainingQuota === undefined ? "" : ` · 本次额度剩余 ${remainingQuota}`}${remainingLaunchBudget === undefined ? "" : ` · 创建额度剩余 ${remainingLaunchBudget}`}。结算结果会自动唤醒模型;达到限制后安静排队等待人工查看。`
         : "自动运行:已关闭。结算结果会安静排队,等你下一次发言时进入上下文。",
-    autoEnabled: (maxDepth, remainingQuota: number | undefined = undefined) =>
-      `⚡自动运行已开启(本会话持久,resume 后仍然生效)· 深度上限 ${maxDepth}${remainingQuota === undefined ? "" : ` · 本次额度 ${remainingQuota}`}。用 /hd-auto off 关闭。`,
+    autoEnabled: (
+      maxDepth,
+      remainingQuota: number | undefined = undefined,
+      remainingLaunchBudget: number | undefined = undefined,
+    ) =>
+      `⚡自动运行已开启(本会话持久,resume 后仍然生效)· 深度上限 ${maxDepth}${remainingQuota === undefined ? "" : ` · 本次额度 ${remainingQuota}`}${remainingLaunchBudget === undefined ? "" : ` · 创建额度 ${remainingLaunchBudget}`}。用 /hd-auto off 关闭。`,
     autoDisabled: () =>
       "自动运行已关闭:之后的结算不再唤醒模型;已在途的唤醒最多还会触发一次。正在运行的回合请用 Esc 中断。",
     taskTuiOnly: () => "任务板操作仅在 TUI 模式下可用",
@@ -726,6 +748,11 @@ export const UI_COPY = Object.freeze({
     autoRunDepthExhaustedBody: (task) => `${task} · 结果已排队,等待人工查看`,
     runQuotaExhaustedTitle: () => "本次额度已用完",
     runQuotaExhaustedBody: () => "排队任务保持不变;用 /hd-auto on [额度] 重新开启。",
+    launchBudgetExhaustedTitle: () => "创建额度已用完",
+    launchBudgetExhaustedBody: () => "缺少只读角色容量的任务保持排队;重新开启自动运行可重置创建额度。",
+    readonlyAgentLaunchedTitle: () => "已创建只读角色窗格",
+    readonlyAgentLaunchedBody: (roleLabel, agentType, paneName) =>
+      `${roleLabel} · ${agentType} · ${paneName}。窗格会保留,供后续复用。`,
   },
   tool: {
     label: (tool) => ({
@@ -734,8 +761,11 @@ export const UI_COPY = Object.freeze({
       inspect: "查看 Herdr Agent 输出",
       status: "Herdr 派发状态",
       "task-draft": "创建任务草稿",
+      "readonly-launch": "创建只读角色 Agent",
     })[tool],
     taskDraftCreated: (title) => `✓ 任务草稿“${title}”已创建,等待批准`,
+    readonlyAgentLaunched: (roleLabel, paneName) => `✓ 已创建只读角色窗格 ${roleLabel} · ${paneName}`,
+    readonlyAgentLaunchRefused: () => "▲ 未创建只读角色窗格",
   },
   runtime: {
     dispatchSessionNotStarted: () => "派发运行时会话尚未启动",

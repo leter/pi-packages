@@ -244,7 +244,7 @@ describe("Origin active-branch context delivery", () => {
     const context = new FakeOriginContext();
 
     expect(
-      delivery.deliver("hd_context", context, { preamble: buildAutoRunPreamble(4) }),
+      delivery.deliver("hd_context", context, { preamble: buildAutoRunPreamble(4, 2, 3, 1) }),
     ).toEqual({ status: "delivered", startedWake: true });
 
     expect(context.lastOptions).toEqual({ deliverAs: "followUp", triggerTurn: true });
@@ -255,6 +255,9 @@ describe("Origin active-branch context delivery", () => {
       const content = String(resultEntry.content);
       expect(content.startsWith("[HERDR AUTO RUN]")).toBe(true);
       expect(content).toContain("Remaining Auto Run budget on this chain: 4.");
+      expect(content).toContain(
+        "Task board: 2 queued task(s); run quota remaining: 3; launch budget remaining: 1.",
+      );
       expect(content).toContain("BEGIN_HERDR_DISPATCH_RESULT_UNTRUSTED");
     } else {
       expect.unreachable("wake delivery must append the result entry");
