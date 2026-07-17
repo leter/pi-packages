@@ -438,3 +438,41 @@ this record):
 2. **Copy note:** settled dispatch rows in the Manager preview now start with
    `Role: You are acting …` because the role brief is prepended to the immutable
    task text; consider previewing from the approved task text instead.
+
+## L18 — Model-initiated read-only launch verified live (2026-07-17)
+
+Setup: Pi Origin in the repo root; existing role panes `reviewer` (claude) and
+`codex: ADR 0018 impl`; `defaultLaunchBudget: 1` via a temporary `config.json`
+(removed after). Herdr 0.7.4.
+
+**Disarmed refusal — PASS.** With Auto Run off, `herdr_agent_launch_readonly`
+(reviewer/claude) refused: `Auto Run is disarmed; daytime capacity is the user's
+/hd-create decision.`
+
+**Write-role refusal — PASS.** Armed, `role: coder` refused: `Role coder is
+write-role capacity and cannot be model-launched`.
+
+**Reuse-first — PASS.** `role: reviewer` refused naming the idle user pane:
+`Eligible Agent pane reviewer already matches role reviewer; dispatch to it
+instead`.
+
+**Budgeted launch — PASS.** `role: researcher, agentType: claude` created pane
+`researcher-auto-1` at the Origin cwd (adaptive split, no worktree), returned
+`statusProvenance: reported` (ADR 0019 agent-session evidence on a freshly
+launched claude) and `Launch Budget remaining: 0`.
+
+**Exhaustion — PASS.** The next launch (advisor) refused: `Launch Budget is
+exhausted; the task must remain queued until the user rearms capacity.`
+
+**Report and reset — PASS.** `/hd-auto` showed `本次额度剩余 10 · 创建额度剩余 0`;
+`/hd-auto off` + `on` reset the budget.
+
+**Retention and next-night reuse — PASS.** `researcher-auto-1` was retained
+across disarm/rearm, and a rearmed `role: researcher` launch was refused
+reuse-first naming `researcher-auto-1` — the retained pane became the reuse
+pool exactly as designed.
+
+### Findings
+
+1. The claude reviewer/researcher panes ran in auto mode (user set it after L17
+   finding 1), so no permission prompts blocked any stage this round.
