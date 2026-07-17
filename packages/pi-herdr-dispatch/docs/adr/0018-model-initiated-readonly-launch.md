@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-07-17); direction confirmed by the user in the ADR 0017 design conversation. Depends on ADR 0017 (roles) and on resolving the Herdr 0.7.4 provenance regression that currently blocks `claude`/`codex`/`opencode` launches. Amends the ADR 0013 boundary "Agent Launch is user-only, never model-callable".
+Accepted (2026-07-17); direction confirmed by the user in the ADR 0017 design conversation. Depends on ADR 0017 (roles, verified live L17) and ADR 0019 (Herdr 0.7.4 provenance, which unblocked `claude` launches; `codex`/`opencode` remain blocked by a Herdr-side integration gap). Amends the ADR 0013 boundary "Agent Launch is user-only, never model-callable". Implementation contract: [READONLY-LAUNCH-SPEC.md](../READONLY-LAUNCH-SPEC.md).
 
 ## Context
 
