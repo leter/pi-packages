@@ -227,3 +227,14 @@ A follow-up live test of concurrent settlements exposed a real runtime bug not c
 **Hypothesis:** the runtime fires `deliverPendingContext` from several async, fire-and-forget paths (per-settlement `onSettled`, the armed poll, and `agent_settled`→`noteRunSettled`). These interleave and race on the coordinator's single-in-flight state (`turnActive`/`wakeDepth`), leaving a held result never released. The `AutoRunCoordinator` unit tests call it sequentially and so do not hit this race. A fix must serialize the delivery entry point (or make the coordinator state safe under concurrent calls) and be re-verified live.
 
 **Status correction:** the single-settlement L14 cases pass (core wake, two-hop depth chain, resume, off, settle-then-arm). The concurrent-burst serialization does **not** yet pass. Auto Run should not be treated as fully accepted until the burst gap is fixed and re-verified.
+
+## Auto Run — burst serialization FIXED and re-verified live (2026-07-17)
+
+The concurrent-burst gap above was fixed and re-tested live. Root cause: the coordinator tracked "a turn is running" with a manually-set `turnActive` flag, which could stick under the runtime's concurrent, fire-and-forget `deliverPendingContext` calls (per-settlement `onSettled`, the armed poll, `agent_settled`), leaving a held burst result stranded. The fix replaces that flag with two signals that cannot get stuck — the live `ctx.isIdle()` state and a short auto-expiring start-gap grace window — and serializes `deliverPendingContext` through an async queue.
+
+Re-test: an armed Origin (`019f6e23…`) dispatched two independent tasks in one turn to two `codex` targets; both settled ~4.4s apart (`hd_mrodw104` A, `hd_mrodw4vf` B, both depth 0). Result:
+
+- **Both** results now get their own auto-run turn. The session `.jsonl` contains **two** `[HERDR AUTO RUN]` custom messages (entries 9 and 13), each followed by an assistant turn.
+- The two wakes are **serialized**: B's claim (`1784259281022`) is ~13.5s after A's delivery (`1784259267525`) — never two concurrent turns. Both `delivered_at` are set (neither stranded), no `auto_run_depth > 0` chain formed, and the Origin returned to idle.
+
+**Status: Auto Run passes L14.** The single-settlement cases (core wake, depth-limit termination, resume, off, settle-then-arm) and the concurrent-burst serialization all pass live against a real Pi + codex, with the ghost-wake loop refuted throughout.
