@@ -213,4 +213,17 @@ The three cases left open after the core-wake verification were run the same day
 
 **Off mid-flight — PASS.** A depth-0 task was dispatched from the armed Origin, then `/hd-auto off` was issued ~3s later, before the target settled. The dispatch (`hd_mrockn4g…`) settled *after* disarm (`settled_at` > disarm time); it did **not** wake — its claim `delivered_at` stayed null (quiet queue), no chain formed, the widget dropped `⚡自动`, and the Origin stayed idle. Disarm reliably stops new ignition. (The narrower "a result held while a turn is running is dropped after off" timing is covered by the `AutoRunCoordinator` unit tests.)
 
-**Overall:** Auto Run passes L14. The feared ghost-wake loop does not occur, the wake fires exactly once per eligible settlement, depth attribution and the depth limit provably terminate a chain, settle-then-arm and off both suppress ignition correctly, and arm/disarm/resume visibility all work against a real Pi + codex.
+**Overall (single-settlement cases):** the sequential L14 cases pass. The feared ghost-wake loop does not occur, the wake fires exactly once per eligible settlement, depth attribution and the depth limit provably terminate a chain, settle-then-arm and off both suppress ignition correctly, and arm/disarm/resume visibility all work against a real Pi + codex.
+
+## Auto Run — burst serialization gap (found live 2026-07-17)
+
+A follow-up live test of concurrent settlements exposed a real runtime bug not covered by the sequential unit tests. An armed Origin (`019f6e10…`) dispatched two independent tasks in one turn to two `codex` targets; both settled ~3.7s apart (`hd_mrod6gt6` "A" then `hd_mrod6jwu` "B", both depth 0).
+
+- **A** settled first and woke the Origin: session `.jsonl` shows one `[HERDR AUTO RUN]` message for A, the model checked `herdr_dispatch_status`, saw "No unsettled dispatches", and noted it had only A's result. A's claim `delivered_at` completed.
+- **B** settled while A's wake turn was running and was correctly held (no concurrent second turn — the "at most one in flight" invariant held). **But after A's wake turn ended, B was never re-woken.** B stayed `pending`/undelivered for 40s+; even the 5s armed poll did not release it. A trivial user turn ("hi") then flushed B via the quiet `nextTurn` path (`delivered_at` set), proving B was stranded, not lost.
+
+**Impact:** a burst of ≥2 near-simultaneous settlements delivers only the first as an auto-wake turn; the remaining results strand until the next user turn delivers them quietly. B is not lost and there is no runaway, so this is a functional gap, not a safety failure.
+
+**Hypothesis:** the runtime fires `deliverPendingContext` from several async, fire-and-forget paths (per-settlement `onSettled`, the armed poll, and `agent_settled`→`noteRunSettled`). These interleave and race on the coordinator's single-in-flight state (`turnActive`/`wakeDepth`), leaving a held result never released. The `AutoRunCoordinator` unit tests call it sequentially and so do not hit this race. A fix must serialize the delivery entry point (or make the coordinator state safe under concurrent calls) and be re-verified live.
+
+**Status correction:** the single-settlement L14 cases pass (core wake, two-hop depth chain, resume, off, settle-then-arm). The concurrent-burst serialization does **not** yet pass. Auto Run should not be treated as fully accepted until the burst gap is fixed and re-verified.

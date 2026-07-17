@@ -436,7 +436,7 @@ Added to DESIGN.md's checklists in this phase's documentation commit:
 
 ### Acceptance criteria
 
-- U18 and U19 pass and existing suites stay green (including L9's assertion recast as "no result starts a model turn **unless Auto Run is armed and within budget**"); **L14 passed live on 2026-07-17** (ghost-wake refuted, depth-limit termination, off, and resume all verified);
+- U18 and U19 pass and existing suites stay green (including L9's assertion recast as "no result starts a model turn **unless Auto Run is armed and within budget**"); the sequential L14 cases passed live on 2026-07-17 (ghost-wake refuted, depth-limit termination, off, resume), but a **concurrent-burst bug is open** — held results are not re-woken after the first wake turn (they strand until a user turn); this gates full acceptance;
 - with the switch off (the default), runtime behavior is byte-identical to Phase 7 — the feature is invisible until armed;
 - every degradation edge (depth exhausted, switch off, downgraded proposal, non-TUI, Origin closed) lands in the existing verified queued path with no result lost;
 - the model cannot arm Auto Run through any tool, command, or crafted result content;
