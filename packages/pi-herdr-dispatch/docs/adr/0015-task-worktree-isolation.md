@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (2026-07-17); implemented the same day. The implementation hardens decision 3 with a per-path cross-process creation lock, a pre-creation availability recheck, and a rollback that may force-remove only the resources owned by that failed creation (documented in DESIGN.md). The live acceptance item named in Consequences has not been run yet.
+Accepted (2026-07-17); implemented and **verified live the same day (L15)** — launch-into-worktree, collision suffixing, fail-closed retention disclosure, parallel lease isolation across two write dispatches, repeat dispatch into the same Task Worktree, and `/hd-clean`'s refusal reasons plus non-force removal all passed against a real Pi + Herdr ([evidence](../ACCEPTANCE-RESULTS.md)). The implementation hardens decision 3 with a per-path cross-process creation lock, a pre-creation availability recheck, and a rollback that may force-remove only the resources owned by that failed creation (documented in DESIGN.md). Open residuals from acceptance: a Herdr 0.7.4 provenance regression blocks `/hd-create` for `claude`/`codex`/`opencode` (environment issue, not this design), and the decision 5 hint renders too transiently to read.
 
 ## Context
 

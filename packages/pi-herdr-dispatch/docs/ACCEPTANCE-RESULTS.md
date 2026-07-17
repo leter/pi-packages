@@ -248,3 +248,72 @@ Fix: `deliver` now reports `startedWake` (whether it actually sent a wake messag
 Re-verified live: a two-dispatch burst (`hd_mrofq4xq` A, `hd_mrofq86m` B) now produces two `[HERDR AUTO RUN]` turns serialized with B's claim only **~4.4s** after A's delivery (down from ~13.5s), both delivered, no re-fire, Origin idle. A post-burst user-turn dispatch (`hd_mrofsbd5`) recorded `auto_run_depth 0`, confirming no stale depth.
 
 **Residual (documented, not a live failure):** the start-gap grace is a 5s timeout, not a proof that the prior wake started; if a wake's turn ever took longer than the grace to begin streaming, a second wake could fire. Real Pi turns start sub-second, so this was never observed, but a start-confirmation handshake (rather than a timeout) would be the fully rigorous form.
+
+## L15 — Task Worktree isolation verified live (2026-07-17)
+
+ADR 0015 acceptance against a real Pi 0.80.9 Origin + Herdr 0.7.4, driven in a dedicated
+workspace with `codex`, `claude`, and `amp` targets. `bash scripts/verify.sh live` (the
+adapter contract suite) passed first.
+
+**Launch into a Task Worktree — PASS (via amp).** `/hd-create` (write mode) showed the
+placement step defaulting to 新任务 worktree with the dependency-friction copy, created
+`../pi-packages.worktrees/<slug>` on `task/<slug>` at the Origin's HEAD before any pane
+existed, launched the Agent with the worktree as its pane cwd, delivered the dispatch
+with a verified echo, and settled it (`hd_mrol0670…`, `worktree_path` = the Task
+Worktree; the task's file landed inside the worktree only). A slug collision produced
+the documented `-2` suffix live.
+
+**Fail-closed and retention disclosure — PASS.** Two launch failures (see findings
+below) each retained the created resources and disclosed them precisely — the first
+(pre-pane failure) named only the retained Task Worktree, the later ones named pane,
+tab, and Task Worktree. No dispatch, lease, or occupancy was left behind in either case.
+
+**Parallel write leases — PASS.** Two write dispatches to Agents in two distinct Task
+Worktrees were active simultaneously with two `worktree_write_leases` rows on distinct
+paths (`hd_mrol2127…` on `…cont-2`, `hd_mrol30mu…` on the amp worktree) — the isolation
+that the shared-worktree lease serialized before. The occupied target correctly vanished
+from the eligible list while its dispatch ran.
+
+**Second dispatch into the same Task Worktree — PASS.** Repeat `/hd-new` write
+dispatches to Agents seated in Task Worktrees passed silently (no shared-worktree hint),
+re-acquired the lease on the same worktree, and settled normally.
+
+**`/hd-clean` — PASS.** One listing showed all four classifications at once: 分支未合并
+(a committed task branch), 任务 worktree 有未提交变更, the compound 有未提交变更、仍有
+未结算派发占用 (while a dispatch was live on that worktree), and 可清理. Confirming the
+removable entry removed the worktree via non-force `git worktree remove` plus
+`git branch -d` and left every refused entry untouched.
+
+**Manual resolution of a stuck dispatch — PASS.** `/hd-resolve` on the unacknowledged
+dispatch (finding 3 below) walked picker → detail → outcome (never `done`) → bounded
+summary → single confirm, settled it as cancelled, and released occupancy and lease
+atomically (0 unsettled / 0 leases / 0 occupancy afterwards).
+
+### Findings
+
+1. **Fixed during acceptance:** `/hd-create` failed for any task longer than the label
+   cap — pi-tui 0.80.10's `truncateToWidth` wraps its ellipsis in ANSI resets and ESC is
+   rejected by the adapter's label validation. Pre-existing since the dependency bump,
+   caught by the first live launch, fixed (`fix(dispatch): build the launch label
+   without ANSI escapes`) and re-verified live.
+2. **Environment regression (open):** on Herdr 0.7.4 the snapshot's
+   `screen_detection_skipped` is no longer `true` for `claude`/`codex`/`opencode` panes
+   even with current integrations (only `pi` panes carry it), so `/hd-create` for those
+   types waits for reported provenance that never comes and times out after
+   `agentStartupTimeoutMs`. `/hd-new` dispatch is unaffected (screen-detected provenance
+   is accepted), and `amp`/`droid`/`grok` launches are unaffected. Needs a compat
+   decision (adapt the eligibility signal or pin Herdr 0.7.3).
+3. **Settlement edge downstream of finding 2:** a target that stays silent past the
+   startup window (task began with `sleep 45`) collected `unacknowledged`, and its
+   later-printed result envelope was never detected — with no integration report and no
+   screen transition, nothing triggers a result read; the dispatch sat active until
+   manual resolution. With working integrations the status transition would trigger
+   detection. Documented recovery (`/hd-resolve`) works.
+4. **UX residual:** the `/hd-new` shared-worktree hint fires (parameterized unit test
+   covers both match and no-match) but renders as a transient info toast that the
+   delivery-result notification replaces within ~1s, making it effectively invisible
+   live. Consider a persistent presentation if the hint is meant to be read.
+5. **Observation:** `/hd-clean` removability (merged + clean + no unsettled dispatch)
+   does not consider an Agent pane still seated in the worktree; removing the directory
+   under an idle Agent is possible. Matches the ADR rule as written; noted for a future
+   decision.

@@ -2,13 +2,13 @@
 
 A Pi extension under staged development for automatically dispatching work through a typed, Registry-backed path to coding Agents in one local Herdr workspace, including an explicit TUI path that can create one new Agent before dispatch.
 
-> **Status:** Experimental, with Phase 6 acceptance restored. The delivery, result, and widget fixes passed a fresh real Pi/Claude Code/Codex/OpenCode/Droid/Amp/Grok matrix, and automatic-default dispatch passed a post-schema-v3 no-prompt live probe. Auto Run (Phase 8, [ADR 0014](./docs/adr/0014-auto-run-settlement-continuation.md)) is implemented; its wake decision, coordinator orchestration (strict one-at-a-time waking, one-wake-in-flight, depth attribution, settle-before-arm gating), Registry access guard, and schema-v5 persistence are unit/integration tested, while the end-to-end DispatchRuntime wiring is left to its live acceptance item (L14), not yet run. The package remains `private` at `0.0.0-development`; no package has been published.
+> **Status:** Experimental, with Phase 6 acceptance restored. The delivery, result, and widget fixes passed a fresh real Pi/Claude Code/Codex/OpenCode/Droid/Amp/Grok matrix, and automatic-default dispatch passed a post-schema-v3 no-prompt live probe. Auto Run (Phase 8, [ADR 0014](./docs/adr/0014-auto-run-settlement-continuation.md)) is implemented and passed its full live acceptance (L14, 2026-07-17), including the concurrent-burst serialization after a fix. Task Worktree isolation ([ADR 0015](./docs/adr/0015-task-worktree-isolation.md)) is implemented and passed its live acceptance (L15, 2026-07-17); see the Requirements note for the open Herdr 0.7.4 launch-provenance regression found during that run. The package remains `private` at `0.0.0-development`; no package has been published.
 
 ## Requirements
 
 - Node.js 24 or newer (`node:sqlite` is required)
 - Pi `0.80.6` or newer (post-repair matrix validated on `0.80.7`)
-- Herdr `0.7.3`, socket protocol `16`
+- Herdr `0.7.3`, socket protocol `16`. On Herdr `0.7.4` the snapshot no longer marks `claude`/`codex`/`opencode` status as integration-reported, so `/hd-create` for those types times out waiting for reported provenance; `/hd-new` dispatch and `amp`/`droid`/`grok` launches are unaffected (found during L15 acceptance, compat decision pending).
 - Pi running inside Herdr with `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID`, and `HERDR_PANE_ID`
 
 The extension normally dispatches to Existing Agents in the captured current workspace. `/hd-create` is the sole creation exception: a user may explicitly create one Agent pane or tab and, for write mode, may first create one isolated Task Worktree. The extension never creates workspaces or coordinators, and models cannot invoke Agent or worktree creation.
