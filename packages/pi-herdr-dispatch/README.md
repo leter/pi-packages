@@ -11,7 +11,7 @@ A Pi extension under staged development for automatically dispatching work throu
 - Herdr `0.7.3`, socket protocol `16`
 - Pi running inside Herdr with `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID`, and `HERDR_PANE_ID`
 
-The extension normally dispatches to Existing Agents in the captured current workspace. `/hd-create` is the sole exception: a user may explicitly create one Agent pane or tab in the current workspace and cwd before dispatch. The extension never creates workspaces, worktrees, or coordinators, and models cannot invoke Agent creation.
+The extension normally dispatches to Existing Agents in the captured current workspace. `/hd-create` is the sole creation exception: a user may explicitly create one Agent pane or tab and, for write mode, may first create one isolated Task Worktree. The extension never creates workspaces or coordinators, and models cannot invoke Agent or worktree creation.
 
 ## Language
 
@@ -51,19 +51,26 @@ Reinstalling is only needed when the checkout moves, on another machine, or to r
 The readable `hd-*` aliases are the recommended interactive commands; the original names remain available for compatibility. They are registered in workflow-priority order, with the most frequently used `/hd-new` first in slash-command completion.
 
 - `/hd-new` (`/herdr-dispatch`) — select an Existing Agent, complete the dispatch wizard, and send immediately without a final confirmation prompt.
-- `/hd-create` (`/herdr-dispatch-create`) — complete the wizard, create a supported integrated Agent in the current cwd, wait until it is eligible, then send through the same automatic dispatch path.
-- `/hd-agents` (`/herdr-agents`) — list current-workspace Eligible Agents.
+- `/hd-create` (`/herdr-dispatch-create`) — complete the wizard, optionally create a Task Worktree for write mode, create a supported integrated Agent there, wait until it is eligible, then send through the same automatic dispatch path.
+- `/hd-agents` (`/herdr-agents`) — list current-workspace Eligible Agents and each canonical worktree.
 - `/hd-manager` (`/herdr-dispatches`, or `alt+h`) — open the current-workspace Dispatch Manager, browse human-readable tasks, and perform explicit bounded output reads (`r` for 50 lines, `R` for 200).
 - `/hd-auto [on|off]` (`/herdr-dispatch-auto`) — report or toggle Auto Run (自动运行): when armed, settled results wake the model automatically instead of waiting for your next message. TUI-only for `on`/`off`.
+- `/hd-clean` (`/herdr-dispatch-clean`) — inspect retained Task Worktrees and remove selected clean, merged, unheld entries after one confirmation.
 - `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — choose, preview, and confirm a reply when an Active Dispatch has attention.
 - `/hd-cancel [id-or-prefix]` (`/herdr-dispatch-cancel`) — choose and confirm a normal cancellation request; this never sends `Ctrl+C`.
 - `/hd-resolve [id-or-prefix]` (`/herdr-dispatch-resolve`) — choose and manually or emergently settle as `blocked`, `failed`, or `cancelled` after evidence and confirmation; manual resolution never claims `done`.
 - `/hd-output <target> [lines]` (`/herdr-agent-output`) — perform one explicitly requested bounded output read.
 - `/hd-setup` (`/herdr-dispatch-setup`) — explicitly install one selected Herdr status integration.
 
-`/hd-create` supports `pi`, `claude`, `codex`, `opencode`, `amp`, `droid`, and `grok`. Every type requires its standard executable; `pi`/`claude`/`codex`/`opencode` also require a current Herdr integration, while `amp`/`droid`/`grok` may use Herdr screen detection. Its layout menu is ordered as current-tab adaptive, current-tab left/right, current-tab top/bottom, then a separate tab. Splits are 50/50; adaptive chooses left/right when the Origin pane width/height ratio is at least 2, otherwise top/bottom. The command inherits the current cwd, never steals focus, waits up to `agentStartupTimeoutMs` for the permitted reported or screen-detected provenance, and allows Esc to stop waiting. Created windows are deliberately retained after cancellation, failure, dispatch races, and settlement; cancellation/failure notifications disclose the retained pane and tab when creation was confirmed. The fixed one-word Agent executable and Enter are submitted in one typed Herdr request, avoiding a half-staged launch command.
+`/hd-create` supports `pi`, `claude`, `codex`, `opencode`, `amp`, `droid`, and `grok`. Every type requires its standard executable; `pi`/`claude`/`codex`/`opencode` also require a current Herdr integration, while `amp`/`droid`/`grok` may use Herdr screen detection. Its layout menu is ordered as current-tab adaptive, current-tab left/right, current-tab top/bottom, then a separate tab. Splits are 50/50; adaptive chooses left/right when the Origin pane width/height ratio is at least 2, otherwise top/bottom.
 
-Model tools expose scoped listing, proposal, status, and one-shot inspection. Reply, cancellation, resolution, Agent Launch, waits, and force interruption are never model tools.
+Non-mutating launches always use the Origin cwd and do not show a placement step. Write launches default to a new Task Worktree at `../<origin-dirname>.worktrees/<slug>` on branch `task/<slug>`; the current directory remains an explicit alternative. The choice warns that dependencies such as `node_modules` do not follow into a fresh worktree and still require the dispatch's existing explicit installation consent. Git creates the Task Worktree at the Origin's current `HEAD` before any pane exists, so creation failure leaves no Agent window. Slug/path/branch collisions receive a numeric suffix.
+
+The command never steals focus, waits up to `agentStartupTimeoutMs` for the permitted reported or screen-detected provenance, and allows Esc to stop waiting. Created windows and Task Worktrees are deliberately retained after cancellation, failure, dispatch races, and settlement; cancellation/failure notifications disclose retained resources. The fixed one-word Agent executable and Enter are submitted in one typed Herdr request, avoiding a half-staged launch command.
+
+`/hd-new` remains valid for shared-worktree write work. When the selected Agent's canonical worktree equals the Origin's, it gives one non-blocking hint that `/hd-create` can prepare isolation and that continuing serializes on the shared lease. Agents already seated in Task Worktrees pass through silently. `/hd-clean` is the only cleanup path: it shows why dirty, unmerged, or unsettled-dispatch-held entries are refused, asks once, then uses `git worktree remove` without `--force` followed by `git branch -d`. Settlement never removes a Task Worktree.
+
+Model tools expose scoped listing (including canonical worktrees), proposal, status, and one-shot inspection. Reply, cancellation, resolution, Agent Launch, worktree creation or cleanup, waits, and force interruption are never model tools.
 
 ## Using the Dispatch Manager
 
@@ -92,7 +99,7 @@ State glyphs pair a symbol, a theme color, and a label, so no state relies on co
 | `c` | Request cancellation (never sends `Ctrl+C` to the target) |
 | `v` | Resolve manually; foreign-Origin records show the emergency-resolution label |
 | `f` | Follow-up dispatch (settled records only): start a fresh automatic dispatch to the same target through the full typed path |
-| `D` | Toggle technical details (full dispatch ID, terminal, origin, workspace) |
+| `D` | Toggle technical details (full dispatch ID, terminal, origin, workspace, Task Worktree path) |
 | `Esc` or `←` | Back to the list |
 
 Action keys only appear when the record's lifecycle, attention state, and Origin relationship allow them, and every action re-validates the record and passes through the existing preview and confirmation gates before anything is sent. Closing the manager with `Esc` or `Ctrl+C` can never mutate dispatch state.

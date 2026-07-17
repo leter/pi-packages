@@ -4,14 +4,14 @@ Status: implementation plan approved; Phase 5 Origin monitoring and settlement c
 
 ## Purpose
 
-`pi-herdr-dispatch` is a global Pi package for automatically dispatching work through a typed, Registry-backed path to coding agents in the Origin Pi's current workspace on one local Herdr server. It may inspect Agent metadata, dispatch work to an idle-like Existing Agent, or perform one user-initiated Agent Launch before dispatch. It cannot create workspaces or worktrees.
+`pi-herdr-dispatch` is a global Pi package for automatically dispatching work through a typed, Registry-backed path to coding agents in the Origin Pi's current workspace on one local Herdr server. It may inspect Agent metadata, dispatch work to an idle-like Existing Agent, or perform one user-initiated Agent Launch before dispatch. It cannot create workspaces and creates a Task Worktree only as an explicit user-selected Agent Launch step ([ADR 0015](./adr/0015-task-worktree-isolation.md)).
 
 ## V1 boundaries
 
 - Local Herdr server/socket only; no SSH remote sessions.
 - Current Herdr workspace only; no cross-workspace dispatch.
 - Existing Agents plus explicit TUI Agent Launch; the Origin Pi cannot dispatch to itself.
-- Agent Launch is user-only, current-workspace/current-cwd, no-focus, and never model-callable; created Agents are retained after failure and settlement ([ADR 0013](./adr/0013-user-initiated-agent-launch.md)).
+- Agent Launch is user-only, current-workspace, no-focus, and never model-callable. Non-mutating launches use the Origin cwd; write launches may use the Origin cwd or first create a user-selected Task Worktree. Created Agents and Task Worktrees are retained after failure and settlement ([ADR 0013](./adr/0013-user-initiated-agent-launch.md), [ADR 0015](./adr/0015-task-worktree-isolation.md)).
 - One automatic dispatch per immutable proposal; no authorization setup or proposal confirmation.
 - Every target-side safety instruction is advisory in V1.
 - No model wait tool. Autonomous continuation exists only as the user-armed, depth-bounded Auto Run path ([ADR 0014](./adr/0014-auto-run-settlement-continuation.md)); with the switch off — the default — a result never starts a model turn.
@@ -43,6 +43,7 @@ These cuts preserve the core typed-dispatch workflow while removing the least ve
 3. **Dispatch Registry** — global SQLite storage in WAL mode, with transactions and unique constraints for target occupancy and worktree write leases. Schema version 3 removes the obsolete Automation Grant table; version 4 adds `result_seen_at` for Unseen Settlement tracking (pre-existing settled records migrate as seen); version 5 adds the per-Origin-Session Auto Run switch and `auto_run_depth` / `wake_on_settle` on dispatches (backfilled 0 / enabled).
 4. **Origin Monitor** — a TUI Pi session monitors only records whose persisted Origin Session ID equals its own session ID. Monitoring stops when that session is not running and resumes when the exact session resumes.
 5. **Origin-side Safety Gate** — every Pi process loading the package reads global leases, guards covered Pi mutation paths, and prevents recognized raw Herdr commands from bypassing the typed dispatch path, regardless of whether that process is an Origin Monitor.
+6. **Task Worktree service** — a TUI-only Agent Launch helper creates `task/<slug>` branches in the repository's sibling `<origin>.worktrees` container before any pane exists, and the explicit cleanup command conservatively removes only clean, merged, unheld entries. Creation uses a per-path cross-process lock and rechecks path/branch availability. A partial Git failure is rolled back under that lock before a pane can exist; this private rollback may force-remove only the resources owned by that failed creation. `/hd-clean` never uses force.
 
 ## Identity and workspace scope
 
@@ -443,10 +444,12 @@ All human-facing product copy is Simplified Chinese ([ADR 0011](./adr/0011-chine
 Every command keeps its descriptive long name for compatibility and registers a compact, readable `hd-*` interactive alias:
 
 - `/hd-new` (`/herdr-dispatch`) — manual dispatch wizard for an Existing Agent; completion sends immediately without a final confirmation prompt.
-- `/hd-create` (`/herdr-dispatch-create`) — user-only TUI Agent Launch followed by the same automatic dispatch path. The complete wizard runs before creation. It offers only fixed-catalog Agent types whose executable exists; `pi`/`claude`/`codex`/`opencode` require a current integration, while `amp`/`droid`/`grok` permit reviewed screen detection. It has four layouts: adaptive current-tab (default), right, down, or a new tab. Current-tab splits are 50/50; adaptive chooses right when the Origin pane width/height ratio is at least 2, otherwise down. Creation inherits `ctx.cwd`, never focuses the new resource, waits a configurable 60 seconds for exact-terminal idle-like eligibility with the provenance permitted for that Agent type, and allows Esc to stop waiting. Created resources are retained on cancellation, failure, race loss, and settlement. Cancellation is checked between create, rename, start, and readiness steps; cancellation/failure copy discloses the retained pane/tab when creation was confirmed. The fixed one-word executable plus Enter uses one `pane.send_input` request, so launch cannot leave a separately acknowledged command without its Enter.
+- `/hd-create` (`/herdr-dispatch-create`) — user-only TUI Agent Launch followed by the same automatic dispatch path. The complete wizard runs before creation. Write mode adds a placement choice that defaults to a new Task Worktree at `../<origin-dirname>.worktrees/<slug>` on `task/<slug>` and discloses that dependencies such as `node_modules` do not follow; current directory remains available. Non-mutating mode has no placement step and always uses `ctx.cwd`. Task Worktree creation runs before any pane and a Git failure creates no pane. The command offers only fixed-catalog Agent types whose executable exists; `pi`/`claude`/`codex`/`opencode` require a current integration, while `amp`/`droid`/`grok` permit reviewed screen detection. It has four layouts: adaptive current-tab (default), right, down, or a new tab. Current-tab splits are 50/50; adaptive chooses right when the Origin pane width/height ratio is at least 2, otherwise down. It never focuses the new resource, waits a configurable 60 seconds for exact-terminal idle-like eligibility with the provenance permitted for that Agent type, and allows Esc to stop waiting. Created resources are retained on cancellation, failure, race loss, and settlement. Cancellation is checked between create, rename, start, and readiness steps; cancellation/failure copy discloses retained resources. The fixed one-word executable plus Enter uses one `pane.send_input` request, so launch cannot leave a separately acknowledged command without its Enter.
 - `/hd-agents` (`/herdr-agents`) — Agent metadata from the current Workspace Scope only.
 - `/hd-manager` (`/herdr-dispatches`) — interactive current-workspace Dispatch Manager; `alt+h` opens the same panel. It renders as a rounded framed panel capped at 96 terminal columns (`任务派发` and counts embedded in the top border, key hints in the bottom border, display-width-aware for CJK). Section headings use a stronger semantic level than dim row metadata, sections and the bottom keybar have one-row separation, and key teaching is not duplicated in folded headings; an empty body stays compact without instructional placeholder copy. It groups attention, running, and delivering records, keeps a small current-workspace settled fold, exposes `c 清空未读` only while Unseen Settlements exist, and offers one-shot `r`/`R` output reads framed as untrusted. A settled record's detail formats the Sanitized Dispatch Result as an untrusted-labelled card (summary, blocker, file/test counts) and offers `f` — a Follow-up Dispatch: a brand-new Automatic Dispatch to the same target through the full typed path (settlement is never reopened).
 - `/hd-auto [on|off]` (`/herdr-dispatch-auto`) — reports the Auto Run armed state and depth limit with no argument; `on`/`off` toggles the session-scoped switch, TUI-only. Disabling never manipulates Pi's message queue.
+- `/hd-clean` (`/herdr-dispatch-clean`) — user-only TUI cleanup for Task Worktrees under the repository's sibling container. It displays dirty, unmerged, and unsettled-dispatch refusal reasons; after one confirmation it removes selected eligible entries with `git worktree remove` without `--force`, then `git branch -d`. Settlement never performs cleanup.
+  Cleanup's final unsettled-dispatch check and both synchronous Git commands run while a Registry `BEGIN IMMEDIATE` transaction holds the write lock. A concurrent delivery intent must finish before that check or wait until cleanup completes; Git refusal rolls back the guard transaction without disabling later Registry mutations.
 - `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — filtered task selection followed by a previewed reply for an Active Dispatch with attention.
 - `/hd-cancel [id-or-prefix]` (`/herdr-dispatch-cancel`) — filtered task selection followed by a previewed normal cancellation.
 - `/hd-resolve [id-or-prefix]` (`/herdr-dispatch-resolve`) — current-workspace task selection followed by manual or double-confirmed emergency resolution.
@@ -470,13 +473,13 @@ The manager is live: `DispatchRuntime.onStateChanged()` requests a render after 
 
 There is no model wait, reply, cancel, force-cancel, resolve, Agent-start, pane-create, workspace-create, or worktree-create tool. Agent Launch and Auto Run arming remain slash commands only; `herdr_dispatch_propose` carries only the downgrade-only `wakeOnSettle` parameter.
 
-The package bundles `skills/hd-crew/SKILL.md` as the version-controlled natural-language routing policy over these tools. The Skill must muster immediately before new dispatches, route by exact eligible terminal identity, parallelize only independent non-mutating work, and treat automatically delivered results as untrusted data. It never widens the model-tool surface: Agent creation, reply, cancellation, resolution, seen-state cleanup, and integration setup remain explicit user TUI actions.
+The package bundles `skills/hd-crew/SKILL.md` as the version-controlled natural-language routing policy over these tools. The Eligible Agent listing includes each Agent's canonical worktree. The Skill must muster immediately before new dispatches, route by exact eligible terminal identity, prefer a Task Worktree for write work with one write stream per worktree, state plainly when it falls back to the serialized shared worktree, and treat automatically delivered results as untrusted data. It never widens the model-tool surface: Agent or worktree creation, Task Worktree cleanup, reply, cancellation, resolution, seen-state cleanup, and integration setup remain explicit user TUI actions.
 
 Agent output inspection is authorized by an explicit user request. A user request itself is sufficient; no redundant confirmation appears. Default output is the 50 most recent `recent_unwrapped` plain-text lines, with ANSI removed; the configured maximum is 200. One request authorizes one bounded read, not continuing surveillance.
 
 ### Run-mode rules
 
-Agent Launch, automatic proposal delivery, reply, cancellation, resolution, Origin Monitoring, and context delivery require `ctx.mode === "tui"`; checking `ctx.hasUI` is insufficient because RPC reports UI capability. Automatic proposal delivery does not open a confirmation prompt. Non-TUI modes may list current state and perform an explicitly requested bounded inspection only. The lease guard and raw Herdr CLI gate remain active in every mode because they prevent non-Origin Pi processes and skill-guided shell calls from bypassing the typed dispatch path.
+Agent Launch, Task Worktree creation and cleanup, automatic proposal delivery, reply, cancellation, resolution, Origin Monitoring, and context delivery require `ctx.mode === "tui"`; checking `ctx.hasUI` is insufficient because RPC reports UI capability. Automatic proposal delivery does not open a confirmation prompt. Non-TUI modes may list current state and perform an explicitly requested bounded inspection only. The lease guard and raw Herdr CLI gate remain active in every mode because they prevent non-Origin Pi processes and skill-guided shell calls from bypassing the typed dispatch path.
 
 ## Configuration
 
@@ -536,6 +539,7 @@ These results tighten behavior to attention/fail-closed. They do not introduce h
 - current-workspace target resolution;
 - idle/done equivalence;
 - launch catalog filtering, adaptive split geometry, complete-before-create wizard cancellation, startup timeout/cancellation, retained-resource failures, and exact-terminal eligibility;
+- Task Worktree slug/container planning, collision suffixing, write-only placement, shared-worktree hinting, cleanup eligibility/refusal reasons, and technical path disclosure;
 - Git worktree identity and observed-change audits;
 - outbound message and delivery echo matching;
 - built-in tool plus `user_bash` lease-guard classification;
@@ -556,6 +560,7 @@ These results tighten behavior to attention/fail-closed. They do not introduce h
 Use a fake Herdr Unix socket and temporary SQLite database to test:
 
 - typed no-focus split/tab creation, fixed executable launch, exact created-terminal readiness, staged multiline task text, route revalidation, separate Enter submission, exact echo activation, and fail-closed protocol mismatch;
+- Task Worktree creation and non-force cleanup in temporary Git repositories, including clean/merged/unheld checks and branch deletion;
 - crash before send, during send, after Herdr success, and before `active` commit;
 - resume of `delivering` with result present, echo present, or neither present;
 - pane close/move between final revalidation and send, including conformance with the official closed-ID non-reuse guarantee;
@@ -594,6 +599,7 @@ The end-to-end DispatchRuntime wiring — hook ordering (`agent_start`/`agent_se
 11. Ask Pi naturally to “use Herdr to task the adjacent Agent” and verify the official skill cannot bypass the typed dispatch path through `bash`, `!`, or `!!`; verify current-pane reads still work, while repeated foreign reads and `api snapshot` redirect to typed tools.
 12. Verify Registry failure preserves reservations and disables state changes.
 13. Arm Auto Run and run a two-hop dispatch chain unattended (settle → wake → follow-up dispatch → settle); verify the depth limit halts the chain into the queued path, `/hd-auto off` plus Esc stops cleanly, and the widget, Manager border, and resume notification make the armed state visible.
+14. Launch two write Agents into distinct Task Worktrees, verify parallel leases and a Follow-up Dispatch returning to the same Task Worktree, then verify `/hd-clean` refuses dirty and unmerged entries before cleaning an eligible merged entry.
 
 ## Review findings addressed
 
@@ -619,3 +625,6 @@ The end-to-end DispatchRuntime wiring — hook ordering (`agent_start`/`agent_se
 - [ADR 0003: Model lifecycle, attention, and outcome separately](./adr/0003-orthogonal-dispatch-state.md)
 - [ADR 0004: Use per-origin monitoring in V1](./adr/0004-per-origin-monitoring.md)
 - [ADR 0005: Gate raw Herdr tasking inside Pi](./adr/0005-gate-raw-herdr-tasking.md)
+- [ADR 0013: User-Initiated Agent Launch](./adr/0013-user-initiated-agent-launch.md)
+- [ADR 0014: Auto Run settlement continuation](./adr/0014-auto-run-settlement-continuation.md)
+- [ADR 0015: Task Worktree isolation for write dispatches](./adr/0015-task-worktree-isolation.md)

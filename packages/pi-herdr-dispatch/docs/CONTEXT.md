@@ -1,6 +1,6 @@
 # Agent Workspace Orchestration
 
-This context coordinates automatically dispatched work sent to coding agents in one local Herdr workspace. A user may launch one new Agent as part of a typed TUI dispatch; the context does not create workspaces or worktrees.
+This context coordinates automatically dispatched work sent to coding agents in one local Herdr workspace. A user may launch one new Agent as part of a typed TUI dispatch; the context does not create workspaces and creates a worktree only as a user-selected Agent Launch step.
 
 ## Actors and scope
 
@@ -9,8 +9,8 @@ A coding agent already running in a Herdr pane, whether it predated the Origin S
 _Avoid_: worker, subagent
 
 **Agent Launch**:
-A user-initiated TUI operation that creates one Agent pane or tab in the Workspace Scope and Origin Session directory, starts one supported Agent with either current Herdr integration provenance or an explicitly reviewed screen-detection fallback, waits until it is eligible, and then submits a fresh Automatic Dispatch. The created Agent remains an Existing Agent after failure or settlement; launch never implies automatic cleanup or ownership.
-_Avoid_: model-created Agent, temporary worker, autonomous scaling, worktree creation
+A user-initiated TUI operation that optionally creates one user-selected Task Worktree for write mode, creates one Agent pane or tab in the Workspace Scope and selected directory, starts one supported Agent with either current Herdr integration provenance or an explicitly reviewed screen-detection fallback, waits until it is eligible, and then submits a fresh Automatic Dispatch. The created Agent and any Task Worktree remain after failure or settlement; launch never implies automatic cleanup or ownership.
+_Avoid_: model-created Agent, temporary worker, autonomous scaling, model-created worktree
 
 **Workspace Scope**:
 The local Herdr workspace containing the Origin Session and every Agent eligible for its dispatches.
@@ -118,6 +118,10 @@ _Avoid_: Mutation Violation, proof of authorship
 The exclusive reservation of one Git worktree for one write-mode Active or Delivering Dispatch. The package reduces conflicts on covered Pi-side file and Herdr-command paths but does not claim an operating-system lock.
 _Avoid_: shared editing, universal mutation prevention
 
+**Task Worktree**:
+A Git worktree and `task/<slug>` branch created by the user inside one Agent Launch to isolate one write-mode dispatch stream.
+_Avoid_: temporary checkout, model-created worktree, automatic cleanup
+
 **Write-Lease Conflict**:
 A proposed write dispatch targeting a worktree with an existing Worktree Write Lease.
 _Avoid_: automatic preemption, automatic downgrade
@@ -217,6 +221,7 @@ Product copy (UI strings, notifications) is Simplified Chinese ([ADR 0011](./adr
 | Dispatch Target | 目标 Agent |
 | Target Occupancy | 目标占用 |
 | Worktree Write Lease | worktree 写租约 |
+| Task Worktree | 任务 worktree |
 | Reservation | 预留 |
 | Dispatch Manager | 派发管理器 |
 | lifecycle `delivering` | 投递中 |
