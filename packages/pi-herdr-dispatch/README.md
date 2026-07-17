@@ -2,7 +2,7 @@
 
 A Pi extension under staged development for automatically dispatching work through a typed, Registry-backed path to coding Agents in one local Herdr workspace, including an explicit TUI path that can create one new Agent before dispatch.
 
-> **Status:** Experimental, with Phase 6 acceptance restored. The delivery, result, and widget fixes passed a fresh real Pi/Claude Code/Codex/OpenCode/Droid/Amp/Grok matrix, and automatic-default dispatch passed a post-schema-v3 no-prompt live probe. Auto Run (Phase 8, [ADR 0014](./docs/adr/0014-auto-run-settlement-continuation.md)) is implemented and passed its full live acceptance (L14, 2026-07-17), including the concurrent-burst serialization after a fix. Task Worktree isolation ([ADR 0015](./docs/adr/0015-task-worktree-isolation.md)) is implemented and passed its live acceptance (L15, 2026-07-17); see the Requirements note for the open Herdr 0.7.4 launch-provenance regression found during that run. The package remains `private` at `0.0.0-development`; no package has been published.
+> **Status:** Experimental. Auto Run ([ADR 0014](./docs/adr/0014-auto-run-settlement-continuation.md)) and Task Worktree isolation ([ADR 0015](./docs/adr/0015-task-worktree-isolation.md)) passed live acceptance on 2026-07-17. The persistent Task Board ([ADR 0016](./docs/adr/0016-task-board.md)) is implemented; its L16 live acceptance remains pending. The package remains `private` at `0.0.0-development`; no package has been published.
 
 ## Requirements
 
@@ -54,7 +54,8 @@ The readable `hd-*` aliases are the recommended interactive commands; the origin
 - `/hd-create` (`/herdr-dispatch-create`) — complete the wizard, optionally create a Task Worktree for write mode, create a supported integrated Agent there, wait until it is eligible, then send through the same automatic dispatch path.
 - `/hd-agents` (`/herdr-agents`) — list current-workspace Eligible Agents and each canonical worktree.
 - `/hd-manager` (`/herdr-dispatches`, or `alt+h`) — open the current-workspace Dispatch Manager, browse human-readable tasks, and perform explicit bounded output reads (`r` for 50 lines, `R` for 200).
-- `/hd-auto [on|off]` (`/herdr-dispatch-auto`) — report or toggle Auto Run (自动运行): when armed, settled results wake the model automatically instead of waiting for your next message. TUI-only for `on`/`off`.
+- `/hd-task` (`/herdr-task`) — manually create a Task Board draft or open the board listing. TUI-only.
+- `/hd-auto [on [N]|off]` (`/herdr-dispatch-auto`) — report or toggle Auto Run and, while armed, its remaining Run Quota. `on N` resets the current session to N task-bound dispatches; omitted N uses `defaultRunQuota`.
 - `/hd-clean` (`/herdr-dispatch-clean`) — inspect retained Task Worktrees and remove selected clean, merged, unheld entries after one confirmation.
 - `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — choose, preview, and confirm a reply when an Active Dispatch has attention.
 - `/hd-cancel [id-or-prefix]` (`/herdr-dispatch-cancel`) — choose and confirm a normal cancellation request; this never sends `Ctrl+C`.
@@ -70,7 +71,7 @@ The command never steals focus, waits up to `agentStartupTimeoutMs` for the perm
 
 `/hd-new` remains valid for shared-worktree write work. When the selected Agent's canonical worktree equals the Origin's, it gives one non-blocking hint that `/hd-create` can prepare isolation and that continuing serializes on the shared lease. Agents already seated in Task Worktrees pass through silently. `/hd-clean` is the only cleanup path: it shows why dirty, unmerged, or unsettled-dispatch-held entries are refused, asks once, then uses `git worktree remove` without `--force` followed by `git branch -d`. Settlement never removes a Task Worktree.
 
-Model tools expose scoped listing (including canonical worktrees), proposal, status, and one-shot inspection. Reply, cancellation, resolution, Agent Launch, worktree creation or cleanup, waits, and force interruption are never model tools.
+Model tools expose scoped listing, proposal, status, one-shot inspection, and `herdr_task_draft`. The model may draft one bounded Board Task per call, but cannot approve, accept, return, edit, reorder, or delete tasks. Reply, cancellation, resolution, Agent Launch, worktree creation or cleanup, waits, and force interruption are never model tools.
 
 ## Using the Dispatch Manager
 
@@ -86,6 +87,10 @@ State glyphs pair a symbol, a theme color, and a label, so no state relies on co
 | `PageUp`/`PageDown` | Move by page (10-row window) |
 | `Home`/`End` | Jump to first/last record |
 | `Enter` or `→` | Open the selected dispatch |
+| `space` | Toggle the selected draft or review checkbox |
+| `a` / `A` | Select all or invert selection within the current draft/review group |
+| `Enter` on Task Board rows | Approve selected drafts into `排队`, or accept selected `待验收` tasks |
+| `x` on a draft/review row | Delete one draft after confirmation, or enter feedback and `打回` one reviewed task |
 | `c` | Clear all unread completions from the workspace view by marking them seen; retained history is not deleted |
 | `s` | Show or hide recently settled workspace records |
 | `Esc`, `←`, or `Ctrl+C` | Close without changing anything |
@@ -110,15 +115,27 @@ A settled result is not silently done: besides the one-shot notification, it cou
 
 The shared `/hd-new` and `/hd-create` deadline prompt shows the configured default (30 minutes by default); submitting an empty value uses that default.
 
+## Task Board (任务板)
+
+The Task Board makes a multi-task run durable. Ask the model to split work into tasks and it creates `草稿` rows with `herdr_task_draft`. Open `/hd-task` or `alt+h`, select drafts with `space`/`a`/`A`, then press `Enter` to `批准` them into `排队`. Drafts consume no Agent, lease, depth, or quota before approval.
+
+The complete lifecycle is `草稿 → 排队 → 已派出 → 待验收 → 已验收`. Every dispatch outcome—including blocked, failed, cancelled, manual resolution, and emergency resolution—moves its bound task to `待验收`. That does not stop the model from routing the next queued task. Acceptance only records bookkeeping; it never merges, pushes, cleans a Task Worktree, switches branches, or marks a dispatch result as seen.
+
+Press `x` on a reviewed task to `打回` it with feedback. The task returns to the end of the queue. Its next attempt is a fresh typed dispatch seeded with the feedback as untrusted data, preferring the previous Agent and Task Worktree. Internal `hdt_` identifiers stay out of ordinary rows and widget text.
+
+Assignment remains model-routed. After a settlement wake, the model reads the oldest queued task, musters Eligible Agents, and proposes a task-bound dispatch. The extension validates and binds the queued task in the same transaction as durable dispatch intent, records depth 0, and consumes one unit of `本次额度` because Auto Run is armed; it never chooses or sends to an Agent on its own.
+
 Dispatch is automatic by default in TUI mode. `herdr_dispatch_propose` and a completed `/hd-new` wizard build one immutable outbound message and send it without a proposal confirmation, grant setup, count limit, expiry, or renewal. The typed path still revalidates current-workspace target identity, status provenance, cwd/canonical worktree, occupancy, leases, and concurrency before durable intent and delivery. Non-TUI modes cannot reserve, send, reply, cancel, resolve, or monitor.
 
 ## Auto Run (自动运行)
 
 > **Verified live (2026-07-17): Auto Run passes L14.** Against a real Pi + codex: an armed settlement fires exactly one wake turn, the exactly-once delivery claim completes and never re-fires (no ghost-wake loop), a two-hop chain provably terminates at the depth limit, a burst of near-simultaneous settlements is woken strictly one at a time (each gets its own turn, none strand), and settle-then-arm, `/hd-auto off`, and resume all behave correctly ([evidence](./docs/ACCEPTANCE-RESULTS.md)). Off by default; arm per session with `/hd-auto on`.
 
-By default a settled result only queues quietly and enters the model's context on your next message. `/hd-auto on` arms **Auto Run** for the current session: every settlement (done, blocked, failed, or cancelled) that occurs after you arm it then wakes the model automatically. Only one Auto Run turn ever runs at a time — results that settle while a turn is in flight are held and woken one after another as each turn finishes, never piling up into concurrent turns. The woken model receives the sanitized result in its usual untrusted framing plus a fixed preamble stating the remaining chain budget and its job: aggregate, verify, and decide whether one follow-up dispatch is warranted.
+By default a settled result only queues quietly and enters the model's context on your next message. `/hd-auto on [N]` arms **Auto Run** for the current session and resets its Run Quota. Every settlement after arming may wake the model. Only one Auto Run turn ever runs at a time. The fixed wake preamble reports the queued Task Board count, remaining Run Quota, and remaining chain depth, then directs the model to keep the wake turn thin: register the result, advance the board, and dispatch the next suitable task.
 
 The chain always terminates: dispatches created during an automatic turn carry an **Auto Run Depth** one deeper than the settlement that triggered the turn, and at `maxAutoRunDepth` (default 5) the settlement queues quietly with one review notification instead of waking the model. Speaking to Pi yourself resets the chain — your own proposals are always depth 0.
+
+Task-bound dispatches are different: each task was explicitly approved by the user, so it always records depth 0. While Auto Run is armed it consumes one Run Quota unit; while disarmed, a supervised user-turn task dispatch needs no quota and omits the remaining-quota figure. When armed quota reaches zero, remaining Board Tasks stay queued and one notification fires. Re-arm to reset quota. Ordinary in-chain follow-ups still use parent depth + 1.
 
 The switch is per-session, persisted, and restored on resume, so an armed session is kept loudly visible: a persistent `⚡自动` widget segment, the Dispatch Manager top border, a soundless notification on start/resume, and `/hd-auto` for the exact state. Automatic delivery never marks a result as read — the `已完成 · 未读` audit trail works exactly as before.
 
@@ -141,7 +158,8 @@ Optional file: `~/.config/pi-herdr-dispatch/config.json`
   "maxActiveGlobal": 8,
   "retentionDays": 30,
   "livenessPollMs": 5000,
-  "maxAutoRunDepth": 5
+  "maxAutoRunDepth": 5,
+  "defaultRunQuota": 10
 }
 ```
 

@@ -1,6 +1,6 @@
 # pi-herdr-dispatch Design
 
-Status: implementation plan approved; Phase 5 Origin monitoring and settlement complete and awaiting review before Phase 6.
+Status: ADR 0016 Task Board implemented; live acceptance L16 remains pending.
 
 ## Purpose
 
@@ -12,9 +12,10 @@ Status: implementation plan approved; Phase 5 Origin monitoring and settlement c
 - Current Herdr workspace only; no cross-workspace dispatch.
 - Existing Agents plus explicit TUI Agent Launch; the Origin Pi cannot dispatch to itself.
 - Agent Launch is user-only, current-workspace, no-focus, and never model-callable. Non-mutating launches use the Origin cwd; write launches may use the Origin cwd or first create a user-selected Task Worktree. Created Agents and Task Worktrees are retained after failure and settlement ([ADR 0013](./adr/0013-user-initiated-agent-launch.md), [ADR 0015](./adr/0015-task-worktree-isolation.md)).
-- One automatic dispatch per immutable proposal; no authorization setup or proposal confirmation.
+- One automatic dispatch per immutable proposal; no authorization setup or proposal confirmation. A task-bound Dispatch is separately pre-authorized by Task Approval and, while Auto Run is armed, consumes one unit of Run Quota; task-bound Dispatches while disarmed and all non-task Dispatches have no count limit.
 - Every target-side safety instruction is advisory in V1.
 - No model wait tool. Autonomous continuation exists only as the user-armed, depth-bounded Auto Run path ([ADR 0014](./adr/0014-auto-run-settlement-continuation.md)); with the switch off — the default — a result never starts a model turn.
+- Task Board assignment remains model-routed. The extension never acts as an autonomous scheduler; only the user can approve, accept, return, or delete Board Tasks.
 - Raw Herdr tasking, pane-control, Agent-start, and blocking-wait commands issued through this Pi's `bash` or `user_bash` paths are gated; Agent inspection remains available.
 - No recursive delegation by a Dispatch Target.
 - Dispatch, reply, cancellation, and manual resolution are TUI-only. Print, JSON, and RPC modes are read-only.
@@ -40,7 +41,7 @@ These cuts preserve the core typed-dispatch workflow while removing the least ve
 
 1. **Pi extension** — commands, automatic model dispatch tools, status widget, Origin Session monitoring, result delivery, a best-effort Pi-side lease guard, and a raw Herdr CLI gate shared by `tool_call` and `user_bash`.
 2. **Herdr adapter** — one exclusive, reconnecting Unix-socket subscription stream per monitoring Origin Session, plus a fresh connection for every unary request because Herdr 0.7.3 closes unary sockets after one response. It bootstraps from `session.snapshot`, subscribes to supported events, reads bounded pane tails, posts notifications, delivers input with `pane.send_input`, and exposes the typed no-focus pane/tab operations required by Agent Launch.
-3. **Dispatch Registry** — global SQLite storage in WAL mode, with transactions and unique constraints for target occupancy and worktree write leases. Schema version 3 removes the obsolete Automation Grant table; version 4 adds `result_seen_at` for Unseen Settlement tracking (pre-existing settled records migrate as seen); version 5 adds the per-Origin-Session Auto Run switch and `auto_run_depth` / `wake_on_settle` on dispatches (backfilled 0 / enabled).
+3. **Dispatch Registry** — global SQLite storage in WAL mode, with transactions and unique constraints for target occupancy and worktree write leases. Schema version 3 removes the obsolete Automation Grant table; version 4 adds `result_seen_at`; version 5 adds Auto Run session state and dispatch depth; version 6 adds durable Board Tasks plus Run Quota.
 4. **Origin Monitor** — a TUI Pi session monitors only records whose persisted Origin Session ID equals its own session ID. Monitoring stops when that session is not running and resumes when the exact session resumes.
 5. **Origin-side Safety Gate** — every Pi process loading the package reads global leases, guards covered Pi mutation paths, and prevents recognized raw Herdr commands from bypassing the typed dispatch path, regardless of whether that process is an Origin Monitor.
 6. **Task Worktree service** — a TUI-only Agent Launch helper creates `task/<slug>` branches in the repository's sibling `<origin>.worktrees` container before any pane exists, and the explicit cleanup command conservatively removes only clean, merged, unheld entries. Creation uses a per-path cross-process lock and rechecks path/branch availability. A partial Git failure is rolled back under that lock before a pane can exist; this private rollback may force-remove only the resources owned by that failed creation. `/hd-clean` never uses force.
@@ -393,6 +394,23 @@ Auto Run ([ADR 0014](./adr/0014-auto-run-settlement-continuation.md)) is the sol
 
 Every non-wake edge — disarmed, downgraded proposal, depth exhausted, non-TUI, and a closed Origin (until it resumes armed) — lands byte-for-byte in the existing queued `nextTurn` delivery with nothing lost.
 
+## Task Board
+
+The Task Board ([ADR 0016](./adr/0016-task-board.md)) is durable Registry state scoped to one Herdr workspace. A model or user may create a bounded draft, but only user checkbox actions promote drafts to `queued`. The complete state progression is:
+
+```text
+draft -> queued -> dispatched -> review -> accepted
+                         review -> queued (user return)
+```
+
+Every Final Outcome path moves a bound task from `dispatched` to `review` in the same settlement transaction. Review never blocks the next queued task. Acceptance is terminal bookkeeping only: it never merges, pushes, cleans a Task Worktree, changes branches, or touches ADR 0012 seen state. A return carries bounded user feedback into a fresh dispatch through the fixed English untrusted-data frame and prefers the prior target and Task Worktree.
+
+`herdr_task_draft` creates one model-authored draft. No model tool can approve, edit, reorder, delete, return, or accept a task. `/hd-task` provides manual draft entry and opens the same board embedded in the Dispatch Manager. Draft and review rows use scoped checkbox selection: `space` toggles, `a` selects the current group, `A` inverts it, and `Enter` approves drafts or accepts reviews; `x` deletes one draft after confirmation or returns one reviewed task after feedback entry. Internal `hdt_` identifiers stay out of default rows.
+
+A task-bound `herdr_dispatch_propose` validates and binds one queued task in the durable-intent transaction. It always records Auto Run Depth 0. While Auto Run is armed it consumes one Run Quota unit; while disarmed a user-turn task dispatch needs no quota and reports no remaining-quota figure. Re-arming with `/hd-auto on [N]` resets quota to N; omitted N uses `defaultRunQuota` (10, range 1–50). At zero, queued tasks remain unchanged and one notification asks for review. Non-task follow-ups retain parent depth + 1.
+
+Wake turns stay thin. Their fixed English preamble carries the queued count and remaining quota, then tells the model to register the result, advance the board, and dispatch the next suitable queued task. Investigation that deserves a full task becomes a follow-up dispatch or a new draft; the extension never selects or dispatches an Agent itself.
+
 ## Dispatch Registry
 
 Default path:
@@ -414,8 +432,11 @@ Conceptual records:
 - raw and sanitized results;
 - Origin Session active-branch context-delivery state;
 - append-only lightweight audit events.
+- Board Tasks, approval FIFO position, bound dispatch, return feedback, and Run Quota.
 
 There is no Coordinator Lease and no revision cursor. Current state is stored directly; events are for audit, not full event sourcing. Settled records and events are retained 30 days by default, configurable 1–365 days. Unsettled records are never automatically purged.
+
+Accepted Board Tasks follow the same `retentionDays` cutoff. Draft, queued, dispatched, and review tasks are never automatically purged; a retained unaccepted task also retains its bound settled dispatch so its return/acceptance evidence remains valid.
 
 Migration creates a timestamped database backup and runs transactionally. Corruption, migration failure, or unavailable transactional access fails closed: no new dispatch, reply, cancellation, settlement, or reservation mutation. The package never creates an empty replacement or falls back to memory.
 
@@ -447,7 +468,8 @@ Every command keeps its descriptive long name for compatibility and registers a 
 - `/hd-create` (`/herdr-dispatch-create`) — user-only TUI Agent Launch followed by the same automatic dispatch path. The complete wizard runs before creation. Write mode adds a placement choice that defaults to a new Task Worktree at `../<origin-dirname>.worktrees/<slug>` on `task/<slug>` and discloses that dependencies such as `node_modules` do not follow; current directory remains available. Non-mutating mode has no placement step and always uses `ctx.cwd`. Task Worktree creation runs before any pane and a Git failure creates no pane. The command offers only fixed-catalog Agent types whose executable exists; `pi`/`claude`/`codex`/`opencode` require a current integration, while `amp`/`droid`/`grok` permit reviewed screen detection. It has four layouts: adaptive current-tab (default), right, down, or a new tab. Current-tab splits are 50/50; adaptive chooses right when the Origin pane width/height ratio is at least 2, otherwise down. It never focuses the new resource, waits a configurable 60 seconds for exact-terminal idle-like eligibility with the provenance permitted for that Agent type, and allows Esc to stop waiting. Created resources are retained on cancellation, failure, race loss, and settlement. Cancellation is checked between create, rename, start, and readiness steps; cancellation/failure copy discloses retained resources. The fixed one-word executable plus Enter uses one `pane.send_input` request, so launch cannot leave a separately acknowledged command without its Enter.
 - `/hd-agents` (`/herdr-agents`) — Agent metadata from the current Workspace Scope only.
 - `/hd-manager` (`/herdr-dispatches`) — interactive current-workspace Dispatch Manager; `alt+h` opens the same panel. It renders as a rounded framed panel capped at 96 terminal columns (`任务派发` and counts embedded in the top border, key hints in the bottom border, display-width-aware for CJK). Section headings use a stronger semantic level than dim row metadata, sections and the bottom keybar have one-row separation, and key teaching is not duplicated in folded headings; an empty body stays compact without instructional placeholder copy. It groups attention, running, and delivering records, keeps a small current-workspace settled fold, exposes `c 清空未读` only while Unseen Settlements exist, and offers one-shot `r`/`R` output reads framed as untrusted. A settled record's detail formats the Sanitized Dispatch Result as an untrusted-labelled card (summary, blocker, file/test counts) and offers `f` — a Follow-up Dispatch: a brand-new Automatic Dispatch to the same target through the full typed path (settlement is never reopened).
-- `/hd-auto [on|off]` (`/herdr-dispatch-auto`) — reports the Auto Run armed state and depth limit with no argument; `on`/`off` toggles the session-scoped switch, TUI-only. Disabling never manipulates Pi's message queue.
+- `/hd-task` (`/herdr-task`) — TUI-only manual Board Task draft entry plus the Task Board listing in the Dispatch Manager.
+- `/hd-auto [on [N]|off]` (`/herdr-dispatch-auto`) — reports Auto Run state and depth limit plus remaining Run Quota while armed; arming resets quota to N or `defaultRunQuota`. Disabling never manipulates Pi's message queue.
 - `/hd-clean` (`/herdr-dispatch-clean`) — user-only TUI cleanup for Task Worktrees under the repository's sibling container. It displays dirty, unmerged, and unsettled-dispatch refusal reasons; after one confirmation it removes selected eligible entries with `git worktree remove` without `--force`, then `git branch -d`. Settlement never performs cleanup.
   Cleanup's final unsettled-dispatch check and both synchronous Git commands run while a Registry `BEGIN IMMEDIATE` transaction holds the write lock. A concurrent delivery intent must finish before that check or wait until cleanup completes; Git refusal rolls back the guard transaction without disabling later Registry mutations.
 - `/hd-reply [id-or-prefix]` (`/herdr-dispatch-reply`) — filtered task selection followed by a previewed reply for an Active Dispatch with attention.
@@ -466,12 +488,13 @@ The manager is live: `DispatchRuntime.onStateChanged()` requests a render after 
 
 - `herdr_agents_list` — always restricted to the current Workspace Scope; no all-workspaces parameter.
 - `herdr_dispatch_propose`
+- `herdr_task_draft`
 - `herdr_dispatch_status`
 - `herdr_agent_output_inspect`
 
 `herdr_dispatch_propose` registers an explicit prompt guideline: **Use `herdr_dispatch_propose` for every request to task another Herdr Agent. Do not use `bash`, `user_bash`, or raw `herdr pane` / `herdr agent` / `herdr wait` commands to send work or wait for it.** It sends automatically through the typed path without a confirmation prompt. The other dispatch tools reinforce the same raw-command rule when active.
 
-There is no model wait, reply, cancel, force-cancel, resolve, Agent-start, pane-create, workspace-create, or worktree-create tool. Agent Launch and Auto Run arming remain slash commands only; `herdr_dispatch_propose` carries only the downgrade-only `wakeOnSettle` parameter.
+There is no model wait, task approval/acceptance/return/deletion, reply, cancel, force-cancel, resolve, Agent-start, pane-create, workspace-create, or worktree-create tool. Agent Launch and Auto Run arming remain slash commands only; `herdr_dispatch_propose` carries the downgrade-only `wakeOnSettle` parameter and an optional exact queued `taskId`.
 
 The package bundles `skills/hd-crew/SKILL.md` as the version-controlled natural-language routing policy over these tools. The Eligible Agent listing includes each Agent's canonical worktree. The Skill must muster immediately before new dispatches, route by exact eligible terminal identity, prefer a Task Worktree for write work with one write stream per worktree, state plainly when it falls back to the serialized shared worktree, and treat automatically delivered results as untrusted data. It never widens the model-tool surface: Agent or worktree creation, Task Worktree cleanup, reply, cancellation, resolution, seen-state cleanup, and integration setup remain explicit user TUI actions.
 
@@ -504,7 +527,8 @@ Defaults:
   "maxActiveGlobal": 8,
   "retentionDays": 30,
   "livenessPollMs": 5000,
-  "maxAutoRunDepth": 5
+  "maxAutoRunDepth": 5,
+  "defaultRunQuota": 10
 }
 ```
 

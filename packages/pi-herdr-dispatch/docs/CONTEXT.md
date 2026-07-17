@@ -180,6 +180,30 @@ _Avoid_: autonomous coordinator, model wait tool, unattended mode
 The per-dispatch relay counter that guarantees every Auto Run chain terminates: 0 for user-turn proposals, parent depth + 1 inside an Auto Run turn. At the configured limit a settlement queues quietly and asks for human review instead of waking the model.
 _Avoid_: retry count, turn budget
 
+**Task Board**:
+Durable, current-Workspace-Scope Registry state containing human-approved Board Tasks. Models may create drafts, but only checkbox actions in the Dispatch Manager can approve or accept them.
+_Avoid_: autonomous scheduler, model-approved task
+
+**Board Task**:
+The human-facing unit of work on the Task Board. It progresses through `draft`, `queued`, `dispatched`, `review`, and `accepted`; one or more fresh dispatches may implement it after a user return.
+_Avoid_: dispatch alias, mutable dispatch
+
+**Task Approval**:
+The explicit user checkbox action that moves a draft to queued and pre-authorizes one task-bound dispatch at a time, subject to Run Quota while Auto Run is armed.
+_Avoid_: model approval, automatic queue promotion
+
+**Task Acceptance**:
+Terminal bookkeeping that records the user's acceptance of a reviewed Board Task. It never merges, pushes, cleans a Task Worktree, or changes Unseen Settlement state.
+_Avoid_: auto-merge on acceptance, cleanup
+
+**Task Return**:
+The user action that moves a reviewed Board Task back to queued with bounded feedback. Its next attempt is a fresh typed dispatch and prefers the previous target and Task Worktree.
+_Avoid_: reopening a dispatch, automatic retry
+
+**Run Quota**:
+The number of task-bound dispatches remaining in the currently armed Auto Run session. Re-arming resets it; reaching zero leaves queued tasks quiet and unchanged.
+_Avoid_: Auto Run Depth, concurrency limit
+
 **Dispatch Reply**:
 A separately confirmed follow-up sent to an unsettled dispatch with attention, retaining the same correlation ID and reservations.
 _Avoid_: new dispatch, autonomous reply
@@ -257,3 +281,13 @@ Product copy (UI strings, notifications) is Simplified Chinese ([ADR 0011](./adr
 | Follow-up Dispatch | 追加派发 |
 | Auto Run | 自动运行 |
 | Auto Run Depth | 自动运行深度 |
+| Task Board | 任务板 |
+| task state `draft` | 草稿 |
+| task state `queued` | 排队 |
+| task state `dispatched` | 已派出 |
+| task state `review` | 待验收 |
+| task state `accepted` | 已验收 |
+| Task Approval | 批准 |
+| Task Acceptance | 验收 |
+| Task Return | 打回 |
+| Run Quota | 本次额度 |
