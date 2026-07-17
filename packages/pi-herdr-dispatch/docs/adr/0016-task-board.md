@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented (2026-07-17). Companion design points for roles, workflows, and escalation are recorded below as the proposed scope of ADR 0017 and are **not** part of this change.
+Implemented and **verified live the same day (L16)** — model drafting in user and wake turns, checkbox batch approval, quota-2 termination over a longer queue, depth-0 task dispatches beside a depth-1 in-chain follow-up, armed-only quota (post-review amendment), return-with-feedback rework into the same Task Worktree, bookkeeping-only acceptance, and denied covered-path bypasses all passed against a real Pi + Herdr ([evidence](../ACCEPTANCE-RESULTS.md)). Companion design points for roles, workflows, and escalation are recorded below as the proposed scope of ADR 0017 and are **not** part of this change.
 
 ## Context
 

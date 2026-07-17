@@ -1,6 +1,6 @@
 # pi-herdr-dispatch Design
 
-Status: ADR 0016 Task Board implemented; live acceptance L16 remains pending.
+Status: ADR 0016 Task Board implemented and verified live (L16, 2026-07-17).
 
 ## Purpose
 

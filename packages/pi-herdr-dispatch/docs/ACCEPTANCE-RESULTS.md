@@ -317,3 +317,68 @@ atomically (0 unsettled / 0 leases / 0 occupancy afterwards).
    does not consider an Agent pane still seated in the worktree; removing the directory
    under an idle Agent is possible. Matches the ADR rule as written; noted for a future
    decision.
+
+## L16 — Task Board verified live (2026-07-17)
+
+ADR 0016 acceptance against a real Pi 0.80.9 Origin + Herdr 0.7.4 in a dedicated
+workspace with two `codex` targets — one in the shared repo worktree, one seated in a
+manually created Task Worktree (`…worktrees/l16-board`). `bash scripts/verify.sh live`
+passed first. All seven checklist items passed.
+
+**Model drafting, user promotion — PASS.** A user turn drafted four bounded tasks via
+`herdr_task_draft` (all `draft`, `created_by = model`); a later Auto Run wake turn
+drafted a fifth (`docs索引页`) from a settled result's "后续建议" hint. No draft ever
+dispatched. Batch approval in the Manager exercised every key: `space` toggled one row,
+`A` inverted, `a` selected the group, `Enter` promoted all four with FIFO
+`queue_position` 1–4 and per-task `task_approved` audit events.
+
+**Quota-2 arming over the queue — PASS.** `/hd-auto on` with `defaultRunQuota: 2`
+armed showing `⚡自动 · 深度上限 5 · 本次额度 2`. The kickoff dispatch consumed unit 1;
+the first wake turn dispatched the next task (unit 2, "运行额度现为 0"); the following
+two wake turns each declined further board dispatches ("额度已用完…任务保留在队列"),
+ending their turns quietly with tasks 3 and 4 still `queued` and `run_quota_used = 2`.
+The exhaustion toast itself is transient and was not screen-captured (known toast
+limitation); the notify-once path is unit-tested.
+
+**Depth attribution — PASS.** All four task-bound dispatches recorded
+`auto_run_depth = 0` (including two created inside wake turns), while the in-chain
+verification follow-up to the same target recorded depth 1 — the exact split ADR 0016
+decision 5 requires.
+
+**Armed-only quota (post-review amendment) — PASS.** After `/hd-auto off` (session row
+deleted, `⚡` segment gone, no-arg report correctly omitting any quota figure), a
+task-bound write dispatch in a user turn succeeded with no `auto_run_sessions` row
+created and nothing consumed, and its settlement stayed in the quiet queue.
+
+**Return with feedback — PASS.** The settled write task (`L16-NOTE.md` created in the
+Task Worktree) was returned via `x` + the feedback editor. The task requeued at
+position 5 with `return_feedback` stored and `preferred_worktree_path` automatically
+set from the previous dispatch. Redispatch bound the same task to the same Task
+Worktree target, embedded the framed "Previous attempt was returned by the user" block
+in the outbound text, cleared `return_feedback` on bind, and the rework applied the
+feedback (file updated to two lines).
+
+**Acceptance is bookkeeping — PASS.** Batch-accepting the three reviewed tasks changed
+only task state: the Task Worktree, its branch, the file (same md5), and every
+`result_seen_at` (all NULL) were untouched; the widget kept `✓ 5 已完成` unseen while
+the `待验收` segment cleared.
+
+**Bypass denied — PASS.** Both a `!` user-bash `sqlite3 …registry.sqlite UPDATE` and a
+model bash-tool attempt to promote a draft were blocked by the
+`dispatch-registry-access` guard (exit 126, typed-path message); the draft stayed
+`draft`.
+
+### Findings
+
+1. **Pi palette interaction:** typing `/hd-auto on 2` and pressing Enter lets the
+   argument completion swallow the trailing `2` (the menu accepts `on` and drops the
+   rest); a second Enter then arms with the default quota. Workaround used live: set
+   `defaultRunQuota` in config. Consider argument-hint copy or a quota select step.
+2. **V1 gap:** a `queued` task cannot be deleted or demoted (only drafts can be
+   deleted, only reviewed tasks returned); an unwanted queued task can only be
+   dispatched or left in place. Roadmap candidate alongside reordering.
+3. **Visual note (pre-known):** the `review` state reuses the `▲`/warning attention
+   mark; live it reads acceptably in the 待验收 group but remains conceptually
+   overloaded.
+4. **Copy note:** the Manager keybar shows both `enter 详情` and `enter 提交`; on task
+   rows Enter only submits selections, which the double listing does not convey.
