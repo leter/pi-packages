@@ -60,17 +60,20 @@ export function formatConfirmationResult(result: {
   dispatchId?: string;
   [key: string]: unknown;
 }): string {
+  const quota = typeof result.remainingQuota === "number"
+    ? ` Run quota remaining: ${result.remainingQuota}.`
+    : "";
   if (result.status === "active") {
-    return "Dispatch is active; delivery echo was verified.";
+    return `Dispatch is active; delivery echo was verified.${quota}`;
   }
   if (result.status === "delivery-unverified") {
-    return "Dispatch delivery is unverified. Reservations are retained and no automatic resend will occur.";
+    return `Dispatch delivery is unverified. Reservations are retained and no automatic resend will occur.${quota}`;
   }
   if (result.status === "failed") {
-    return "Dispatch was proven not sent and recorded failed.";
+    return `Dispatch was proven not sent and recorded failed.${quota}`;
   }
   if (result.status === "already-settled") {
-    return `Dispatch was already settled; the recorded outcome is ${String(result.outcome)}.`;
+    return `Dispatch was already settled; the recorded outcome is ${String(result.outcome)}.${quota}`;
   }
   return "Dispatch proposal was cancelled without delivery.";
 }

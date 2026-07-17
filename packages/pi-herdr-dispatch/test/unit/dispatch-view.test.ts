@@ -2,7 +2,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 
-import type { AttentionRecord, StoredDispatch } from "../../src/registry/types.js";
+import type { AttentionRecord, StoredDispatch, StoredTask } from "../../src/registry/types.js";
 import {
   attentionPriority,
   buildDetailLines,
@@ -14,9 +14,12 @@ import {
   primaryAttention,
   selectableIds,
   sortUnsettled,
+  TaskBoardSelectionModel,
   type DispatchViewSnapshot,
   type UnsettledEntry,
   type ViewLine,
+  updateTaskBoardSelection,
+  taskBoardSubmission,
 } from "../../src/pi/dispatch-view-model.js";
 import { DispatchViewComponent, type DispatchViewPorts } from "../../src/pi/dispatch-view.js";
 
@@ -51,10 +54,91 @@ function attention(condition: AttentionRecord["condition"]): AttentionRecord {
   return { condition, details: {}, addedAt: 1_000_000 };
 }
 
+function boardTask(overrides: Partial<StoredTask> = {}): StoredTask {
+  return {
+    id: "hdt_a",
+    workspaceId: "w1",
+    title: "Implement parser",
+    task: "Implement the parser",
+    mode: "write",
+    state: "draft",
+    createdBy: "model",
+    createdAt: 1_000,
+    updatedAt: 1_000,
+    ...overrides,
+  };
+}
+
 const plain = (line: ViewLine): string => line.spans.map((span) => span.text).join("");
 const plainAll = (lines: readonly ViewLine[]): string[] => lines.map(plain);
 
 describe("dispatch view model", () => {
+  it("keeps Task Board checkbox selection scoped to the current group", () => {
+    const tasks = [
+      boardTask({ id: "hdt_draft_a" }),
+      boardTask({ id: "hdt_draft_b" }),
+      boardTask({ id: "hdt_review", state: "review", approvedAt: 100, reviewedAt: 200 }),
+      boardTask({ id: "hdt_queued", state: "queued", approvedAt: 100 }),
+    ];
+    let selected = updateTaskBoardSelection(new Set(), tasks, "hdt_draft_a", "toggle");
+    selected = updateTaskBoardSelection(selected, tasks, "hdt_draft_a", "all");
+    expect([...selected]).toEqual(["hdt_draft_a", "hdt_draft_b"]);
+    selected = updateTaskBoardSelection(selected, tasks, "hdt_draft_a", "invert");
+    expect([...selected]).toEqual([]);
+    selected = updateTaskBoardSelection(selected, tasks, "hdt_review", "all");
+    expect([...selected]).toEqual(["hdt_review"]);
+    expect(updateTaskBoardSelection(selected, tasks, "hdt_queued", "toggle")).toEqual(selected);
+  });
+
+  it("routes Task Board submission by draft or review group", () => {
+    const tasks = [
+      boardTask({ id: "hdt_draft" }),
+      boardTask({ id: "hdt_review", state: "review", approvedAt: 100, reviewedAt: 200 }),
+    ];
+    expect(taskBoardSubmission(tasks, "hdt_draft", new Set(["hdt_draft"]))).toEqual({
+      action: "task-approve",
+      taskIds: ["hdt_draft"],
+    });
+    expect(taskBoardSubmission(tasks, "hdt_review", new Set(["hdt_review"]))).toEqual({
+      action: "task-accept",
+      taskIds: ["hdt_review"],
+    });
+  });
+
+  it("keeps the checkbox set inside the pure Task Board selection model", () => {
+    const tasks = [
+      boardTask({ id: "hdt_draft_a" }),
+      boardTask({ id: "hdt_draft_b" }),
+    ];
+    const model = new TaskBoardSelectionModel();
+
+    model.update(tasks, "hdt_draft_a", "all");
+
+    expect([...model.selected]).toEqual(["hdt_draft_a", "hdt_draft_b"]);
+    expect(model.submission(tasks, "hdt_draft_a")).toEqual({
+      action: "task-approve",
+      taskIds: ["hdt_draft_a", "hdt_draft_b"],
+    });
+  });
+
+  it("renders Task Board groups without leaking hdt_ IDs", () => {
+    const snapshot: DispatchViewSnapshot = {
+      originSessionId: "session_origin",
+      unsettled: [],
+      settled: [],
+      tasks: [
+        boardTask({ id: "hdt_secret_draft" }),
+        boardTask({ id: "hdt_secret_review", state: "review", approvedAt: 100, reviewedAt: 200 }),
+      ],
+    };
+    const rendered = plainAll(
+      buildListLines(snapshot, "hdt_secret_draft", false, 1_000_000, undefined, new Set()),
+    ).join("\n");
+    expect(rendered).toContain("任务板");
+    expect(rendered).toContain("草稿");
+    expect(rendered).toContain("待验收");
+    expect(rendered).not.toContain("hdt_");
+  });
   it("sorts attention first, then active, then delivering by deadline", () => {
     const entries: UnsettledEntry[] = [
       { dispatch: dispatch({ id: "hd_late_active", deadlineAt: 9_000_000 }), attention: [] },

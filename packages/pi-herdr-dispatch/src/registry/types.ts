@@ -1,3 +1,7 @@
+import type { TaskCreatedBy, TaskState } from "../domain/task-board.js";
+
+export type { TaskCreatedBy, TaskState } from "../domain/task-board.js";
+
 export type DispatchMode = "non-mutating" | "write";
 export type DispatchLifecycle = "delivering" | "active" | "settled";
 export type FinalOutcome = "done" | "blocked" | "failed" | "cancelled";
@@ -35,6 +39,10 @@ export interface ConfirmDeliveryIntent {
   autoRunDepth?: number;
   /** False downgrades this dispatch so its settlement never triggers an Auto Run turn. */
   wakeOnSettle?: boolean;
+  /** Binds this fresh dispatch to one approved Board Task. */
+  taskId?: string;
+  /** Used only for a migrated armed session whose persisted quota is NULL. */
+  defaultRunQuota?: number;
 }
 
 export interface StoredDispatch {
@@ -69,6 +77,46 @@ export interface StoredDispatch {
   wakeOnSettle: boolean;
   updatedAt: number;
 }
+
+export interface CreateTaskInput {
+  id?: string;
+  workspaceId: string;
+  title: string;
+  task: string;
+  mode: DispatchMode;
+  preferredWorktreePath?: string;
+  createdBy: TaskCreatedBy;
+  createdAt: number;
+}
+
+export interface StoredTask {
+  id: string;
+  workspaceId: string;
+  title: string;
+  task: string;
+  mode: DispatchMode;
+  preferredWorktreePath?: string;
+  state: TaskState;
+  queuePosition?: number;
+  boundDispatchId?: string;
+  returnFeedback?: string;
+  createdBy: TaskCreatedBy;
+  createdAt: number;
+  approvedAt?: number;
+  reviewedAt?: number;
+  acceptedAt?: number;
+  updatedAt: number;
+}
+
+export type RunQuotaState =
+  | { armed: false; legacyDefaulted: false }
+  | {
+      armed: true;
+      quota: number;
+      used: number;
+      remaining: number;
+      legacyDefaulted: boolean;
+    };
 
 export interface TargetOccupancyRecord {
   targetTerminalId: string;

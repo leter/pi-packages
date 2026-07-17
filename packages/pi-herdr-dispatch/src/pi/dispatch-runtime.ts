@@ -56,6 +56,7 @@ export class DispatchRuntime {
   #pendingDeliveryTimer?: NodeJS.Timeout;
   #mutationUnavailableReason = UI_COPY.runtime.dispatchSessionNotStarted();
   readonly #stateListeners = new Set<() => void>();
+  #runQuotaExhaustedNotified = false;
 
   constructor(options: DispatchRuntimeOptions = {}) {
     this.registryRuntime = options.registry ?? new RegistryRuntime();
@@ -242,7 +243,7 @@ export class DispatchRuntime {
   async #deliverPendingContext(ctx: ExtensionContext, onlyDispatchId?: string): Promise<void> {
     if (ctx.mode !== "tui" || !this.#contextDelivery || !this.#sendContextMessage) return;
     const registry = this.registryRuntime.registry;
-    if (!registry) return;
+    if (!registry || !this.#workspaceId) return;
     const context = this.#contextPort(ctx);
     const sessionId = ctx.sessionManager.getSessionId();
     const armedAt =
@@ -251,6 +252,10 @@ export class DispatchRuntime {
       ? [registry.getDispatch(onlyDispatchId)].filter((item) => item !== undefined)
       : registry.listPendingContextDelivery(sessionId)
     ).filter((dispatch) => dispatch.originSessionId === sessionId);
+    const runQuota = registry.getRunQuotaState(
+      sessionId,
+      this.#config.defaultRunQuota,
+    );
     this.#autoRun.deliverPending({
       armed: armedAt !== undefined,
       ...(armedAt === undefined ? {} : { armedAt }),
@@ -259,6 +264,10 @@ export class DispatchRuntime {
       pending,
       deliver: (dispatchId, wake) => this.#contextDelivery!.deliver(dispatchId, context, wake),
       notifyDepthExhausted: (dispatchId) => void this.#notifyAutoRunDepthExhausted(dispatchId),
+      queuedTaskCount: registry.listTasks(this.#workspaceId).filter(
+        (task) => task.state === "queued",
+      ).length,
+      remainingRunQuota: runQuota.armed ? runQuota.remaining : 0,
     });
   }
 
@@ -273,24 +282,55 @@ export class DispatchRuntime {
     await this.deliverPendingContext(ctx);
   }
 
-  autoRunState(): { armed: boolean; maxDepth: number } | undefined {
+  autoRunState(): { armed: boolean; maxDepth: number; remainingQuota?: number } | undefined {
     const registry = this.registryRuntime.registry;
     if (!registry || !this.#originSessionId) return undefined;
+    const quota = registry.getRunQuotaState(
+      this.#originSessionId,
+      this.#config.defaultRunQuota,
+    );
     return {
-      armed: registry.isAutoRunArmed(this.#originSessionId),
+      armed: quota.armed,
       maxDepth: this.#config.maxAutoRunDepth,
+      ...(quota.armed ? { remainingQuota: quota.remaining } : {}),
     };
   }
 
-  setAutoRunArmed(armed: boolean): void {
+  setAutoRunArmed(armed: boolean, quota = this.#config.defaultRunQuota): void {
     if (this.#mutationUnavailableReason) throw new Error(this.#mutationUnavailableReason);
     const registry = this.registryRuntime.registry;
     if (!registry || !this.#originSessionId) {
       throw new Error(UI_COPY.command.runtimeUnavailable());
     }
-    if (armed) registry.armAutoRun(this.#originSessionId, Date.now());
+    if (armed) {
+      registry.armAutoRun(this.#originSessionId, quota, Date.now());
+      this.#runQuotaExhaustedNotified = false;
+    }
     else registry.disarmAutoRun(this.#originSessionId, Date.now());
     this.#updateWidget();
+  }
+
+  async notifyRunQuotaExhaustedOnce(): Promise<void> {
+    const registry = this.registryRuntime.registry;
+    if (
+      !registry ||
+      !this.#originSessionId ||
+      !this.#workspaceId ||
+      !registry.isAutoRunArmed(this.#originSessionId) ||
+      !registry.listTasks(this.#workspaceId).some((task) => task.state === "queued")
+    ) return;
+    if (this.#runQuotaExhaustedNotified) return;
+    this.#runQuotaExhaustedNotified = true;
+    if (!this.#adapter) return;
+    try {
+      await this.#adapter.showNotification({
+        title: UI_COPY.notification.runQuotaExhaustedTitle(),
+        body: UI_COPY.notification.runQuotaExhaustedBody(),
+        sound: "request",
+      });
+    } catch {
+      // The queued Board Task and persistent quota state remain authoritative.
+    }
   }
 
   stop(): void {
@@ -299,6 +339,7 @@ export class DispatchRuntime {
     this.#originSessionId = undefined;
     this.#workspaceId = undefined;
     this.#autoRun.reset();
+    this.#runQuotaExhaustedNotified = false;
     if (this.#pendingDeliveryTimer) clearInterval(this.#pendingDeliveryTimer);
     this.#pendingDeliveryTimer = undefined;
     this.#monitor?.stop();

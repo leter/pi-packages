@@ -6,6 +6,8 @@ import type {
   DispatchLifecycle,
   FinalOutcome,
   StoredDispatch,
+  StoredTask,
+  TaskState,
 } from "../registry/types.js";
 import { UI_COPY } from "./ui-copy.js";
 
@@ -76,6 +78,21 @@ export function agentStatusMark(status: string): StateMark {
 }
 
 export const ATTENTION_GLYPH = "▲";
+
+export function taskStateMark(state: TaskState): StateMark {
+  switch (state) {
+    case "draft":
+      return { glyph: "○", color: "muted", label: UI_COPY.state.task(state) };
+    case "queued":
+      return { glyph: "◌", color: "warning", label: UI_COPY.state.task(state) };
+    case "dispatched":
+      return { glyph: "●", color: "accent", label: UI_COPY.state.task(state) };
+    case "review":
+      return { glyph: ATTENTION_GLYPH, color: "warning", label: UI_COPY.state.task(state) };
+    case "accepted":
+      return { glyph: "✓", color: "success", label: UI_COPY.state.task(state) };
+  }
+}
 
 const ZERO_WIDTH_CHARACTER = /[\p{Default_Ignorable_Code_Point}\p{Mark}]/u;
 
@@ -215,6 +232,23 @@ export function agentRow(target: ProposalTarget): AgentRow {
     cwd: shortenPath(target.cwd, 36),
     worktree: target.worktreePath ? shortenPath(target.worktreePath, 36) : "—",
     terminalId: shortenId(target.terminalId),
+  };
+}
+
+export interface BoardTaskRow {
+  mark: StateMark;
+  title: string;
+  state: string;
+  mode: string;
+}
+
+export function boardTaskRow(task: StoredTask): BoardTaskRow {
+  const state = taskStateMark(task.state);
+  return {
+    mark: state,
+    title: sanitizeLine(task.title, 80),
+    state: state.label,
+    mode: UI_COPY.state.mode(task.mode),
   };
 }
 

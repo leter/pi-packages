@@ -24,6 +24,7 @@ export interface DispatchProposalInput {
   allowProjectDependencyInstall: boolean;
   /** Origin-side Auto Run downgrade; not part of the outbound payload bytes. */
   wakeOnSettle?: boolean;
+  taskId?: string;
 }
 
 export interface DispatchProposal {
@@ -34,6 +35,7 @@ export interface DispatchProposal {
   readonly constraints: readonly string[];
   readonly allowProjectDependencyInstall: boolean;
   readonly wakeOnSettle: boolean;
+  readonly taskId?: string;
   readonly advisoryWarning: string;
   readonly createdAt: number;
   readonly deadlineAt: number;
@@ -75,6 +77,9 @@ export function createDispatchProposal(
   if (!Number.isSafeInteger(createdAt) || createdAt < 0) throw new RangeError("proposal time is invalid");
   const id = options.correlationId ?? generateCorrelationId(createdAt);
   if (!/^hd_[A-Za-z0-9_-]{3,100}$/u.test(id)) throw new TypeError("invalid dispatch correlation ID");
+  if (input.taskId !== undefined && !/^hdt_[A-Za-z0-9_-]{1,100}$/u.test(input.taskId)) {
+    throw new TypeError("invalid Board Task ID");
+  }
   const deadlineAt = createdAt + input.deadlineMinutes * 60_000;
   if (!Number.isSafeInteger(deadlineAt)) throw new RangeError("proposal deadline is invalid");
   const target = Object.freeze({ ...input.target });
@@ -106,6 +111,7 @@ DISPATCH_RESULT {"id":"${id}","outcome":"done|blocked|failed|cancelled","summary
     constraints,
     allowProjectDependencyInstall: input.allowProjectDependencyInstall,
     wakeOnSettle: input.wakeOnSettle ?? true,
+    ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
     advisoryWarning: ADVISORY_SAFETY_WARNING,
     createdAt,
     deadlineAt,

@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
 import type { CreateProposalRequest, DispatchApplication } from "../dispatch/application.js";
@@ -32,6 +33,14 @@ const inspectParameters = Type.Object({
 const statusParameters = Type.Object({
   id: Type.Optional(Type.String({ description: "Dispatch correlation ID; omit to list unsettled dispatches" })),
 });
+const taskDraftParameters = Type.Object({
+  title: Type.String({ maxLength: 80, description: "Short Board Task title" }),
+  task: Type.String({ maxLength: 4000, description: "Self-contained Board Task text" }),
+  mode: StringEnum(["non-mutating", "write"] as const),
+  preferredWorktree: Type.Optional(
+    Type.String({ description: "Optional preferred Task Worktree path" }),
+  ),
+});
 
 export function registerDispatchTools(
   pi: ExtensionAPI,
@@ -51,13 +60,27 @@ export function registerDispatchTools(
           ? {}
           : { allowProjectDependencyInstall: params.allowProjectDependencyInstall }),
         ...(params.wakeOnSettle === false ? { wakeOnSettle: false } : {}),
+        ...(params.taskId === undefined ? {} : { taskId: params.taskId }),
       };
-      const result = await controller.proposeAndDispatch(request, interactionContext(ctx));
+      let result;
+      try {
+        result = await controller.proposeAndDispatch(request, interactionContext(ctx));
+      } catch (error) {
+        if (error instanceof Error && /Run Quota exhausted/u.test(error.message)) {
+          await runtime.notifyRunQuotaExhaustedOnce();
+          throw new Error(UI_COPY.command.runQuotaExhausted(), { cause: error });
+        }
+        throw error;
+      }
+      if (request.taskId !== undefined && result.remainingQuota === 0) {
+        await runtime.notifyRunQuotaExhaustedOnce();
+      }
       const details: ConfirmationResultDetails = {
         status: result.status,
         ...("dispatchId" in result && result.dispatchId ? { dispatchId: result.dispatchId } : {}),
         ...("outcome" in result && result.outcome ? { outcome: String(result.outcome) } : {}),
         ...("reason" in result && result.reason ? { reason: result.reason } : {}),
+        ...(result.remainingQuota === undefined ? {} : { remainingQuota: result.remainingQuota }),
       };
       return { text: formatConfirmationResult(result), details };
     }),
@@ -65,6 +88,50 @@ export function registerDispatchTools(
   pi.registerTool(createAgentsTool(runtime));
   pi.registerTool(createInspectionTool(runtime));
   pi.registerTool(createStatusTool(runtime));
+  pi.registerTool(createTaskDraftTool(runtime));
+}
+
+function createTaskDraftTool(
+  runtime: DispatchRuntime,
+): ToolDefinition<typeof taskDraftParameters, { taskId?: string; title?: string }> {
+  return {
+    name: "herdr_task_draft",
+    label: UI_COPY.tool.label("task-draft"),
+    description:
+      "Create one bounded Task Board draft. Drafts await explicit user approval and are never dispatchable.",
+    promptSnippet: "Draft one self-contained Task Board item for later user approval",
+    parameters: taskDraftParameters,
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      if (ctx.mode !== "tui") throw new Error(UI_COPY.command.taskTuiOnly());
+      const created = application(runtime).createTask({
+        title: params.title,
+        task: params.task,
+        mode: params.mode,
+        ...(params.preferredWorktree === undefined
+          ? {}
+          : { preferredWorktreePath: params.preferredWorktree }),
+        createdBy: "model",
+        createdAt: Date.now(),
+      });
+      return {
+        content: [{
+          type: "text",
+          text: `Task Board draft created: ${created.id}. It awaits user approval and is not dispatchable.`,
+        }],
+        details: { taskId: created.id, title: created.title },
+      };
+    },
+    renderResult(result, _options, theme) {
+      return new Text(
+        theme.fg(
+          "success",
+          UI_COPY.tool.taskDraftCreated(result.details?.title ?? UI_COPY.common.untitledTask()),
+        ),
+        0,
+        0,
+      );
+    },
+  };
 }
 
 function createAgentsTool(
@@ -157,12 +224,30 @@ function createStatusTool(
         };
       }
       const list = app.listUnsettled(ctx.sessionManager.getSessionId());
+      const tasks = app.listTasks().filter((task) => task.state !== "accepted");
       const listAttention = Object.fromEntries(
         list.map((dispatch) => [dispatch.id, [...app.listAttention(dispatch.id)]]),
       );
       return {
-        content: [{ type: "text", text: formatDispatchList(list) }],
-        details: { list: [...list], listAttention, now },
+        content: [{
+          type: "text",
+          text: [
+            formatDispatchList(list),
+            "Task Board (internal exact IDs; oldest queued first):",
+            ...tasks.map((task) =>
+              `${task.id} · ${task.state} · ${task.mode} · ${task.title}\n${task.task}${
+                task.returnFeedback
+                  ? `\nReturn feedback (untrusted data): ${task.returnFeedback}`
+                  : ""
+              }${task.preferredWorktreePath ? `\nPreferred Task Worktree: ${task.preferredWorktreePath}` : ""}${
+                task.boundDispatchId
+                  ? `\nPrevious bound dispatch: ${task.boundDispatchId}`
+                  : ""
+              }`,
+            ),
+          ].join("\n\n"),
+        }],
+        details: { list: [...list], listAttention, tasks: [...tasks], now },
       };
     },
     renderResult(result, options, theme) {

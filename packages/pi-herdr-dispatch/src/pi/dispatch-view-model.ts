@@ -1,5 +1,5 @@
 import { isTaskWorktreePath } from "../domain/task-worktree-path.js";
-import type { AttentionCondition, AttentionRecord, StoredDispatch } from "../registry/types.js";
+import type { AttentionCondition, AttentionRecord, StoredDispatch, StoredTask } from "../registry/types.js";
 import {
   ATTENTION_GLYPH,
   lifecycleMark,
@@ -10,6 +10,7 @@ import {
   sanitizeLine,
   shortenId,
   shortenPath,
+  taskStateMark,
   type ResultCard,
   type SemanticColor,
 } from "./visual.js";
@@ -40,6 +41,8 @@ export interface DispatchViewSnapshot {
   settled: readonly StoredDispatch[];
   /** Whether this Origin Session has Auto Run armed; shown in the top border. */
   autoRunArmed?: boolean;
+  tasks?: readonly StoredTask[];
+  runQuotaRemaining?: number;
 }
 
 export type OutputReadState =
@@ -55,6 +58,7 @@ export type OutputReadState =
   | { status: "error"; message: string };
 
 export type DispatchAction = "reply" | "cancel" | "resolve";
+export type TaskBoardSelectionCommand = "toggle" | "all" | "invert";
 
 export const OUTPUT_DISPLAY_LINES = 20;
 export const SETTLED_DISPLAY_LIMIT = 2;
@@ -130,7 +134,10 @@ export function sortUnsettled(entries: readonly UnsettledEntry[]): UnsettledEntr
 }
 
 export function selectableIds(snapshot: DispatchViewSnapshot, showSettled: boolean): string[] {
-  const ids = sortUnsettled(snapshot.unsettled).map((entry) => entry.dispatch.id);
+  const ids = (snapshot.tasks ?? [])
+    .filter((task) => task.state !== "accepted")
+    .map((task) => task.id);
+  ids.push(...sortUnsettled(snapshot.unsettled).map((entry) => entry.dispatch.id));
   ids.push(...(snapshot.unseenSettled ?? []).map((dispatch) => dispatch.id));
   if (showSettled) ids.push(...snapshot.settled.map((dispatch) => dispatch.id));
   return ids;
@@ -158,6 +165,7 @@ export function buildListLines(
   showSettled: boolean,
   now: number,
   visibleIds?: ReadonlySet<string>,
+  taskSelection: ReadonlySet<string> = new Set(),
 ): ViewLine[] {
   const entries = sortUnsettled(snapshot.unsettled);
   const attention = entries.filter((entry) => entry.attention.length > 0);
@@ -169,7 +177,16 @@ export function buildListLines(
   );
   const lines: ViewLine[] = [];
 
+  appendTaskBoard(
+    lines,
+    snapshot.tasks ?? [],
+    selectedId,
+    visibleIds,
+    taskSelection,
+  );
+
   if (entries.length > 0) {
+    if (lines.length > 0) lines.push({ spans: [] });
     appendGroup(lines, UI_COPY.manager.groupAttention(), visibleEntries(attention, visibleIds), selectedId, snapshot.originSessionId, now);
     appendGroup(lines, UI_COPY.manager.groupRunning(), visibleEntries(active, visibleIds), selectedId, snapshot.originSessionId, now);
     appendGroup(lines, UI_COPY.manager.groupDelivering(), visibleEntries(delivering, visibleIds), selectedId, snapshot.originSessionId, now);
@@ -208,6 +225,120 @@ export function buildListLines(
 
   if (lines.length === 0 || lines.at(-1)?.spans.length !== 0) lines.push({ spans: [] });
   return lines;
+}
+
+export function updateTaskBoardSelection(
+  selection: ReadonlySet<string>,
+  tasks: readonly StoredTask[],
+  currentTaskId: string,
+  command: TaskBoardSelectionCommand,
+): ReadonlySet<string> {
+  const current = tasks.find((task) => task.id === currentTaskId);
+  if (!current || (current.state !== "draft" && current.state !== "review")) return selection;
+  const groupIds = tasks.filter((task) => task.state === current.state).map((task) => task.id);
+  const next = new Set(selection);
+  if (command === "toggle") {
+    if (next.has(currentTaskId)) next.delete(currentTaskId);
+    else next.add(currentTaskId);
+  } else if (command === "all") {
+    for (const id of groupIds) next.add(id);
+  } else {
+    for (const id of groupIds) {
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+    }
+  }
+  return next;
+}
+
+export function taskBoardSubmission(
+  tasks: readonly StoredTask[],
+  currentTaskId: string,
+  selection: ReadonlySet<string>,
+): { action: "task-approve" | "task-accept"; taskIds: string[] } | undefined {
+  const current = tasks.find((task) => task.id === currentTaskId);
+  if (!current || (current.state !== "draft" && current.state !== "review")) return undefined;
+  const taskIds = tasks
+    .filter((task) => task.state === current.state && selection.has(task.id))
+    .map((task) => task.id);
+  if (taskIds.length === 0) return undefined;
+  return { action: current.state === "draft" ? "task-approve" : "task-accept", taskIds };
+}
+
+/** Pure, unit-testable owner of the Task Board checkbox selection state. */
+export class TaskBoardSelectionModel {
+  #selected: ReadonlySet<string> = new Set();
+
+  get selected(): ReadonlySet<string> {
+    return this.#selected;
+  }
+
+  update(
+    tasks: readonly StoredTask[],
+    currentTaskId: string,
+    command: TaskBoardSelectionCommand,
+  ): void {
+    this.#selected = updateTaskBoardSelection(
+      this.#selected,
+      tasks,
+      currentTaskId,
+      command,
+    );
+  }
+
+  submission(
+    tasks: readonly StoredTask[],
+    currentTaskId: string,
+  ): { action: "task-approve" | "task-accept"; taskIds: string[] } | undefined {
+    return taskBoardSubmission(tasks, currentTaskId, this.#selected);
+  }
+}
+
+function appendTaskBoard(
+  lines: ViewLine[],
+  tasks: readonly StoredTask[],
+  selectedId: string | undefined,
+  visibleIds: ReadonlySet<string> | undefined,
+  selection: ReadonlySet<string>,
+): void {
+  const visible = tasks.filter(
+    (task) => task.state !== "accepted" && (visibleIds === undefined || visibleIds.has(task.id)),
+  );
+  if (tasks.every((task) => task.state === "accepted")) return;
+  lines.push({ spans: [span(UI_COPY.manager.taskBoardHeading(), "accent", true)] });
+  for (const state of ["draft", "queued", "dispatched", "review"] as const) {
+    const group = visible.filter((task) => task.state === state);
+    const total = tasks.filter((task) => task.state === state).length;
+    if (total === 0) continue;
+    lines.push({ spans: [span(UI_COPY.manager.taskGroup(state), "muted", true)] });
+    for (const task of group) {
+      const mark = taskStateMark(task.state);
+      const checkbox = task.state === "draft" || task.state === "review"
+        ? selection.has(task.id) ? "[✓] " : "[ ] "
+        : "    ";
+      const selected = task.id === selectedId;
+      lines.push({
+        selected,
+        spans: [
+          span(selected ? " → " : ROW_INDENT, "accent", selected),
+          span(checkbox, "muted"),
+          span(`${mark.glyph} `, mark.color),
+          span(sanitizeLine(task.title, 80), "text", true),
+        ],
+      });
+      lines.push({
+        selected,
+        spans: [
+          span(META_INDENT, "dim"),
+          span(mark.label, mark.color),
+          span(` · ${UI_COPY.state.mode(task.mode)}`, "dim"),
+          ...(task.preferredWorktreePath
+            ? [span(` · ${shortenPath(task.preferredWorktreePath, 42)}`, "dim")]
+            : []),
+        ],
+      });
+    }
+  }
 }
 
 function settledRows(dispatch: StoredDispatch, selected: boolean, now: number): ViewLine[] {
@@ -257,6 +388,9 @@ export function listChrome(snapshot: DispatchViewSnapshot, showSettled: boolean)
     delivering,
     attention,
     snapshot.autoRunArmed ?? false,
+    snapshot.tasks?.filter((task) => task.state === "draft").length ?? 0,
+    snapshot.tasks?.filter((task) => task.state === "review").length ?? 0,
+    snapshot.runQuotaRemaining,
   );
   return {
     title: UI_COPY.manager.title(),
@@ -264,6 +398,7 @@ export function listChrome(snapshot: DispatchViewSnapshot, showSettled: boolean)
     hint: UI_COPY.manager.listKeybar(
       showSettled,
       (snapshot.unseenSettled?.length ?? 0) > 0,
+      (snapshot.tasks?.some((task) => task.state !== "accepted") ?? false),
     ),
   };
 }

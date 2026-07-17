@@ -33,6 +33,7 @@ describe("dispatch configuration", () => {
         agentStartupTimeoutMs: 90_000,
         maxActiveGlobal: 10,
         maxAutoRunDepth: 20,
+        defaultRunQuota: 50,
       }),
     ).toEqual({
       ...DEFAULT_DISPATCH_CONFIG,
@@ -41,6 +42,7 @@ describe("dispatch configuration", () => {
       agentStartupTimeoutMs: 90_000,
       maxActiveGlobal: 10,
       maxAutoRunDepth: 20,
+      defaultRunQuota: 50,
     });
   });
 
@@ -57,6 +59,9 @@ describe("dispatch configuration", () => {
     { maxAutoRunDepth: 0 },
     { maxAutoRunDepth: 21 },
     { maxAutoRunDepth: 2.5 },
+    { defaultRunQuota: 0 },
+    { defaultRunQuota: 51 },
+    { defaultRunQuota: 1.5 },
   ])("rejects unsafe config instead of partially applying it: %j", (value) => {
     expect(() => parseDispatchConfig(value)).toThrow();
   });

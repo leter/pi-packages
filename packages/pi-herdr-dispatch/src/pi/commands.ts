@@ -300,6 +300,8 @@ export function registerDispatchCommands(
         return {
           originSessionId,
           autoRunArmed: runtime.autoRunState()?.armed ?? false,
+          runQuotaRemaining: runtime.autoRunState()?.remainingQuota,
+          tasks: action ? [] : app.listTasks(),
           unsettled: dispatches.map((dispatch) => ({
             dispatch,
             attention: app.listAttention(dispatch.id),
@@ -330,6 +332,52 @@ export function registerDispatchCommands(
       dispatchViewOpen = false;
     }
     if (!result) return;
+    if ("taskIds" in result) {
+      let changed: number;
+      try {
+        changed = result.action === "task-approve"
+          ? app.approveTasks(result.taskIds, Date.now())
+          : app.acceptTasks(result.taskIds, Date.now());
+      } catch (error) {
+        throw new Error(UI_COPY.command.taskOperationFailed(), { cause: error });
+      }
+      ctx.ui.notify(
+        result.action === "task-approve"
+          ? UI_COPY.command.tasksApproved(changed)
+          : UI_COPY.command.tasksAccepted(changed),
+        "info",
+      );
+      return openPanel(ctx);
+    }
+    if ("taskId" in result) {
+      const task = app.listTasks().find((candidate) => candidate.id === result.taskId);
+      if (!task) throw new Error(UI_COPY.command.selectedTaskUnavailable());
+      if (result.action === "task-delete") {
+        const confirmed = await ctx.ui.confirm(
+          UI_COPY.command.taskDeleteConfirm(task.title),
+          UI_COPY.command.taskDeleteConfirmBody(),
+        );
+        if (confirmed) {
+          try {
+            app.deleteDraft(task.id, Date.now());
+          } catch (error) {
+            throw new Error(UI_COPY.command.taskOperationFailed(), { cause: error });
+          }
+          ctx.ui.notify(UI_COPY.command.taskDraftDeleted(), "info");
+        }
+      } else {
+        const feedback = await ctx.ui.editor(UI_COPY.command.taskReturnFeedback());
+        if (feedback !== undefined) {
+          try {
+            app.returnTask(task.id, feedback, Date.now());
+          } catch (error) {
+            throw new Error(UI_COPY.command.taskOperationFailed(), { cause: error });
+          }
+          ctx.ui.notify(UI_COPY.command.taskReturned(), "info");
+        }
+      }
+      return openPanel(ctx);
+    }
     const dispatch = app.getDispatch(result.dispatchId);
     if (!dispatch) throw new Error(UI_COPY.command.selectedDispatchUnavailable());
     if (result.action === "redispatch") {
@@ -376,6 +424,62 @@ export function registerDispatchCommands(
       }),
   });
 
+  registerCommandWithAlias(pi, "herdr-task", "hd-task", {
+    description: UI_COPY.command.description("task"),
+    handler: async (_args, ctx) =>
+      handle(ctx, async () => {
+        if (ctx.mode !== "tui") throw new Error(UI_COPY.command.taskTuiOnly());
+        if (runtime.mutationUnavailableReason) throw new Error(runtime.mutationUnavailableReason);
+        const selected = await ctx.ui.select(UI_COPY.command.taskAction(), [
+          UI_COPY.command.taskManualEntry(),
+          UI_COPY.command.taskOpenBoard(),
+        ]);
+        if (!selected) return;
+        if (selected === UI_COPY.command.taskOpenBoard()) return openPanel(ctx);
+        const title = await ctx.ui.input(UI_COPY.command.taskTitle());
+        if (title === undefined) return;
+        const task = await ctx.ui.editor(UI_COPY.command.taskText());
+        if (task === undefined) return;
+        const mode = await selectDomainValue(
+          (selectTitle, options) => ctx.ui.select(selectTitle, options),
+          UI_COPY.command.mutationMode(),
+          ["write", "non-mutating"] as const,
+          (value) => UI_COPY.state.mode(value),
+        );
+        if (mode === undefined) return;
+        let entries: readonly TaskWorktreeEntry[] = [];
+        try {
+          entries = await taskWorktrees(runtime).list(ctx.cwd);
+        } catch {
+          // Manual drafts may omit a preference outside a Git worktree.
+        }
+        const none = UI_COPY.command.taskNoPreferredWorktree();
+        const labels = entries.map((entry) => shortenPath(entry.path, 60));
+        const preferred = await ctx.ui.select(UI_COPY.command.taskPreferredWorktree(), [
+          none,
+          ...labels,
+        ]);
+        if (preferred === undefined) return;
+        const preferredWorktreePath = preferred === none
+          ? undefined
+          : entries[labels.indexOf(preferred)]?.path;
+        try {
+          application(runtime).createTask({
+            title,
+            task,
+            mode,
+            ...(preferredWorktreePath === undefined ? {} : { preferredWorktreePath }),
+            createdBy: "user",
+            createdAt: Date.now(),
+          });
+        } catch (error) {
+          throw new Error(UI_COPY.command.taskDraftInvalid(), { cause: error });
+        }
+        ctx.ui.notify(UI_COPY.command.taskDraftCreated(), "info");
+        await openPanel(ctx);
+      }),
+  });
+
   registerCommandWithAlias(pi, "herdr-dispatch-auto", "hd-auto", {
     description: UI_COPY.command.description("auto"),
     getArgumentCompletions: () => ["on", "off"].map((value) => ({ value, label: value })),
@@ -389,18 +493,29 @@ export function registerDispatchCommands(
               runtime.mutationUnavailableReason ?? UI_COPY.command.runtimeUnavailable(),
             );
           }
-          ctx.ui.notify(UI_COPY.command.autoStatus(state.armed, state.maxDepth), "info");
+          ctx.ui.notify(
+            UI_COPY.command.autoStatus(state.armed, state.maxDepth, state.remainingQuota),
+            "info",
+          );
           return;
         }
-        if (argument !== "on" && argument !== "off") {
+        const [action, quotaText, extra] = argument.split(/\s+/u);
+        if ((action !== "on" && action !== "off") || extra || (action === "off" && quotaText)) {
           throw new Error(UI_COPY.command.autoUsage());
         }
         if (ctx.mode !== "tui") throw new Error(UI_COPY.command.autoTuiOnly());
-        runtime.setAutoRunArmed(argument === "on");
+        const quota = quotaText === undefined ? undefined : Number(quotaText);
+        if (quota !== undefined && (!Number.isSafeInteger(quota) || quota < 1 || quota > 50)) {
+          throw new Error(UI_COPY.command.autoUsage());
+        }
+        runtime.setAutoRunArmed(action === "on", quota);
         const state = runtime.autoRunState();
         ctx.ui.notify(
-          argument === "on"
-            ? UI_COPY.command.autoEnabled(state?.maxDepth ?? 0)
+          action === "on"
+            ? UI_COPY.command.autoEnabled(
+                state?.maxDepth ?? 0,
+                state?.remainingQuota ?? quota ?? 0,
+              )
             : UI_COPY.command.autoDisabled(),
           "info",
         );

@@ -21,7 +21,7 @@ import {
   shortenId,
   shortenPath,
 } from "../../src/pi/visual.js";
-import type { StoredDispatch } from "../../src/registry/types.js";
+import type { StoredDispatch, StoredTask } from "../../src/registry/types.js";
 
 const fakeTheme = {
   fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
@@ -53,6 +53,20 @@ const dispatch: StoredDispatch = {
   activeAt: 1_000_000,
   autoRunDepth: 0,
   wakeOnSettle: true,
+  updatedAt: 1_000_000,
+};
+
+const boardTask: StoredTask = {
+  id: "hdt_hidden",
+  workspaceId: "w1",
+  title: "检查任务板渲染",
+  task: "Render the board task",
+  mode: "non-mutating",
+  state: "queued",
+  queuePosition: 1,
+  createdBy: "model",
+  createdAt: 1_000_000,
+  approvedAt: 1_000_000,
   updatedAt: 1_000_000,
 };
 
@@ -284,6 +298,19 @@ describe("themed renderers", () => {
     )!.render(120).join("\n");
     expect(expanded).toContain("派发 hd_view");
     expect(expanded).toContain("终端 term_6569");
+  });
+
+  it("renders Task Board rows in list status without leaking task IDs", () => {
+    const rendered = renderStatusResult(
+      { list: [], tasks: [boardTask], now: 1_000_000 },
+      fakeTheme,
+      false,
+    )!.render(120).join("\n");
+
+    expect(rendered).toContain("任务板");
+    expect(rendered).toContain("检查任务板渲染");
+    expect(rendered).toContain("排队");
+    expect(rendered).not.toContain("hdt_hidden");
   });
 
   it("renders settled result cards by outcome", () => {

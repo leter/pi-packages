@@ -16,6 +16,7 @@ import {
   detailChrome,
   listChrome,
   selectableIds,
+  TaskBoardSelectionModel,
   type DispatchAction,
   type DispatchViewSnapshot,
   type OutputReadState,
@@ -52,6 +53,8 @@ export interface DispatchViewPorts {
 
 export type DispatchViewResult =
   | { action: DispatchAction | "redispatch"; dispatchId: string }
+  | { action: "task-approve" | "task-accept"; taskIds: string[] }
+  | { action: "task-delete" | "task-return"; taskId: string }
   | undefined;
 
 export interface DispatchViewOptions {
@@ -92,6 +95,7 @@ export class DispatchViewComponent implements Component {
   #showTechnical = false;
   #output: OutputReadState = { status: "none" };
   #readToken = 0;
+  readonly #taskSelection = new TaskBoardSelectionModel();
   #finished = false;
 
   constructor(
@@ -157,6 +161,19 @@ export class DispatchViewComponent implements Component {
     if (matchesKey(data, "enter") || matchesKey(data, "right")) {
       this.#reconcileSelection();
       if (this.#selectedId !== undefined) {
+        const task = this.#ports.snapshot().tasks?.find(
+          (candidate) => candidate.id === this.#selectedId,
+        );
+        if (task) {
+          if (matchesKey(data, "enter")) {
+            const submission = this.#taskSelection.submission(
+              this.#ports.snapshot().tasks ?? [],
+              task.id,
+            );
+            if (submission) this.#finish(submission);
+          }
+          return;
+        }
         if (this.#action) {
           this.#finish({ action: this.#action, dispatchId: this.#selectedId });
           return;
@@ -174,6 +191,35 @@ export class DispatchViewComponent implements Component {
       matchesKey(data, "ctrl+c")
     ) return this.#finish(undefined);
     const key = printableKey(data);
+    const currentTask = this.#selectedId === undefined
+      ? undefined
+      : this.#ports.snapshot().tasks?.find((task) => task.id === this.#selectedId);
+    if (currentTask) {
+      if (key === " ") {
+        this.#taskSelection.update(
+          this.#ports.snapshot().tasks ?? [],
+          currentTask.id,
+          "toggle",
+        );
+        return;
+      }
+      if (key === "a" || key === "A") {
+        this.#taskSelection.update(
+          this.#ports.snapshot().tasks ?? [],
+          currentTask.id,
+          key === "a" ? "all" : "invert",
+        );
+        return;
+      }
+      if (key === "x") {
+        if (currentTask.state === "draft") {
+          this.#finish({ action: "task-delete", taskId: currentTask.id });
+        } else if (currentTask.state === "review") {
+          this.#finish({ action: "task-return", taskId: currentTask.id });
+        }
+        return;
+      }
+    }
     if (key === "c") {
       const unseenIds = (this.#ports.snapshot().unseenSettled ?? []).map(
         (dispatch) => dispatch.id,
@@ -230,7 +276,14 @@ export class DispatchViewComponent implements Component {
     this.#reconcileSelection(snapshot);
     const ids = selectableIds(snapshot, this.#showSettled);
     const visibleIds = new Set(ids.slice(this.#windowStart, this.#windowStart + LIST_WINDOW_ROWS));
-    return buildListLines(snapshot, this.#selectedId, this.#showSettled, this.#now(), visibleIds);
+    return buildListLines(
+      snapshot,
+      this.#selectedId,
+      this.#showSettled,
+      this.#now(),
+      visibleIds,
+      this.#taskSelection.selected,
+    );
   }
 
   #detailView(): { body: ViewLine[]; chrome: ViewChrome } {

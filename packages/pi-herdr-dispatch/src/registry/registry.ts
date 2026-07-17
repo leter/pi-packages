@@ -2,6 +2,13 @@ import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 
+import {
+  assertTaskTransition,
+  generateTaskId,
+  seedReturnedTask,
+  validateTaskDraft,
+  validateTaskFeedback,
+} from "../domain/task-board.js";
 import { migrateRegistry } from "./migrations.js";
 import type {
   AttentionCondition,
@@ -10,6 +17,7 @@ import type {
   ClaimContextDeliveryInput,
   CompleteContextDeliveryInput,
   ConfirmDeliveryIntent,
+  CreateTaskInput,
   ContextDeliveryRecord,
   DispatchResultRecord,
   DispatchLifecycle,
@@ -17,6 +25,8 @@ import type {
   FinalOutcome,
   SettleDispatchInput,
   StoredDispatch,
+  StoredTask,
+  RunQuotaState,
   TargetOccupancyRecord,
   WriteLeaseRecord,
 } from "./types.js";
@@ -105,18 +115,23 @@ export class DispatchRegistry {
     };
   }
 
-  confirmDeliveryIntent(intent: ConfirmDeliveryIntent): void {
+  confirmDeliveryIntent(intent: ConfirmDeliveryIntent): number | undefined {
     validateIntent(intent);
     const constraintsJson = serializeJson(intent.constraints, "dispatch constraints");
     const worktreePath = intent.worktreePath ? resolve(intent.worktreePath) : undefined;
 
-    this.#mutate("confirm delivery intent", () => {
+    return this.#mutate("confirm delivery intent", () => {
       const existingDispatch = this.#database
         .prepare("SELECT id FROM dispatches WHERE id = ?")
         .get(intent.id) as { id: string } | undefined;
       if (existingDispatch) {
         throw new RegistryConflictError("dispatch-exists", `Dispatch ${intent.id} already exists`, intent.id);
       }
+
+      const boundTask = intent.taskId === undefined
+        ? undefined
+        : this.#taskForBinding(intent.taskId, intent);
+      const remainingRunQuota = boundTask ? this.#consumeRunQuota(intent) : undefined;
 
       this.#assertConcurrency(intent);
 
@@ -180,10 +195,28 @@ export class DispatchRegistry {
           createdAt: intent.confirmedAt,
           confirmedAt: intent.confirmedAt,
           deliveryStartedAt: intent.confirmedAt,
-          autoRunDepth: intent.autoRunDepth ?? 0,
+          autoRunDepth: boundTask ? 0 : (intent.autoRunDepth ?? 0),
           wakeOnSettle: intent.wakeOnSettle === false ? 0 : 1,
           updatedAt: intent.confirmedAt,
         });
+
+      if (boundTask) {
+        assertTaskTransition(boundTask.state, "dispatched");
+        this.#database
+          .prepare(
+            `UPDATE tasks
+             SET state = 'dispatched', bound_dispatch_id = ?, return_feedback = NULL,
+                 reviewed_at = NULL, updated_at = ?
+             WHERE id = ? AND state = 'queued'`,
+          )
+          .run(intent.id, intent.confirmedAt, boundTask.id);
+        this.#appendTaskAudit(
+          boundTask.id,
+          "task_bound",
+          { dispatchId: intent.id, previousDispatchId: boundTask.bound_dispatch_id },
+          intent.confirmedAt,
+        );
+      }
 
       this.#database
         .prepare(
@@ -206,6 +239,153 @@ export class DispatchRegistry {
         mode: intent.mode,
         authorization: { kind: "automatic-default" },
       }, intent.confirmedAt);
+      return remainingRunQuota;
+    });
+  }
+
+  createTask(input: CreateTaskInput): StoredTask {
+    const validated = validateTaskDraft(input);
+    if (!input.workspaceId) throw new TypeError("workspaceId must not be empty");
+    if (input.createdBy !== "model" && input.createdBy !== "user") {
+      throw new TypeError("createdBy must be model or user");
+    }
+    validateTimestamp(input.createdAt, "createdAt");
+    const id = input.id ?? generateTaskId(input.createdAt);
+    if (!/^hdt_[A-Za-z0-9_-]{1,100}$/u.test(id)) throw new TypeError("invalid task ID");
+    const preferredWorktreePath = validated.preferredWorktreePath
+      ? resolve(validated.preferredWorktreePath)
+      : undefined;
+    return this.#mutate("create task draft", () => {
+      this.#database
+        .prepare(
+          `INSERT INTO tasks(
+            id, workspace_id, title, task, mode, preferred_worktree_path, state,
+            created_by, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
+        )
+        .run(
+          id,
+          input.workspaceId,
+          validated.title,
+          validated.task,
+          validated.mode,
+          preferredWorktreePath ?? null,
+          input.createdBy,
+          input.createdAt,
+          input.createdAt,
+        );
+      this.#appendTaskAudit(id, "task_drafted", { createdBy: input.createdBy }, input.createdAt);
+      return this.#taskById(id)!;
+    });
+  }
+
+  listTasks(workspaceId: string): readonly StoredTask[] {
+    if (!workspaceId) throw new TypeError("workspaceId must not be empty");
+    return this.#read("list board tasks", () =>
+      (this.#database
+        .prepare(
+          `SELECT * FROM tasks WHERE workspace_id = ?
+           ORDER BY CASE state
+             WHEN 'draft' THEN 0 WHEN 'queued' THEN 1 WHEN 'dispatched' THEN 2
+             WHEN 'review' THEN 3 ELSE 4 END,
+             CASE WHEN queue_position IS NULL THEN created_at ELSE queue_position END, id`,
+        )
+        .all(workspaceId) as unknown as TaskRow[]).map(mapTask),
+    );
+  }
+
+  getTask(taskId: string): StoredTask | undefined {
+    validateTaskIds([taskId]);
+    return this.#read("read board task", () => this.#taskById(taskId));
+  }
+
+  approveTasks(taskIds: readonly string[], workspaceId: string, approvedAt: number): number {
+    validateTaskIds(taskIds);
+    if (!workspaceId) throw new TypeError("workspaceId must not be empty");
+    validateTimestamp(approvedAt, "approvedAt");
+    const ids = [...new Set(taskIds)];
+    if (ids.length === 0) return 0;
+    return this.#mutate("approve task drafts", () => {
+      const tasks = ids.map((id) => this.#requireTaskState(id, workspaceId, "draft"));
+      let queuePosition = count(
+        this.#database.prepare(
+          "SELECT COALESCE(MAX(queue_position), 0) AS count FROM tasks WHERE workspace_id = ?",
+        ),
+        workspaceId,
+      );
+      const update = this.#database.prepare(
+        `UPDATE tasks SET state = 'queued', queue_position = ?, approved_at = ?, updated_at = ?
+         WHERE id = ? AND state = 'draft'`,
+      );
+      for (const task of tasks) {
+        assertTaskTransition(task.state, "queued");
+        queuePosition += 1;
+        update.run(queuePosition, approvedAt, approvedAt, task.id);
+        this.#appendTaskAudit(task.id, "task_approved", { queuePosition }, approvedAt);
+      }
+      return tasks.length;
+    });
+  }
+
+  acceptTasks(taskIds: readonly string[], workspaceId: string, acceptedAt: number): number {
+    validateTaskIds(taskIds);
+    if (!workspaceId) throw new TypeError("workspaceId must not be empty");
+    validateTimestamp(acceptedAt, "acceptedAt");
+    const ids = [...new Set(taskIds)];
+    if (ids.length === 0) return 0;
+    return this.#mutate("accept reviewed tasks", () => {
+      const tasks = ids.map((id) => this.#requireTaskState(id, workspaceId, "review"));
+      const update = this.#database.prepare(
+        `UPDATE tasks SET state = 'accepted', accepted_at = ?, updated_at = ?
+         WHERE id = ? AND state = 'review'`,
+      );
+      for (const task of tasks) {
+        assertTaskTransition(task.state, "accepted");
+        update.run(acceptedAt, acceptedAt, task.id);
+        this.#appendTaskAudit(task.id, "task_accepted", {}, acceptedAt);
+      }
+      return tasks.length;
+    });
+  }
+
+  returnTask(taskId: string, feedback: string, workspaceId: string, returnedAt: number): void {
+    validateTaskIds([taskId]);
+    if (!workspaceId) throw new TypeError("workspaceId must not be empty");
+    validateTimestamp(returnedAt, "returnedAt");
+    const validatedFeedback = validateTaskFeedback(feedback);
+    this.#mutate("return reviewed task", () => {
+      const task = this.#requireTaskState(taskId, workspaceId, "review");
+      assertTaskTransition(task.state, "queued");
+      const previous = task.bound_dispatch_id
+        ? this.#database
+            .prepare("SELECT worktree_path FROM dispatches WHERE id = ?")
+            .get(task.bound_dispatch_id) as { worktree_path: string | null } | undefined
+        : undefined;
+      const queuePosition = count(
+        this.#database.prepare(
+          "SELECT COALESCE(MAX(queue_position), 0) AS count FROM tasks WHERE workspace_id = ?",
+        ),
+        workspaceId,
+      ) + 1;
+      this.#database
+        .prepare(
+          `UPDATE tasks SET state = 'queued', queue_position = ?, return_feedback = ?,
+             preferred_worktree_path = COALESCE(?, preferred_worktree_path), updated_at = ?
+           WHERE id = ? AND state = 'review'`,
+        )
+        .run(queuePosition, validatedFeedback, previous?.worktree_path ?? null, returnedAt, taskId);
+      this.#appendTaskAudit(taskId, "task_returned", { feedback: validatedFeedback }, returnedAt);
+    });
+  }
+
+  deleteDraft(taskId: string, workspaceId: string, deletedAt: number): void {
+    validateTaskIds([taskId]);
+    if (!workspaceId) throw new TypeError("workspaceId must not be empty");
+    validateTimestamp(deletedAt, "deletedAt");
+    this.#mutate("delete task draft", () => {
+      this.#requireTaskState(taskId, workspaceId, "draft");
+      this.#database.prepare("DELETE FROM tasks WHERE id = ?").run(taskId);
+      this.#appendTaskAudit(taskId, "task_draft_deleted", {}, deletedAt);
     });
   }
 
@@ -448,6 +628,27 @@ export class DispatchRegistry {
       this.#database
         .prepare("DELETE FROM worktree_write_leases WHERE dispatch_id = ?")
         .run(input.dispatchId);
+      const task = this.#database
+        .prepare(
+          `SELECT id, state FROM tasks
+           WHERE bound_dispatch_id = ? AND state = 'dispatched'`,
+        )
+        .get(input.dispatchId) as { id: string; state: "dispatched" } | undefined;
+      if (task) {
+        assertTaskTransition(task.state, "review");
+        this.#database
+          .prepare(
+            `UPDATE tasks SET state = 'review', reviewed_at = ?, updated_at = ?
+             WHERE id = ? AND state = 'dispatched'`,
+          )
+          .run(input.settledAt, input.settledAt, task.id);
+        this.#appendTaskAudit(
+          task.id,
+          "task_review",
+          { dispatchId: input.dispatchId, outcome: input.outcome, kind: input.kind },
+          input.settledAt,
+        );
+      }
       this.#appendAudit(
         input.dispatchId,
         "dispatch-settled",
@@ -772,20 +973,23 @@ export class DispatchRegistry {
     });
   }
 
-  /** Arms Auto Run for one exact Origin Session; idempotent. */
-  armAutoRun(originSessionId: string, armedAt: number): void {
+  /** Arms Auto Run for one exact Origin Session; re-arming resets the Board Run Quota. */
+  armAutoRun(originSessionId: string, quota: number, armedAt: number): void {
     if (!originSessionId) throw new TypeError("originSessionId must not be empty");
+    validateRunQuota(quota);
     validateTimestamp(armedAt, "armedAt");
     this.#mutate("arm auto run", () => {
-      const inserted = this.#database
+      this.#database
         .prepare(
-          `INSERT INTO auto_run_sessions(origin_session_id, armed_at)
-           VALUES (?, ?) ON CONFLICT(origin_session_id) DO NOTHING`,
+          `INSERT INTO auto_run_sessions(origin_session_id, armed_at, run_quota, run_quota_used)
+           VALUES (?, ?, ?, 0)
+           ON CONFLICT(origin_session_id) DO UPDATE SET
+             armed_at = excluded.armed_at,
+             run_quota = excluded.run_quota,
+             run_quota_used = 0`,
         )
-        .run(originSessionId, armedAt);
-      if (changes(inserted.changes) === 1) {
-        this.#appendAudit(null, "auto-run-armed", { originSessionId }, armedAt);
-      }
+        .run(originSessionId, armedAt, quota);
+      this.#appendAudit(null, "auto-run-armed", { originSessionId, quota }, armedAt);
     });
   }
 
@@ -818,19 +1022,57 @@ export class DispatchRegistry {
     });
   }
 
+  getRunQuotaState(originSessionId: string, defaultRunQuota: number): RunQuotaState {
+    if (!originSessionId) throw new TypeError("originSessionId must not be empty");
+    validateRunQuota(defaultRunQuota);
+    return this.#read("read auto run quota state", () => {
+      const row = this.#database
+        .prepare(
+          `SELECT run_quota, run_quota_used
+           FROM auto_run_sessions WHERE origin_session_id = ?`,
+        )
+        .get(originSessionId) as
+        | { run_quota: number | null; run_quota_used: number }
+        | undefined;
+      if (!row) {
+        return {
+          armed: false,
+          legacyDefaulted: false,
+        };
+      }
+      const quota = row.run_quota ?? defaultRunQuota;
+      return {
+        armed: true,
+        quota,
+        used: row.run_quota_used,
+        remaining: Math.max(0, quota - row.run_quota_used),
+        legacyDefaulted: row.run_quota === null,
+      };
+    });
+  }
+
   purgeSettledBefore(cutoff: number, purgedAt: number): number {
     validateTimestamp(cutoff, "retention cutoff");
     validateTimestamp(purgedAt, "purgedAt");
     return this.#mutate("purge settled dispatches", () => {
+      const purgedTasks = changes(
+        this.#database
+          .prepare(
+            `DELETE FROM tasks
+             WHERE state = 'accepted' AND accepted_at IS NOT NULL AND accepted_at < ?`,
+          )
+          .run(cutoff).changes,
+      );
       const result = this.#database
         .prepare(
           `DELETE FROM dispatches
-           WHERE lifecycle = 'settled' AND settled_at IS NOT NULL AND settled_at < ?`,
+           WHERE lifecycle = 'settled' AND settled_at IS NOT NULL AND settled_at < ?
+             AND NOT EXISTS (SELECT 1 FROM tasks WHERE bound_dispatch_id = dispatches.id)`,
         )
         .run(cutoff);
       const purged = changes(result.changes);
-      if (purged > 0) {
-        this.#appendAudit(null, "retention-purge", { cutoff, purged }, purgedAt);
+      if (purged > 0 || purgedTasks > 0) {
+        this.#appendAudit(null, "retention-purge", { cutoff, purged, purgedTasks }, purgedAt);
       }
       return purged;
     });
@@ -840,6 +1082,84 @@ export class DispatchRegistry {
     if (this.#closed) return;
     this.#database.close();
     this.#closed = true;
+  }
+
+  #taskForBinding(taskId: string, intent: ConfirmDeliveryIntent): TaskRow {
+    const task = this.#database.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as
+      | TaskRow
+      | undefined;
+    if (!task) throw new RegistryStateError(`Task ${taskId} does not exist`);
+    if (task.workspace_id !== intent.targetWorkspaceId) {
+      throw new RegistryStateError(`Task ${taskId} belongs to a different workspace`);
+    }
+    if (task.state !== "queued") {
+      throw new RegistryStateError(`Task ${taskId} is ${task.state}, not queued`);
+    }
+    if (task.mode !== intent.mode) {
+      throw new RegistryStateError(`Task ${taskId} mode does not match the dispatch`);
+    }
+    const seededTask = seedReturnedTask(task.task, task.return_feedback);
+    if (seededTask !== intent.task) {
+      throw new RegistryStateError(`Task ${taskId} text does not match its approved Board Task`);
+    }
+    return task;
+  }
+
+  #consumeRunQuota(intent: ConfirmDeliveryIntent): number | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT run_quota, run_quota_used FROM auto_run_sessions
+         WHERE origin_session_id = ?`,
+      )
+      .get(intent.originSessionId) as
+      | { run_quota: number | null; run_quota_used: number }
+      | undefined;
+    if (!row) return undefined;
+    const defaultRunQuota = intent.defaultRunQuota;
+    if (defaultRunQuota === undefined) {
+      throw new RegistryStateError("task-bound dispatch requires defaultRunQuota");
+    }
+    validateRunQuota(defaultRunQuota);
+    const quota = row.run_quota ?? defaultRunQuota;
+    if (row.run_quota_used >= quota) {
+      throw new RegistryStateError("Task Board Run Quota exhausted");
+    }
+    this.#database
+      .prepare(
+        `UPDATE auto_run_sessions SET run_quota_used = run_quota_used + 1
+         WHERE origin_session_id = ?`,
+      )
+      .run(intent.originSessionId);
+    return quota - row.run_quota_used - 1;
+  }
+
+  #taskById(taskId: string): StoredTask | undefined {
+    const row = this.#database.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as
+      | TaskRow
+      | undefined;
+    return row ? mapTask(row) : undefined;
+  }
+
+  #requireTaskState(
+    taskId: string,
+    workspaceId: string,
+    state: TaskRow["state"],
+  ): TaskRow {
+    const task = this.#database.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as
+      | TaskRow
+      | undefined;
+    if (!task) throw new RegistryStateError(`Task ${taskId} does not exist`);
+    if (task.workspace_id !== workspaceId) {
+      throw new RegistryStateError(`Task ${taskId} belongs to a different workspace`);
+    }
+    if (task.state !== state) {
+      throw new RegistryStateError(`Task ${taskId} is ${task.state}, not ${state}`);
+    }
+    return task;
+  }
+
+  #appendTaskAudit(taskId: string, eventType: string, data: unknown, createdAt: number): void {
+    this.#appendAudit(null, eventType, { taskId, ...asRecord(data) }, createdAt);
   }
 
   #assertConcurrency(intent: ConfirmDeliveryIntent): void {
@@ -1017,6 +1337,25 @@ interface DispatchRow {
   updated_at: number;
 }
 
+interface TaskRow {
+  id: string;
+  workspace_id: string;
+  title: string;
+  task: string;
+  mode: DispatchMode;
+  preferred_worktree_path: string | null;
+  state: "draft" | "queued" | "dispatched" | "review" | "accepted";
+  queue_position: number | null;
+  bound_dispatch_id: string | null;
+  return_feedback: string | null;
+  created_by: "model" | "user";
+  created_at: number;
+  approved_at: number | null;
+  reviewed_at: number | null;
+  accepted_at: number | null;
+  updated_at: number;
+}
+
 interface OccupancyRow {
   target_terminal_id: string;
   dispatch_id: string;
@@ -1070,6 +1409,29 @@ function mapResult(row: ResultRow): DispatchResultRecord {
     ...(row.raw_envelope ? { rawEnvelope: row.raw_envelope } : {}),
     sanitizedResult: parseJson(row.sanitized_json, "sanitized result"),
     acceptedAt: row.accepted_at,
+  };
+}
+
+function mapTask(row: TaskRow): StoredTask {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    title: row.title,
+    task: row.task,
+    mode: row.mode,
+    ...(row.preferred_worktree_path === null
+      ? {}
+      : { preferredWorktreePath: row.preferred_worktree_path }),
+    state: row.state,
+    ...(row.queue_position === null ? {} : { queuePosition: row.queue_position }),
+    ...(row.bound_dispatch_id === null ? {} : { boundDispatchId: row.bound_dispatch_id }),
+    ...(row.return_feedback === null ? {} : { returnFeedback: row.return_feedback }),
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    ...(row.approved_at === null ? {} : { approvedAt: row.approved_at }),
+    ...(row.reviewed_at === null ? {} : { reviewedAt: row.reviewed_at }),
+    ...(row.accepted_at === null ? {} : { acceptedAt: row.accepted_at }),
+    updatedAt: row.updated_at,
   };
 }
 
@@ -1168,6 +1530,24 @@ function validateIntent(intent: ConfirmDeliveryIntent): void {
 
 function validateTimestamp(value: number, name: string): void {
   if (!Number.isSafeInteger(value)) throw new RegistryStateError(`${name} must be a safe integer`);
+}
+
+function validateTaskIds(taskIds: readonly string[]): void {
+  if (!Array.isArray(taskIds) || taskIds.some((id) => !/^hdt_[A-Za-z0-9_-]{1,100}$/u.test(id))) {
+    throw new TypeError("invalid task ID");
+  }
+}
+
+function validateRunQuota(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1 || value > 50) {
+    throw new RangeError("run quota must be from 1 to 50");
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : { value };
 }
 
 function serializeJson(value: unknown, name: string): string {

@@ -27,6 +27,12 @@ const proposalParameters = Type.Object({
         "Set false to downgrade this dispatch so its settlement never triggers an Auto Run turn; it cannot enable Auto Run, which only the user arms",
     }),
   ),
+  taskId: Type.Optional(
+    Type.String({
+      pattern: "^hdt_[A-Za-z0-9_-]{1,100}$",
+      description: "Exact approved Board Task ID to bind to this fresh dispatch",
+    }),
+  ),
 });
 
 export interface DispatchProposalToolParams {
@@ -36,6 +42,7 @@ export interface DispatchProposalToolParams {
   deadlineMinutes?: number;
   allowProjectDependencyInstall?: boolean;
   wakeOnSettle?: boolean;
+  taskId?: string;
 }
 
 export interface DispatchProposalToolOutcome {

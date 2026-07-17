@@ -72,11 +72,24 @@ class FakeHerdr implements HerdrDispatchPort {
   }
 }
 
-async function harness() {
+async function harness(taskId?: string) {
   const root = await mkdtemp(join(tmpdir(), "pi-herdr-followup-"));
   roots.push(root);
   const registry = await openDispatchRegistry(join(root, "registry.sqlite"));
   registries.push(registry);
+  if (taskId) {
+    registry.armAutoRun("session-origin", 1, 900);
+    registry.createTask({
+      id: taskId,
+      workspaceId: "w1",
+      title: "Resolve task",
+      task: "Implement",
+      mode: "write",
+      createdBy: "model",
+      createdAt: 900,
+    });
+    registry.approveTasks([taskId], "w1", 950);
+  }
   registry.confirmDeliveryIntent({
     id: "hd_followup",
     originSessionId: "session-origin",
@@ -94,6 +107,7 @@ async function harness() {
     payloadHash: "hash",
     deadlineAt: 5_000,
     confirmedAt: 1_000,
+    ...(taskId ? { taskId, defaultRunQuota: 10 } : {}),
   });
   registry.markActive("hd_followup", 1_100);
   registry.addAttention("hd_followup", "blocked-runtime", { tail: "blocked" }, 1_200);
@@ -211,7 +225,7 @@ ${exactTail}
 
 describe("manual and emergency resolution", () => {
   it("offers blocked as a Manual Final Outcome and settles the dispatch", async () => {
-    const { registry, service } = await harness();
+    const { registry, service } = await harness("hdt_manual");
     const controller = new FollowupController(() => service);
     const tui = ui({
       selections: ["受阻"],
@@ -238,10 +252,13 @@ describe("manual and emergency resolution", () => {
     });
     expect(registry.listTargetOccupancy()).toEqual([]);
     expect(registry.listWriteLeases()).toEqual([]);
+    expect(registry.listTasks("w1")).toEqual([
+      expect.objectContaining({ id: "hdt_manual", state: "review" }),
+    ]);
   });
 
   it("requires explicit emergency attestation plus final confirmation without liveness inference", async () => {
-    const { registry, service } = await harness();
+    const { registry, service } = await harness("hdt_emergency");
     const controller = new FollowupController(() => service);
     const tui = ui({
       selections: ["失败"],
@@ -269,6 +286,9 @@ describe("manual and emergency resolution", () => {
     );
     expect(registry.listTargetOccupancy()).toEqual([]);
     expect(registry.listWriteLeases()).toEqual([]);
+    expect(registry.listTasks("w1")).toEqual([
+      expect.objectContaining({ id: "hdt_emergency", state: "review" }),
+    ]);
   });
 
   it("reports the first winner when emergency resolution races automatic settlement", async () => {

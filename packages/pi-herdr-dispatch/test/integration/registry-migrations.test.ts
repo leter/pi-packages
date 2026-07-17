@@ -13,6 +13,9 @@ import {
 import {
   REGISTRY_SCHEMA_V1,
   REGISTRY_SCHEMA_V2,
+  REGISTRY_SCHEMA_V3,
+  REGISTRY_SCHEMA_V4,
+  REGISTRY_SCHEMA_V5,
   REGISTRY_SCHEMA_VERSION,
 } from "../../src/registry/schema.js";
 
@@ -35,6 +38,34 @@ afterEach(async () => {
 });
 
 describe("Dispatch Registry migrations and fail-closed opening", () => {
+  it("backs up and migrates schema v5 to the schema v6 Task Board", async () => {
+    const location = await temporaryDatabasePath();
+    const versionFive = openRaw(location.path);
+    versionFive.exec(
+      `${REGISTRY_SCHEMA_V1}\n${REGISTRY_SCHEMA_V2}\n${REGISTRY_SCHEMA_V3}\n${REGISTRY_SCHEMA_V4}\n${REGISTRY_SCHEMA_V5}\nPRAGMA user_version = 5;`,
+    );
+    versionFive.close();
+
+    const registry = await openDispatchRegistry(location.path, {
+      now: () => new Date("2026-07-17T08:00:00.000Z"),
+    });
+    openRegistries.push(registry);
+
+    expect(registry.health().schemaVersion).toBe(6);
+    const raw = openRaw(location.path);
+    expect(raw.prepare("SELECT name FROM sqlite_master WHERE name = 'tasks'").get()).toBeDefined();
+    expect(raw.prepare("PRAGMA table_info(auto_run_sessions)").all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "run_quota" }),
+        expect.objectContaining({ name: "run_quota_used" }),
+      ]),
+    );
+    raw.close();
+    expect((await readdir(location.directory)).filter((name) => name.includes("backup"))).toEqual([
+      "registry.sqlite.backup-2026-07-17T08-00-00.000Z",
+    ]);
+  });
+
   it("backs up an existing older database before migrating it", async () => {
     const location = await temporaryDatabasePath();
     const legacy = openRaw(location.path);

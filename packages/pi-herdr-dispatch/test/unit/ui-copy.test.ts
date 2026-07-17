@@ -27,6 +27,9 @@ describe("human UI copy catalog", () => {
       "工作中",
       "受阻",
     ]);
+    expect(["draft", "queued", "dispatched", "review", "accepted"].map(
+      (state) => UI_COPY.state.task(state as never),
+    )).toEqual(["草稿", "排队", "已派出", "待验收", "已验收"]);
     expect([
       "target-lost",
       "delivery-unverified",
@@ -84,6 +87,11 @@ describe("human UI copy catalog", () => {
     expect(UI_COPY.manager.heading(0, 0, 0)).toBe("");
     expect(UI_COPY.manager.heading(2, 0, 0, true)).toBe("⚡自动 · 2 运行中");
     expect(UI_COPY.manager.heading(0, 0, 0, true)).toBe("⚡自动");
+    expect(UI_COPY.manager.heading(0, 0, 0, true, 2, 1, 7)).toBe(
+      "⚡自动 · 本次额度 7 · 2 草稿待批 · 1 待验收",
+    );
+    expect(UI_COPY.command.description("task")).toBe("创建草稿或打开任务板");
+    expect(UI_COPY.command.autoStatus(false, 5, 7)).not.toContain("本次额度");
     expect(UI_COPY.manager.technicalLabel("workspace")).toBe("工作区");
     expect(UI_COPY.manager.technicalLabel("worktree")).toBe("任务 worktree");
     expect(UI_COPY.command.newTaskWorktreePlacement()).toContain("node_modules 等依赖不会带过去");

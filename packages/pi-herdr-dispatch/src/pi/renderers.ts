@@ -2,10 +2,11 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 
 import type { ProposalTarget } from "../dispatch/proposal.js";
-import type { AttentionRecord, StoredDispatch } from "../registry/types.js";
+import type { AttentionRecord, StoredDispatch, StoredTask } from "../registry/types.js";
 import {
   ATTENTION_GLYPH,
   agentRow,
+  boardTaskRow,
   displayWidth,
   dispatchRow,
   lifecycleMark,
@@ -19,6 +20,7 @@ import {
   shortenPath,
   type SemanticColor,
   type StateMark,
+  taskStateMark,
 } from "./visual.js";
 import { UI_COPY } from "./ui-copy.js";
 
@@ -96,6 +98,7 @@ export interface StatusResultDetails {
   attention?: readonly AttentionRecord[];
   list?: readonly StoredDispatch[];
   listAttention?: Readonly<Record<string, readonly AttentionRecord[]>>;
+  tasks?: readonly StoredTask[];
   now?: number;
 }
 
@@ -109,7 +112,7 @@ export function renderStatusResult(
   const paint = fg(theme);
 
   if (details.list) {
-    if (details.list.length === 0) {
+    if (details.list.length === 0 && (details.tasks?.length ?? 0) === 0) {
       return new Text(paint("muted", UI_COPY.presentation.noUnsettledDispatches()), 0, 0);
     }
     const rows = details.list.map((dispatch) =>
@@ -137,7 +140,21 @@ export function renderStatusResult(
       "muted",
       UI_COPY.count.unsettledDispatches(details.list.length),
     );
-    return new Text([heading, ...lines].join("\n"), 0, 0);
+    const taskLines = (details.tasks ?? []).map((task) => {
+      const row = boardTaskRow(task);
+      return ` ${mark(theme, row.mark)} ${theme.bold(row.title)}  ${paint(row.mark.color, row.state)}  ${paint("muted", row.mode)}`;
+    });
+    return new Text(
+      [
+        ...(taskLines.length > 0
+          ? [paint("accent", UI_COPY.manager.taskBoardHeading()), ...taskLines]
+          : []),
+        heading,
+        ...lines,
+      ].join("\n"),
+      0,
+      0,
+    );
   }
 
   const dispatch = details.dispatch;
@@ -213,6 +230,7 @@ export interface ConfirmationResultDetails {
   dispatchId?: string;
   outcome?: string;
   reason?: string;
+  remainingQuota?: number;
 }
 
 export function renderConfirmationResult(
@@ -319,6 +337,8 @@ export interface WidgetCounts {
   attention: number;
   unseenDone: number;
   autoRunArmed: boolean;
+  draftTasks?: number;
+  reviewTasks?: number;
 }
 
 /** Themed one-line widget: counts colored only when they demand attention; an armed Auto Run stays visible even when quiet. */
@@ -329,6 +349,12 @@ export function renderDispatchWidget(counts: WidgetCounts, theme: Theme): Text {
     ? `${paint("dim", UI_COPY.presentation.widgetLabel())} ${paint("accent", copy.autoRun)}`
     : paint("dim", UI_COPY.presentation.widgetLabel());
   const segments = [
+    copy.drafts
+      ? paint(taskStateMark("draft").color, `${taskStateMark("draft").glyph} ${copy.drafts}`)
+      : "",
+    copy.reviews
+      ? paint(taskStateMark("review").color, `${taskStateMark("review").glyph} ${copy.reviews}`)
+      : "",
     copy.delivering ? paint("warning", `◌ ${copy.delivering}`) : "",
     copy.running ? paint("accent", `● ${copy.running}`) : "",
     copy.attention ? paint("warning", `${ATTENTION_GLYPH} ${copy.attention}`) : "",

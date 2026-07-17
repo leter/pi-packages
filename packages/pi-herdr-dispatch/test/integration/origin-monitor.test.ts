@@ -128,6 +128,19 @@ async function harness(
   roots.push(root);
   const registry = await openDispatchRegistry(join(root, "registry.sqlite"));
   registries.push(registry);
+  if (intentOverrides.taskId) {
+    registry.armAutoRun("session-origin", 1, 900);
+    registry.createTask({
+      id: intentOverrides.taskId,
+      workspaceId: "w-current",
+      title: "Monitor task",
+      task: intentOverrides.task ?? "Implement",
+      mode: intentOverrides.mode ?? "write",
+      createdBy: "model",
+      createdAt: 900,
+    });
+    registry.approveTasks([intentOverrides.taskId], "w-current", 950);
+  }
   registry.confirmDeliveryIntent(intent(intentOverrides));
   registry.recordAudit(
     "hd_monitor",
@@ -227,7 +240,11 @@ describe("OriginMonitor", () => {
   });
 
   it("settles the first valid result from the confirmed terminal and releases reservations once", async () => {
-    const { registry, herdr, monitor, onSettled } = await harness();
+    const { registry, herdr, monitor, onSettled } = await harness(
+      "active",
+      false,
+      { taskId: "hdt_monitor", defaultRunQuota: 10 },
+    );
     herdr.text =
       'DISPATCH_RESULT {"id":"hd_monitor","outcome":"done","summary":"Complete","tests":["npm test"],"unknown":"raw"}';
 
@@ -244,6 +261,9 @@ describe("OriginMonitor", () => {
     });
     expect(registry.listTargetOccupancy()).toEqual([]);
     expect(registry.listWriteLeases()).toEqual([]);
+    expect(registry.listTasks("w-current")).toEqual([
+      expect.objectContaining({ id: "hdt_monitor", state: "review" }),
+    ]);
     expect(onSettled).toHaveBeenCalledOnce();
     expect(
       registry

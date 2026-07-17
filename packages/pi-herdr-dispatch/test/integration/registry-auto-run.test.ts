@@ -14,6 +14,7 @@ import {
   REGISTRY_SCHEMA_V2,
   REGISTRY_SCHEMA_V3,
   REGISTRY_SCHEMA_V4,
+  REGISTRY_SCHEMA_V5,
   REGISTRY_SCHEMA_VERSION,
 } from "../../src/registry/schema.js";
 import type { ConfirmDeliveryIntent } from "../../src/registry/types.js";
@@ -62,12 +63,12 @@ afterEach(async () => {
 });
 
 describe("Auto Run session state", () => {
-  it("arms and disarms one exact Origin Session idempotently", async () => {
+  it("arms, rearms, and disarms one exact Origin Session", async () => {
     const registry = await openRegistry();
 
     expect(registry.isAutoRunArmed("session_origin")).toBe(false);
-    registry.armAutoRun("session_origin", 1_000);
-    registry.armAutoRun("session_origin", 1_100);
+    registry.armAutoRun("session_origin", 10, 1_000);
+    registry.armAutoRun("session_origin", 10, 1_100);
     expect(registry.isAutoRunArmed("session_origin")).toBe(true);
     expect(registry.isAutoRunArmed("session_other")).toBe(false);
 
@@ -79,17 +80,17 @@ describe("Auto Run session state", () => {
       .listAuditEvents()
       .filter((event) => event.eventType.startsWith("auto-run-"))
       .map((event) => event.eventType);
-    expect(audits).toEqual(["auto-run-armed", "auto-run-disarmed"]);
+    expect(audits).toEqual(["auto-run-armed", "auto-run-armed", "auto-run-disarmed"]);
   });
 
   it("reports the arm timestamp so results settled before arming can be ignored", async () => {
     const registry = await openRegistry();
 
     expect(registry.autoRunArmedAt("session_origin")).toBeUndefined();
-    registry.armAutoRun("session_origin", 1_700);
-    // Idempotent arm keeps the original timestamp.
-    registry.armAutoRun("session_origin", 9_999);
-    expect(registry.autoRunArmedAt("session_origin")).toBe(1_700);
+    registry.armAutoRun("session_origin", 10, 1_700);
+    // Re-arming resets both the timestamp and Run Quota.
+    registry.armAutoRun("session_origin", 10, 9_999);
+    expect(registry.autoRunArmedAt("session_origin")).toBe(9_999);
 
     registry.disarmAutoRun("session_origin", 2_000);
     expect(registry.autoRunArmedAt("session_origin")).toBeUndefined();
@@ -99,7 +100,7 @@ describe("Auto Run session state", () => {
     const path = await temporaryDatabasePath();
     const first = await openDispatchRegistry(path, { busyTimeoutMs: 100 });
     registries.push(first);
-    first.armAutoRun("session_origin", 1_000);
+    first.armAutoRun("session_origin", 10, 1_000);
     first.close();
 
     const resumed = await openDispatchRegistry(path, { busyTimeoutMs: 100 });
@@ -172,5 +173,38 @@ describe("schema v5 migration", () => {
     expect(migrated.autoRunDepth).toBe(0);
     expect(migrated.wakeOnSettle).toBe(true);
     expect(registry.isAutoRunArmed("session_origin")).toBe(false);
+  });
+});
+
+describe("schema v6 Run Quota migration", () => {
+  it("treats a migrated NULL quota as defaultRunQuota and re-arming resets usage", async () => {
+    const path = await temporaryDatabasePath();
+    const legacy = new DatabaseSync(path, { timeout: 100 });
+    legacy.exec(
+      `${REGISTRY_SCHEMA_V1}\n${REGISTRY_SCHEMA_V2}\n${REGISTRY_SCHEMA_V3}\n${REGISTRY_SCHEMA_V4}\n${REGISTRY_SCHEMA_V5}\nPRAGMA user_version = 5;`,
+    );
+    legacy.prepare(
+      "INSERT INTO auto_run_sessions(origin_session_id, armed_at) VALUES (?, ?)",
+    ).run("session_origin", 1_000);
+    legacy.close();
+
+    const registry = await openDispatchRegistry(path, { busyTimeoutMs: 100 });
+    registries.push(registry);
+    expect(registry.getRunQuotaState("session_origin", 12)).toEqual({
+      armed: true,
+      quota: 12,
+      used: 0,
+      remaining: 12,
+      legacyDefaulted: true,
+    });
+
+    registry.armAutoRun("session_origin", 3, 2_000);
+    expect(registry.getRunQuotaState("session_origin", 12)).toEqual({
+      armed: true,
+      quota: 3,
+      used: 0,
+      remaining: 3,
+      legacyDefaulted: false,
+    });
   });
 });

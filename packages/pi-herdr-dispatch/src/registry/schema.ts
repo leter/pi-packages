@@ -1,4 +1,4 @@
-export const REGISTRY_SCHEMA_VERSION = 5;
+export const REGISTRY_SCHEMA_VERSION = 6;
 
 export const REGISTRY_SCHEMA_V1 = `
 CREATE TABLE dispatches (
@@ -150,4 +150,32 @@ CREATE TABLE auto_run_sessions (
   origin_session_id TEXT PRIMARY KEY,
   armed_at INTEGER NOT NULL
 ) STRICT;
+`;
+
+export const REGISTRY_SCHEMA_V6 = `
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  task TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK (mode IN ('non-mutating', 'write')),
+  preferred_worktree_path TEXT,
+  state TEXT NOT NULL CHECK (state IN ('draft', 'queued', 'dispatched', 'review', 'accepted')),
+  queue_position INTEGER,
+  bound_dispatch_id TEXT REFERENCES dispatches(id),
+  return_feedback TEXT,
+  created_by TEXT NOT NULL CHECK (created_by IN ('model', 'user')),
+  created_at INTEGER NOT NULL,
+  approved_at INTEGER,
+  reviewed_at INTEGER,
+  accepted_at INTEGER,
+  updated_at INTEGER NOT NULL,
+  CHECK ((state = 'draft') = (approved_at IS NULL)),
+  CHECK ((state = 'accepted') = (accepted_at IS NOT NULL))
+) STRICT;
+
+CREATE INDEX tasks_workspace_state_idx ON tasks(workspace_id, state);
+
+ALTER TABLE auto_run_sessions ADD COLUMN run_quota INTEGER;
+ALTER TABLE auto_run_sessions ADD COLUMN run_quota_used INTEGER NOT NULL DEFAULT 0;
 `;

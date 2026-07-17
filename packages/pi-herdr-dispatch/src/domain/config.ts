@@ -15,6 +15,7 @@ export interface DispatchConfig {
   retentionDays: number;
   livenessPollMs: number;
   maxAutoRunDepth: number;
+  defaultRunQuota: number;
 }
 
 /** Adapter hard limit for bounded output reads (contract: 50 or 200 lines). */
@@ -37,6 +38,7 @@ export const DEFAULT_DISPATCH_CONFIG: DispatchConfig = Object.freeze({
   retentionDays: 30,
   livenessPollMs: 5_000,
   maxAutoRunDepth: 5,
+  defaultRunQuota: 10,
 });
 
 const CONFIG_KEYS = new Set(Object.keys(DEFAULT_DISPATCH_CONFIG));
@@ -85,6 +87,7 @@ export function parseDispatchConfig(value: unknown): DispatchConfig {
   range(config.retentionDays, 1, 365, "retentionDays");
   range(config.livenessPollMs, 1_000, 60_000, "livenessPollMs");
   range(config.maxAutoRunDepth, 1, 20, "maxAutoRunDepth");
+  range(config.defaultRunQuota, 1, 50, "defaultRunQuota");
   return config;
 }
 

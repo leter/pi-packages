@@ -116,6 +116,25 @@ describe("Pi safety gate adapters", () => {
     );
   });
 
+  it("denies covered bash that tries to approve a Board Task in the Registry", async () => {
+    const registryPath = "/tmp/task-board-test/registry.sqlite";
+    const gate = createSafetyGate({
+      currentPaneId: () => "w1:p1",
+      registryDatabasePath: () => registryPath,
+      getLeaseContext: async () => ({ leaseSnapshot: { status: "ready", leases: [] } }),
+    });
+
+    const result = await gate.onToolCall(
+      bashEvent(`sqlite3 ${registryPath} "UPDATE tasks SET state='queued'"`),
+      { cwd: "/repo/worktree" },
+    );
+
+    expect(result).toEqual({
+      block: true,
+      reason: expect.stringContaining("Dispatch Registry"),
+    });
+  });
+
   it("allows read-only shell commands through both paths", async () => {
     const gate = createSafetyGate({
       currentPaneId: () => "w1:p1",

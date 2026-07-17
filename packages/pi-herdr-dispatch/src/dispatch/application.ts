@@ -1,5 +1,6 @@
 import { MAX_INSPECTION_LINES, type DispatchConfig } from "../domain/config.js";
 import { resolveCanonicalWorktree } from "../domain/worktree.js";
+import { seedReturnedTask } from "../domain/task-board.js";
 import {
   captureWorktreeSnapshot,
   type WorktreeSnapshot,
@@ -61,6 +62,8 @@ export interface CreateProposalRequest {
   allowProjectDependencyInstall?: boolean;
   /** False downgrades this dispatch so its settlement never triggers an Auto Run turn. */
   wakeOnSettle?: boolean;
+  /** Exact approved Board Task to bind in the durable-intent transaction. */
+  taskId?: string;
 }
 
 export interface OriginIdentity {
@@ -69,14 +72,15 @@ export interface OriginIdentity {
 }
 
 export type ConfirmationResult =
-  | { status: "active"; dispatchId: string; echoVerified: true }
+  | { status: "active"; dispatchId: string; echoVerified: true; remainingQuota?: number }
   | {
       status: "delivery-unverified";
       dispatchId: string;
       lifecycle: "delivering";
+      remainingQuota?: number;
     }
-  | { status: "failed"; dispatchId: string; reason: string }
-  | { status: "already-settled"; dispatchId: string; outcome: string };
+  | { status: "failed"; dispatchId: string; reason: string; remainingQuota?: number }
+  | { status: "already-settled"; dispatchId: string; outcome: string; remainingQuota?: number };
 
 export interface DispatchApplicationOptions {
   config: DispatchConfig;
@@ -255,6 +259,23 @@ export class DispatchApplication {
   }
 
   async createProposal(request: CreateProposalRequest): Promise<DispatchProposal> {
+    const boardTask = request.taskId === undefined
+      ? undefined
+      : this.#registry.getTask(request.taskId);
+    if (request.taskId !== undefined) {
+      if (!boardTask) throw new ProposalTargetError(`Task ${safeText(request.taskId)} was not found`);
+      if (boardTask.workspaceId !== this.#workspaceId) {
+        throw new ProposalTargetError(
+          `Task ${safeText(request.taskId)} is ${boardTask.state} in a foreign workspace`,
+        );
+      }
+      if (boardTask.state !== "queued") {
+        throw new ProposalTargetError(`Task ${safeText(request.taskId)} is ${boardTask.state}, not queued`);
+      }
+      if (boardTask.mode !== request.mode) {
+        throw new ProposalTargetError(`Task ${safeText(request.taskId)} mode does not match the proposal`);
+      }
+    }
     const eligible = await this.listEligibleAgents();
     const matches = eligible.filter(
       (target) =>
@@ -292,10 +313,11 @@ export class DispatchApplication {
     const factoryInput: DispatchProposalInput = {
       target,
       mode: request.mode,
-      task: request.task,
+      task: boardTask ? seedReturnedTask(boardTask.task, boardTask.returnFeedback) : request.task,
       deadlineMinutes,
       allowProjectDependencyInstall: request.allowProjectDependencyInstall ?? false,
       wakeOnSettle: request.wakeOnSettle ?? true,
+      ...(request.taskId === undefined ? {} : { taskId: request.taskId }),
     };
     const now = this.#now();
     const proposal = createDispatchProposal(factoryInput, {
@@ -339,7 +361,7 @@ export class DispatchApplication {
       ? await this.#captureWorktreeSnapshot(proposal.target.worktreePath)
       : undefined;
     const confirmedAt = this.#now();
-    this.#registry.confirmDeliveryIntent({
+    const remainingRunQuota = this.#registry.confirmDeliveryIntent({
       id: proposal.id,
       originSessionId: required(origin.sessionId, "origin session ID"),
       ...(origin.sessionFile === undefined ? {} : { originSessionFile: origin.sessionFile }),
@@ -363,6 +385,9 @@ export class DispatchApplication {
       maxActiveGlobal: this.#config.maxActiveGlobal,
       autoRunDepth: this.#currentAutoRunDepth(),
       wakeOnSettle: proposal.wakeOnSettle,
+      ...(proposal.taskId === undefined
+        ? {}
+        : { taskId: proposal.taskId, defaultRunQuota: this.#config.defaultRunQuota }),
     });
     if (beforeSnapshot) {
       this.#registry.recordAudit(
@@ -387,7 +412,11 @@ export class DispatchApplication {
         settledAt: this.#now(),
       });
       if (settlement.status === "settled") this.#onSettled(proposal.id, settlement.outcome);
-      return { status: "failed", dispatchId: proposal.id, reason: "monitoring-unavailable" };
+      return this.#withRemainingQuota({
+        status: "failed",
+        dispatchId: proposal.id,
+        reason: "monitoring-unavailable",
+      }, remainingRunQuota);
     }
 
     let delivery: HerdrDeliveryResult;
@@ -410,8 +439,12 @@ export class DispatchApplication {
         { reason: "adapter-error", detail: errorMessage(error) },
         this.#now(),
       );
-      if (settled) return settled;
-      return { status: "delivery-unverified", dispatchId: proposal.id, lifecycle: "delivering" };
+      if (settled) return this.#withRemainingQuota(settled, remainingRunQuota);
+      return this.#withRemainingQuota({
+        status: "delivery-unverified",
+        dispatchId: proposal.id,
+        lifecycle: "delivering",
+      }, remainingRunQuota);
     }
     const recorded = this.#recordDelivery(proposal, delivery);
     try {
@@ -424,7 +457,31 @@ export class DispatchApplication {
         this.#now(),
       );
     }
-    return recorded;
+    return this.#withRemainingQuota(recorded, remainingRunQuota);
+  }
+
+  listTasks() {
+    return this.#registry.listTasks(this.#workspaceId);
+  }
+
+  createTask(input: Omit<Parameters<DispatchRegistry["createTask"]>[0], "workspaceId">) {
+    return this.#registry.createTask({ ...input, workspaceId: this.#workspaceId });
+  }
+
+  approveTasks(taskIds: readonly string[], approvedAt: number): number {
+    return this.#registry.approveTasks(taskIds, this.#workspaceId, approvedAt);
+  }
+
+  acceptTasks(taskIds: readonly string[], acceptedAt: number): number {
+    return this.#registry.acceptTasks(taskIds, this.#workspaceId, acceptedAt);
+  }
+
+  returnTask(taskId: string, feedback: string, returnedAt: number): void {
+    this.#registry.returnTask(taskId, feedback, this.#workspaceId, returnedAt);
+  }
+
+  deleteDraft(taskId: string, deletedAt: number): void {
+    this.#registry.deleteDraft(taskId, this.#workspaceId, deletedAt);
   }
 
   getDispatch(dispatchId: string): StoredDispatch | undefined {
@@ -534,6 +591,13 @@ export class DispatchApplication {
       if (leased) throw new StaleProposalError("proposal worktree became leased");
     }
     return resolved;
+  }
+
+  #withRemainingQuota(
+    result: ConfirmationResult,
+    remainingQuota: number | undefined,
+  ): ConfirmationResult {
+    return remainingQuota === undefined ? result : { ...result, remainingQuota };
   }
 
   #consumeProposal(proposal: DispatchProposal): void {

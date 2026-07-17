@@ -50,12 +50,14 @@ describe("Pi extension Phase 4 registration", () => {
       "herdr_agents_list",
       "herdr_agent_output_inspect",
       "herdr_dispatch_status",
+      "herdr_task_draft",
     ]);
     expect(tools.map((tool) => tool.label)).toEqual([
       "提议 Herdr 派发",
       "列出 Herdr Agent",
       "查看 Herdr Agent 输出",
       "Herdr 派发状态",
+      "创建任务草稿",
     ]);
     expect(commands).toEqual([
       "herdr-dispatch",
@@ -66,6 +68,8 @@ describe("Pi extension Phase 4 registration", () => {
       "hd-agents",
       "herdr-dispatches",
       "hd-manager",
+      "herdr-task",
+      "hd-task",
       "herdr-dispatch-auto",
       "hd-auto",
       "herdr-dispatch-clean",
@@ -91,6 +95,8 @@ describe("Pi extension Phase 4 registration", () => {
       "hd-create": "创建一个新 Agent 并立即发送 Herdr 派发",
       "herdr-dispatches": "打开 Herdr 派发管理器",
       "hd-manager": "打开 Herdr 派发管理器",
+      "herdr-task": "创建草稿或打开任务板",
+      "hd-task": "创建草稿或打开任务板",
       "herdr-dispatch-auto": "查看或切换自动运行(结算结果自动唤醒模型)",
       "hd-auto": "查看或切换自动运行(结算结果自动唤醒模型)",
       "herdr-dispatch-clean": "检查并清理已合并的任务 worktree",

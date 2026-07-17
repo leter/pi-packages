@@ -155,6 +155,7 @@ describe("Dispatch Registry access guard", () => {
   it.each([
     "sqlite3 /home/jack/.local/state/pi-herdr-dispatch/registry.sqlite \"INSERT INTO auto_run_sessions VALUES ('s', 1)\"",
     "sqlite3 ~/.local/state/pi-herdr-dispatch/registry.sqlite 'UPDATE dispatches SET auto_run_depth = 0'",
+    "sqlite3 ~/.local/state/pi-herdr-dispatch/registry.sqlite 'UPDATE tasks SET state = \'queued\''",
     "cat ~/.local/state/pi-herdr-dispatch/registry.sqlite",
     "rm ~/.local/state/pi-herdr-dispatch/registry.sqlite-wal",
   ])("denies a bash command that touches the Registry: %s", (command) => {

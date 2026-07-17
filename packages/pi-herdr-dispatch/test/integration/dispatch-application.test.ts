@@ -168,6 +168,88 @@ describe("DispatchApplication", () => {
     expect(proposal.payload).toContain("ID: hd_test_1");
   });
 
+  it("uses the approved Board Task text, binds it transactionally, and returns remaining quota", async () => {
+    const { application, registry } = await harness();
+    const task = application.createTask({
+      id: "hdt_approved",
+      title: "Approved parser work",
+      task: "Implement the approved parser change.",
+      mode: "write",
+      preferredWorktreePath: "/canonical/worktree",
+      createdBy: "model",
+      createdAt: 100,
+    });
+    application.approveTasks([task.id], 200);
+    registry.armAutoRun(origin.sessionId, 2, 300);
+
+    const proposal = await application.createProposal({
+      target: "term-target",
+      mode: "write",
+      task: "Model tried to alter the approved text.",
+      taskId: task.id,
+    });
+    expect(proposal.task).toBe("Implement the approved parser change.");
+    expect(proposal.payload).not.toContain("Model tried to alter");
+
+    await expect(application.confirmProposal(proposal, origin)).resolves.toEqual({
+      status: "active",
+      dispatchId: proposal.id,
+      echoVerified: true,
+      remainingQuota: 1,
+    });
+    expect(application.listTasks()[0]).toMatchObject({
+      id: task.id,
+      state: "dispatched",
+      boundDispatchId: proposal.id,
+    });
+    expect(registry.getDispatch(proposal.id)?.autoRunDepth).toBe(0);
+  });
+
+  it("omits remaining quota for a task-bound dispatch while Auto Run is off", async () => {
+    const { application } = await harness();
+    const task = application.createTask({
+      id: "hdt_disarmed",
+      title: "Supervised task",
+      task: "Handle this supervised task.",
+      mode: "write",
+      createdBy: "user",
+      createdAt: 100,
+    });
+    application.approveTasks([task.id], 200);
+    const proposal = await application.createProposal({
+      target: "term-target",
+      mode: "write",
+      task: "Ignored",
+      taskId: task.id,
+    });
+
+    await expect(application.confirmProposal(proposal, origin)).resolves.toEqual({
+      status: "active",
+      dispatchId: proposal.id,
+      echoVerified: true,
+    });
+  });
+
+  it("refuses a foreign-workspace Board Task while naming its durable state", async () => {
+    const { application, registry } = await harness();
+    registry.createTask({
+      id: "hdt_foreign",
+      workspaceId: "w-other",
+      title: "Foreign draft",
+      task: "Do not expose this task text.",
+      mode: "non-mutating",
+      createdBy: "model",
+      createdAt: 100,
+    });
+
+    await expect(application.createProposal({
+      target: "term-target",
+      mode: "non-mutating",
+      task: "Ignored",
+      taskId: "hdt_foreign",
+    })).rejects.toThrow(/draft in a foreign workspace/u);
+  });
+
   it("preflights capacity and worktree leases before an Agent window is created", async () => {
     const capacity = await harness({ maxActiveGlobal: 1, maxActivePerTargetWorkspace: 1 });
     const first = await capacity.application.createProposal({

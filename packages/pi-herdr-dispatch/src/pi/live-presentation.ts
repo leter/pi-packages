@@ -52,7 +52,10 @@ function readWidgetCounts(
     needsAttention:
       dispatch.originSessionId !== originSessionId || registry.listAttention(dispatch.id).length > 0,
   }));
+  const tasks = registry.listTasks?.(targetWorkspaceId) ?? [];
   return {
+    draftTasks: tasks.filter((task) => task.state === "draft").length,
+    reviewTasks: tasks.filter((task) => task.state === "review").length,
     delivering: entries.filter(
       ({ dispatch, needsAttention }) =>
         dispatch.lifecycle === "delivering" && !needsAttention,
