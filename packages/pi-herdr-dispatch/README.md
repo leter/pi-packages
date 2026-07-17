@@ -215,5 +215,6 @@ It never calls `pane.report_metadata`.
 - [Dispatch interaction plan](./docs/DISPATCH-INTERACTION-PLAN.md)
 - [Compatibility spikes](./docs/SPIKE-RESULTS.md)
 - [Live acceptance results](./docs/ACCEPTANCE-RESULTS.md)
+- [L14 Auto Run runbook](./docs/L14-auto-run-runbook.md) — manual acceptance procedure gating Auto Run
 - [Review findings](./docs/REVIEW-FINDINGS.md)
 - [Architecture decisions](./docs/adr)
