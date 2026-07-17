@@ -4,6 +4,7 @@ import {
   AutoRunCoordinator,
   buildAutoRunPreamble,
   decideSettlementWake,
+  WAKE_START_GRACE_MS,
   type AutoRunDeliveryStatus,
   type AutoRunPendingDispatch,
 } from "../../src/settlement/auto-run.js";
@@ -100,6 +101,8 @@ class FakeBatch {
   /** Dispatches whose delivery should throw. */
   readonly throwOn: Set<string>;
   readonly armedAt?: number;
+  /** Whether the model is idle (no turn running) for this delivery. Default idle. */
+  readonly isModelIdle: boolean;
 
   constructor(
     readonly armed: boolean,
@@ -109,11 +112,13 @@ class FakeBatch {
       alreadyDelivered?: readonly string[];
       throwOn?: readonly string[];
       armedAt?: number;
+      isModelIdle?: boolean;
     } = {},
   ) {
     this.alreadyDelivered = new Set(options.alreadyDelivered ?? []);
     this.throwOn = new Set(options.throwOn ?? []);
     if (options.armedAt !== undefined) this.armedAt = options.armedAt;
+    this.isModelIdle = options.isModelIdle ?? true;
   }
 
   deliver = (dispatchId: string, wake?: { preamble: string }): AutoRunDeliveryStatus => {
@@ -144,15 +149,21 @@ function pending(
   };
 }
 
+/** Coordinator with a controllable clock so the start-gap grace window is deterministic. */
+function makeCoordinator() {
+  const clock = { t: 1_000 };
+  const coordinator = new AutoRunCoordinator(() => clock.t);
+  return { coordinator, clock };
+}
+
 describe("AutoRunCoordinator", () => {
   it("wakes one result at a time, oldest first, holding the rest", () => {
-    const coordinator = new AutoRunCoordinator();
+    const { coordinator } = makeCoordinator();
     const batch = new FakeBatch(true, 5, [pending("hd_a", 1), pending("hd_b", 3), pending("hd_c", 2)]);
 
     coordinator.deliverPending(batch);
 
-    // Only the oldest (first) wake-eligible result is sent; the rest are held,
-    // not delivered, so /hd-auto off can still stop them.
+    // Only the oldest (first) wake-eligible result is sent; the rest are held.
     expect(batch.calls).toEqual([
       { dispatchId: "hd_a", woken: true, preamble: expect.stringContaining("budget on this chain: 3.") },
     ]);
@@ -160,53 +171,65 @@ describe("AutoRunCoordinator", () => {
     expect(coordinator.currentDepth()).toBe(2);
   });
 
-  it("wakes the next held result only after the current turn settles", () => {
-    const coordinator = new AutoRunCoordinator();
-    const first = new FakeBatch(true, 5, [pending("hd_a", 0), pending("hd_b", 0)]);
-    coordinator.deliverPending(first);
-    expect(first.calls.map((call) => call.dispatchId)).toEqual(["hd_a"]);
-
-    // The turn runs and settles; the next delivery wakes hd_b.
-    coordinator.noteTurnStarted();
-    coordinator.noteRunSettled();
-    const second = new FakeBatch(true, 5, [pending("hd_b", 0)]);
-    coordinator.deliverPending(second);
-    expect(second.calls.map((call) => call.dispatchId)).toEqual(["hd_b"]);
-    expect(coordinator.currentDepth()).toBe(1);
-  });
-
-  it("holds wake-eligible results fully pending while a turn is running", () => {
-    const coordinator = new AutoRunCoordinator();
-    coordinator.noteTurnStarted();
-
-    const batch = new FakeBatch(true, 5, [pending("hd_a", 0)]);
+  it("holds wake-eligible results while the model is not idle (a turn is running)", () => {
+    const { coordinator } = makeCoordinator();
+    const batch = new FakeBatch(true, 5, [pending("hd_a", 0)], { isModelIdle: false });
     coordinator.deliverPending(batch);
 
-    // Nothing sent: a message queued mid-turn could not be upgraded to a wake later.
     expect(batch.calls).toHaveLength(0);
     expect(coordinator.currentDepth()).toBe(0);
   });
 
-  it("keeps at most one wake in flight: a second burst waits until the first bracket closes", () => {
-    const coordinator = new AutoRunCoordinator();
+  it("releases a held result once the model goes idle again — even without an explicit settle signal", () => {
+    // Reproduces the concurrent-burst bug: hd_a wakes, hd_b is held while hd_a's
+    // turn runs, and hd_b must be released purely from the model returning to idle
+    // (the hold is not allowed to stick if the settle hook is missed).
+    const { coordinator, clock } = makeCoordinator();
     coordinator.deliverPending(new FakeBatch(true, 5, [pending("hd_a", 0)]));
-    expect(coordinator.currentDepth()).toBe(1);
 
-    // A new settlement arrives while the first wake's turn has not settled yet.
-    const second = new FakeBatch(true, 5, [pending("hd_a", 0), pending("hd_b", 0)]);
-    coordinator.deliverPending(second);
-    expect(second.calls).toHaveLength(0);
+    // hd_a's turn is now streaming; hd_b settles and is held.
+    coordinator.noteTurnStarted();
+    const held = new FakeBatch(true, 5, [pending("hd_b", 0)], { isModelIdle: false });
+    coordinator.deliverPending(held);
+    expect(held.calls).toHaveLength(0);
 
-    coordinator.noteRunSettled();
-    expect(coordinator.currentDepth()).toBe(0);
-    const third = new FakeBatch(true, 5, [pending("hd_b", 0)]);
-    coordinator.deliverPending(third);
-    expect(third.calls.filter((call) => call.woken)).toHaveLength(1);
+    // hd_a's turn ends → model idle again. No noteRunSettled is called here.
+    clock.t += 10_000;
+    const released = new FakeBatch(true, 5, [pending("hd_b", 0)], { isModelIdle: true });
+    coordinator.deliverPending(released);
+    expect(released.calls.map((call) => call.dispatchId)).toEqual(["hd_b"]);
+  });
+
+  it("does not double-wake during the start-gap grace, then wakes once it elapses", () => {
+    const { coordinator, clock } = makeCoordinator();
+    coordinator.deliverPending(new FakeBatch(true, 5, [pending("hd_a", 0)]));
+
+    // A second delivery arrives while the model still reports idle (the wake turn
+    // has not started streaming yet). Within the grace window it must NOT wake again.
+    const duringGrace = new FakeBatch(true, 5, [pending("hd_b", 0)], { isModelIdle: true });
+    coordinator.deliverPending(duringGrace);
+    expect(duringGrace.calls).toHaveLength(0);
+
+    // Once the grace window elapses (a stuck/never-started wake), the poll releases it.
+    clock.t += WAKE_START_GRACE_MS + 1;
+    const afterGrace = new FakeBatch(true, 5, [pending("hd_b", 0)], { isModelIdle: true });
+    coordinator.deliverPending(afterGrace);
+    expect(afterGrace.calls.map((call) => call.dispatchId)).toEqual(["hd_b"]);
+  });
+
+  it("noteTurnStarted clears the grace guard so an idle release is not delayed", () => {
+    const { coordinator } = makeCoordinator();
+    coordinator.deliverPending(new FakeBatch(true, 5, [pending("hd_a", 0)]));
+    // The wake turn started and then ended immediately (model idle) within the grace
+    // window; noteTurnStarted must have cleared the guard so hd_b is not blocked.
+    coordinator.noteTurnStarted();
+    const next = new FakeBatch(true, 5, [pending("hd_b", 0)], { isModelIdle: true });
+    coordinator.deliverPending(next);
+    expect(next.calls.map((call) => call.dispatchId)).toEqual(["hd_b"]);
   });
 
   it("delivers quietly and never wakes once disarmed, even mid-flight", () => {
-    const coordinator = new AutoRunCoordinator();
-    // Disarmed batch: everything goes quietly regardless of depth.
+    const { coordinator } = makeCoordinator();
     const batch = new FakeBatch(false, 5, [pending("hd_a", 0), pending("hd_b", 2)]);
     coordinator.deliverPending(batch);
 
@@ -216,7 +239,7 @@ describe("AutoRunCoordinator", () => {
   });
 
   it("never wakes a result that settled before Auto Run was armed", () => {
-    const coordinator = new AutoRunCoordinator();
+    const { coordinator } = makeCoordinator();
     const batch = new FakeBatch(
       true,
       5,
@@ -226,7 +249,6 @@ describe("AutoRunCoordinator", () => {
 
     coordinator.deliverPending(batch);
 
-    // hd_old settled before arming → quiet; hd_new settled after → the wake.
     expect(batch.calls).toEqual([
       { dispatchId: "hd_old", woken: false },
       { dispatchId: "hd_new", woken: true, preamble: expect.stringContaining("[HERDR AUTO RUN]") },
@@ -234,19 +256,18 @@ describe("AutoRunCoordinator", () => {
   });
 
   it("releases the wake bracket when delivery throws, so a later settlement is not blocked", () => {
-    const coordinator = new AutoRunCoordinator();
+    const { coordinator } = makeCoordinator();
     const failing = new FakeBatch(true, 5, [pending("hd_a", 0)], { throwOn: ["hd_a"] });
     expect(() => coordinator.deliverPending(failing)).toThrow("delivery failed");
     expect(coordinator.currentDepth()).toBe(0);
 
-    // The marker did not stick, so a subsequent settlement still wakes.
     const next = new FakeBatch(true, 5, [pending("hd_b", 0)]);
     coordinator.deliverPending(next);
     expect(next.calls.filter((call) => call.woken)).toHaveLength(1);
   });
 
   it("delivers a downgraded proposal quietly without consuming a wake", () => {
-    const coordinator = new AutoRunCoordinator();
+    const { coordinator } = makeCoordinator();
     const batch = new FakeBatch(true, 5, [pending("hd_a", 0, { wakeOnSettle: false })]);
     coordinator.deliverPending(batch);
 
@@ -255,30 +276,31 @@ describe("AutoRunCoordinator", () => {
   });
 
   it("quietly delivers a depth-exhausted result and notifies review exactly once", () => {
-    const coordinator = new AutoRunCoordinator();
+    const { coordinator } = makeCoordinator();
     const first = new FakeBatch(true, 5, [pending("hd_a", 5)]);
     coordinator.deliverPending(first);
     expect(first.calls).toEqual([{ dispatchId: "hd_a", woken: false }]);
     expect(first.exhausted).toEqual(["hd_a"]);
 
-    // A retry (e.g. pending-branch-change) must not re-notify the same dispatch.
     const retry = new FakeBatch(true, 5, [pending("hd_a", 5)]);
     coordinator.deliverPending(retry);
     expect(retry.exhausted).toEqual([]);
   });
 
   it("reopens the wake bracket when the trigger was already delivered", () => {
-    const coordinator = new AutoRunCoordinator();
-    // The single wake candidate reports already-delivered: nothing new was sent,
-    // so no turn starts and the bracket must not stay open.
+    const { coordinator } = makeCoordinator();
     const batch = new FakeBatch(true, 5, [pending("hd_a", 0)], { alreadyDelivered: ["hd_a"] });
     coordinator.deliverPending(batch);
-
     expect(coordinator.currentDepth()).toBe(0);
+
+    // Nothing is in flight, so the next wake-eligible result wakes immediately.
+    const next = new FakeBatch(true, 5, [pending("hd_b", 0)], { isModelIdle: true });
+    coordinator.deliverPending(next);
+    expect(next.calls.filter((call) => call.woken)).toHaveLength(1);
   });
 
   it("clears all state on reset", () => {
-    const coordinator = new AutoRunCoordinator();
+    const { coordinator } = makeCoordinator();
     coordinator.deliverPending(new FakeBatch(true, 5, [pending("hd_a", 0)]));
     expect(coordinator.currentDepth()).toBe(1);
 

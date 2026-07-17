@@ -53,45 +53,65 @@ export interface AutoRunDeliveryBatch {
   /** When Auto Run was armed for this session; results settled at or before it never wake. */
   armedAt?: number;
   maxAutoRunDepth: number;
+  /**
+   * Whether the Origin model is idle (no turn streaming) right now. This is the
+   * authoritative hold signal: a wake-eligible result is held while a turn runs
+   * and released as soon as the model goes idle. Because it reflects live Pi
+   * state rather than a manually-tracked flag, the hold cannot get stuck.
+   */
+  isModelIdle: boolean;
   pending: readonly AutoRunPendingDispatch[];
   deliver(dispatchId: string, wake?: { preamble: string }): AutoRunDeliveryStatus;
   notifyDepthExhausted(dispatchId: string): void;
 }
 
+/** How long a just-dispatched wake is treated as in-flight before its turn is observed streaming. */
+export const WAKE_START_GRACE_MS = 5_000;
+
 /**
- * Serializes settlement wakes so that at most one Auto Run turn is ever in
+ * Wakes settlement results strictly one at a time — at most one Auto Run turn in
  * flight. Pi delivers follow-up messages one-at-a-time and only flushes queued
  * `nextTurn` messages on the next user prompt, so results cannot be batched into
- * a single triggered turn; instead each wake-eligible result triggers its own
- * turn, strictly one at a time. While any turn runs (ours or the user's) every
- * wake-eligible result is held fully pending, so `/hd-auto off` can still stop
- * the rest — only the already-running turn survives. The marker brackets exactly
- * the triggered turn (recorded here, cleared on `agent_settled`), so proposals in
- * an unrelated user turn stay depth 0.
+ * one triggered turn; instead each wake-eligible result triggers its own turn.
+ *
+ * The hold decision uses two signals that cannot get permanently stuck: the live
+ * `isModelIdle` state (a turn is running) and a short grace window covering the
+ * gap between dispatching a wake and its turn starting to stream. So a burst
+ * becomes a sequence of single-result turns, and a held result is always released
+ * once the model goes idle (via `agent_settled` or the armed poll) — it can never
+ * strand. Callers must serialize `deliverPending` (the runtime does so with an
+ * async queue) so concurrent settlement callbacks do not race this state.
  */
 export class AutoRunCoordinator {
-  #turnActive = false;
+  readonly #now: () => number;
   #wakeDepth?: number;
+  /** Set when a wake is dispatched; cleared when its turn is observed streaming or the run settles. */
+  #pendingWakeAt?: number;
   readonly #exhaustionNotified = new Set<string>();
+
+  constructor(now: () => number = Date.now) {
+    this.#now = now;
+  }
 
   /** Auto Run Depth recorded on proposals confirmed right now. */
   currentDepth(): number {
     return this.#wakeDepth ?? 0;
   }
 
+  /** agent_start: the wake turn is now streaming, so the start-gap guard is no longer needed. */
   noteTurnStarted(): void {
-    this.#turnActive = true;
+    this.#pendingWakeAt = undefined;
   }
 
-  /** The agent run fully settled: no queued continuation remains, so the wake bracket closes. */
+  /** agent_settled: the run fully settled, so the wake bracket closes. */
   noteRunSettled(): void {
-    this.#turnActive = false;
     this.#wakeDepth = undefined;
+    this.#pendingWakeAt = undefined;
   }
 
   reset(): void {
-    this.#turnActive = false;
     this.#wakeDepth = undefined;
+    this.#pendingWakeAt = undefined;
     this.#exhaustionNotified.clear();
   }
 
@@ -102,7 +122,7 @@ export class AutoRunCoordinator {
       const decision = decideSettlementWake({ armed, dispatch, maxAutoRunDepth: batch.maxAutoRunDepth });
       if (decision.wake) {
         // Strict one-at-a-time: remember only the oldest wake-eligible result.
-        // The rest stay pending and are re-evaluated after this turn settles, so
+        // The rest stay pending and are re-evaluated once the model goes idle, so
         // a burst becomes a sequence of single-result turns, not one queued pile.
         firstWake ??= {
           dispatch,
@@ -119,11 +139,15 @@ export class AutoRunCoordinator {
     }
 
     if (!firstWake) return;
-    // Hold every wake-eligible result while a turn runs (ours or the user's) or a
-    // wake is already in flight. noteRunSettled's caller re-runs delivery.
-    if (this.#turnActive || this.#wakeDepth !== undefined) return;
+    // Hold while a turn is actually running (authoritative, self-healing) or during
+    // the brief window between dispatching a wake and its turn starting to stream.
+    if (!batch.isModelIdle) return;
+    if (this.#pendingWakeAt !== undefined && this.#now() - this.#pendingWakeAt < WAKE_START_GRACE_MS) {
+      return;
+    }
 
     this.#wakeDepth = firstWake.nextDepth;
+    this.#pendingWakeAt = this.#now();
     let status: AutoRunDeliveryStatus;
     try {
       status = batch.deliver(firstWake.dispatch.id, {
@@ -133,10 +157,14 @@ export class AutoRunCoordinator {
       // Delivery failed before a turn could start: release the bracket so a later
       // settlement is not permanently blocked by a stale wake marker.
       this.#wakeDepth = undefined;
+      this.#pendingWakeAt = undefined;
       throw error;
     }
     // Nothing new was sent, so no turn started and no bracket is open.
-    if (status === "already-delivered") this.#wakeDepth = undefined;
+    if (status === "already-delivered") {
+      this.#wakeDepth = undefined;
+      this.#pendingWakeAt = undefined;
+    }
   }
 }
 

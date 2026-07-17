@@ -49,6 +49,8 @@ export class DispatchRuntime {
   #workspaceId?: string;
   #config: DispatchConfig = { ...DEFAULT_DISPATCH_CONFIG };
   readonly #autoRun = new AutoRunCoordinator();
+  /** Serializes deliverPendingContext so concurrent callers cannot race the coordinator state. */
+  #deliveryQueue: Promise<void> = Promise.resolve();
   #pendingDeliveryTimer?: NodeJS.Timeout;
   #mutationUnavailableReason = UI_COPY.runtime.dispatchSessionNotStarted();
   readonly #stateListeners = new Set<() => void>();
@@ -210,7 +212,17 @@ export class DispatchRuntime {
     }
   }
 
+  /**
+   * Serialized so concurrent settlement callbacks, the armed poll, and the
+   * agent_settled hook cannot interleave and race the coordinator's wake state.
+   */
   async deliverPendingContext(ctx: ExtensionContext, onlyDispatchId?: string): Promise<void> {
+    const run = this.#deliveryQueue.then(() => this.#deliverPendingContext(ctx, onlyDispatchId));
+    this.#deliveryQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  async #deliverPendingContext(ctx: ExtensionContext, onlyDispatchId?: string): Promise<void> {
     if (ctx.mode !== "tui" || !this.#contextDelivery || !this.#sendContextMessage) return;
     const registry = this.registryRuntime.registry;
     if (!registry) return;
@@ -226,6 +238,7 @@ export class DispatchRuntime {
       armed: armedAt !== undefined,
       ...(armedAt === undefined ? {} : { armedAt }),
       maxAutoRunDepth: this.#config.maxAutoRunDepth,
+      isModelIdle: ctx.isIdle(),
       pending,
       deliver: (dispatchId, wake) => this.#contextDelivery!.deliver(dispatchId, context, wake),
       notifyDepthExhausted: (dispatchId) => void this.#notifyAutoRunDepthExhausted(dispatchId),
