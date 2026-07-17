@@ -1,6 +1,6 @@
 # pi-herdr-dispatch Design
 
-Status: ADR 0017 Roles and staged Workflows implemented; live acceptance L17 pending (2026-07-17).
+Status: ADR 0017 Roles and staged Workflows implemented and verified live (L17, 2026-07-17).
 
 ## Purpose
 
