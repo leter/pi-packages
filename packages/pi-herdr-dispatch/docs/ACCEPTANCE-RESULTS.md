@@ -238,3 +238,13 @@ Re-test: an armed Origin (`019f6e23…`) dispatched two independent tasks in one
 - The two wakes are **serialized**: B's claim (`1784259281022`) is ~13.5s after A's delivery (`1784259267525`) — never two concurrent turns. Both `delivered_at` are set (neither stranded), no `auto_run_depth > 0` chain formed, and the Origin returned to idle.
 
 **Status: Auto Run passes L14.** The single-settlement cases (core wake, depth-limit termination, resume, off, settle-then-arm) and the concurrent-burst serialization all pass live against a real Pi + codex, with the ghost-wake loop refuted throughout.
+
+## Auto Run — burst fix hardened after review (2026-07-17)
+
+A follow-up code review of the burst fix found that the first version relied on a phantom wake bracket: `context-delivery.deliver` returns `delivered` both when it sends a wake (a turn starts) and when it only completes an already-present branch entry's durable claim (no turn), and the coordinator treated both as a started turn. That left the next burst result held until the 5s grace expired (the source of the earlier ~13.5s gap) and mis-attributed depth to a following user turn.
+
+Fix: `deliver` now reports `startedWake` (whether it actually sent a wake message this call); the coordinator opens the wake bracket only on a real new turn, and a self-heal clears a stale depth when the model is idle with no wake mid-dispatch.
+
+Re-verified live: a two-dispatch burst (`hd_mrofq4xq` A, `hd_mrofq86m` B) now produces two `[HERDR AUTO RUN]` turns serialized with B's claim only **~4.4s** after A's delivery (down from ~13.5s), both delivered, no re-fire, Origin idle. A post-burst user-turn dispatch (`hd_mrofsbd5`) recorded `auto_run_depth 0`, confirming no stale depth.
+
+**Residual (documented, not a live failure):** the start-gap grace is a 5s timeout, not a proof that the prior wake started; if a wake's turn ever took longer than the grace to begin streaming, a second wake could fire. Real Pi turns start sub-second, so this was never observed, but a start-confirmation handshake (rather than a timeout) would be the fully rigorous form.
