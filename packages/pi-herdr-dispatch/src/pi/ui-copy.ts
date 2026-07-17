@@ -4,12 +4,14 @@ import type {
   DispatchMode,
   FinalOutcome,
 } from "../registry/types.js";
+import type { TaskWorktreeRefusalReason } from "../domain/task-worktree-path.js";
 
 export type HumanDispatchAction = "reply" | "cancel" | "resolve";
 export type HumanCommand =
   | "agents"
   | "new"
   | "create"
+  | "clean"
   | "manager"
   | "auto"
   | "reply"
@@ -17,7 +19,7 @@ export type HumanCommand =
   | "resolve"
   | "setup"
   | "output";
-export type TechnicalLabel = "dispatch" | "terminal" | "origin" | "workspace";
+export type TechnicalLabel = "dispatch" | "terminal" | "origin" | "workspace" | "worktree";
 
 export interface HumanUiCopy {
   readonly state: {
@@ -56,6 +58,7 @@ export interface HumanUiCopy {
     description(command: HumanCommand): string;
     dispatchTuiOnly(): string;
     createTuiOnly(): string;
+    cleanTuiOnly(): string;
     proposalTuiOnly(): string;
     managerTuiOnly(): string;
     setupTuiOnly(): string;
@@ -71,6 +74,21 @@ export interface HumanUiCopy {
     agentCreationCancelled(location?: string): string;
     agentCreationFailed(reason: string, location?: string): string;
     agentCreationPreflightFailed(reason: string): string;
+    createdResourceLocation(paneId?: string, tabId?: string, worktreePath?: string): string | undefined;
+    taskWorktreePlacement(): string;
+    newTaskWorktreePlacement(): string;
+    currentDirectoryPlacement(): string;
+    taskWorktreeCreationFailed(reason: string): string;
+    sharedWorktreeHint(): string;
+    noTaskWorktrees(): string;
+    chooseTaskWorktreeCleanup(): string;
+    cleanAllTaskWorktrees(count: number): string;
+    taskWorktreeCleanupEntry(path: string, branch: string, reasons: readonly string[]): string;
+    taskWorktreeRefusalReason(reason: TaskWorktreeRefusalReason): string;
+    taskWorktreeCleanupConfirm(count: number): string;
+    taskWorktreeCleanupConfirmBody(paths: readonly string[]): string;
+    taskWorktreeCleanupComplete(count: number): string;
+    taskWorktreeCleanupFailed(path: string, reason: string): string;
     selectedAgentUnavailable(): string;
     completeTask(): string;
     mutationMode(): string;
@@ -270,10 +288,19 @@ const modeLabels: Readonly<Record<string, string>> = Object.freeze({
   "non-mutating": "非变更",
 });
 
+const taskWorktreeRefusalLabels: Readonly<Record<TaskWorktreeRefusalReason, string>> =
+  Object.freeze({
+    "branch-unmerged": "分支未合并",
+    "working-tree-dirty": "任务 worktree 有未提交变更",
+    "unsettled-dispatch": "仍有未结算派发占用",
+    "missing-task-branch": "不是 task/ 分支",
+  });
+
 const commandDescriptions: Readonly<Record<HumanCommand, string>> = Object.freeze({
   agents: "列出当前 Herdr 工作区的可用 Agent",
   new: "使用现有 Agent 创建并立即发送一个 Herdr 派发",
   create: "创建一个新 Agent 并立即发送 Herdr 派发",
+  clean: "检查并清理已合并的任务 worktree",
   manager: "打开 Herdr 派发管理器",
   auto: "查看或切换自动运行(结算结果自动唤醒模型)",
   reply: "预览并确认对一个有待处理状况的运行中派发的回复",
@@ -340,6 +367,7 @@ export const UI_COPY = Object.freeze({
     description: (command) => commandDescriptions[command],
     dispatchTuiOnly: () => "派发投递仅在 TUI 模式下可用",
     createTuiOnly: () => "Agent 创建和派发仅在 TUI 模式下可用",
+    cleanTuiOnly: () => "任务 worktree 清理仅在 TUI 模式下可用",
     proposalTuiOnly: () => "Herdr 派发投递仅在 TUI 模式下可用",
     managerTuiOnly: () => "派发管理器仅在 TUI 模式下可用",
     setupTuiOnly: () => "集成安装仅在 TUI 模式下可用",
@@ -363,6 +391,34 @@ export const UI_COPY = Object.freeze({
     agentCreationFailed: (reason, location) =>
       `Agent 创建或启动失败:${reason} 如窗口已经创建,它会继续保留${location ? `:${location}。` : "。"}`,
     agentCreationPreflightFailed: (reason) => `创建前检查未通过:${reason}`,
+    createdResourceLocation: (paneId, tabId, worktreePath) => {
+      const parts = [
+        paneId && tabId ? `pane ${paneId} · tab ${tabId}` : "",
+        worktreePath ? `任务 worktree ${worktreePath}` : "",
+      ].filter(Boolean);
+      return parts.length > 0 ? parts.join(" · ") : undefined;
+    },
+    taskWorktreePlacement: () => "选择写入派发的位置",
+    newTaskWorktreePlacement: () =>
+      "新任务 worktree(默认)· node_modules 等依赖不会带过去,可能需要按本次派发授权重新安装",
+    currentDirectoryPlacement: () => "当前目录 · 继续使用共享 worktree",
+    taskWorktreeCreationFailed: (reason) =>
+      `任务 worktree 创建失败:${reason} 未创建任何 Agent 窗口。`,
+    sharedWorktreeHint: () =>
+      "目标 Agent 位于源会话的共享 worktree。/hd-create 可创建隔离的任务 worktree;继续会在共享 worktree 写租约上串行执行。",
+    noTaskWorktrees: () => "当前仓库没有任务 worktree。",
+    chooseTaskWorktreeCleanup: () => "选择要清理的任务 worktree；不可清理项会标出原因",
+    cleanAllTaskWorktrees: (count) => `清理全部 ${count} 个可清理项`,
+    taskWorktreeCleanupEntry: (path, branch, reasons) =>
+      `${path} · ${branch || "无 task/ 分支"}${
+        reasons.length === 0 ? " · 可清理" : ` · 拒绝:${reasons.join("、")}`
+      }`,
+    taskWorktreeRefusalReason: (reason) => taskWorktreeRefusalLabels[reason],
+    taskWorktreeCleanupConfirm: (count) => `确认清理 ${count} 个任务 worktree?`,
+    taskWorktreeCleanupConfirmBody: (paths) =>
+      `将执行非强制 git worktree remove,然后用 git branch -d 删除分支:\n${paths.join("\n")}`,
+    taskWorktreeCleanupComplete: (count) => `已清理 ${count} 个任务 worktree。`,
+    taskWorktreeCleanupFailed: (path, reason) => `未能清理 ${path}:${reason}`,
     selectedAgentUnavailable: () => "所选 Agent 已不可用",
     completeTask: () => "填写派发任务",
     mutationMode: () => "派发变更模式",
@@ -467,6 +523,7 @@ export const UI_COPY = Object.freeze({
       terminal: "终端",
       origin: "源会话",
       workspace: "工作区",
+      worktree: "任务 worktree",
     })[label],
     viewUnavailable: (reason) => ` 派发视图不可用:${reason}`,
     closeKeybar: () => " esc 关闭",

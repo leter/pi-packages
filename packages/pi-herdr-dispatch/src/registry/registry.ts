@@ -49,7 +49,13 @@ export class RegistryUnavailableError extends Error {
 }
 
 export class RegistryConflictError extends Error {
-  readonly code: "dispatch-exists" | "target-occupied" | "worktree-leased" | "workspace-limit" | "global-limit";
+  readonly code:
+    | "dispatch-exists"
+    | "target-occupied"
+    | "worktree-leased"
+    | "worktree-held"
+    | "workspace-limit"
+    | "global-limit";
   readonly conflictingDispatchId?: string;
 
   constructor(
@@ -601,6 +607,51 @@ export class DispatchRegistry {
             .all()) as unknown as DispatchRow[];
       return rows.map(mapDispatch);
     });
+  }
+
+  /**
+   * Hold the Registry write lock while one synchronous Git cleanup runs.
+   * A concurrent delivery intent must finish before the check or wait until
+   * cleanup completes, so the checked worktree cannot become held mid-remove.
+   */
+  withWorktreeCleanupGuard<T>(worktreePath: string, cleanup: () => T): T {
+    this.#assertOpen();
+    if (this.#mutationsDisabledReason) {
+      throw new RegistryUnavailableError(
+        `Dispatch Registry mutations are disabled: ${this.#mutationsDisabledReason}`,
+      );
+    }
+    const canonicalPath = resolve(worktreePath);
+    try {
+      this.#database.exec("BEGIN IMMEDIATE");
+      const held = this.#database
+        .prepare(
+          `SELECT id FROM dispatches
+           WHERE lifecycle != 'settled' AND worktree_path = ?
+           ORDER BY created_at, id LIMIT 1`,
+        )
+        .get(canonicalPath) as { id: string } | undefined;
+      if (held) {
+        throw new RegistryConflictError(
+          "worktree-held",
+          `Worktree ${canonicalPath} is held by unsettled dispatch ${held.id}`,
+          held.id,
+        );
+      }
+      const result = cleanup();
+      this.#database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      rollback(this.#database);
+      if (error instanceof RegistryConflictError || error instanceof RegistryStateError) throw error;
+      if (isSqliteBusy(error)) {
+        throw new RegistryUnavailableError(
+          "Dispatch Registry worktree cleanup could not acquire its transaction before busy_timeout",
+          error,
+        );
+      }
+      throw error;
+    }
   }
 
   listUnsettledInWorkspace(targetWorkspaceId: string): readonly StoredDispatch[] {

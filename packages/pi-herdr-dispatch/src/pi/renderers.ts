@@ -62,10 +62,13 @@ export function renderAgentsResult(
       0,
     );
   }
-  const rows = targets.map(agentRow);
+  const rows = targets.map((target) => {
+    const row = agentRow(target);
+    return { ...row, worktreeCell: UI_COPY.common.worktree(row.worktree) };
+  });
   const labelWidth = Math.max(...rows.map((row) => displayWidth(row.label)));
   const statusWidth = Math.max(...rows.map((row) => displayWidth(`${row.status} ${row.provenance}`)));
-  const cwdWidth = Math.max(...rows.map((row) => displayWidth(row.cwd)));
+  const worktreeWidth = Math.max(...rows.map((row) => displayWidth(row.worktreeCell)));
   const lines = rows.map((row) => {
     const provenance =
       row.provenance === UI_COPY.state.provenance(true)
@@ -77,7 +80,7 @@ export function renderAgentsResult(
     return [
       ` ${mark(theme, row.mark)} ${theme.bold(padToDisplayWidth(row.label, labelWidth))}`,
       `${paint(row.mark.color, row.status)} ${provenance}${statusPad}`,
-      paint("muted", padToDisplayWidth(row.cwd, cwdWidth)),
+      paint("muted", padToDisplayWidth(row.worktreeCell, worktreeWidth)),
       paint("dim", row.terminalId),
     ].join("  ");
   });

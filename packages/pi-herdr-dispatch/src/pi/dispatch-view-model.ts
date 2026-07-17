@@ -1,3 +1,4 @@
+import { isTaskWorktreePath } from "../domain/task-worktree-path.js";
 import type { AttentionCondition, AttentionRecord, StoredDispatch } from "../registry/types.js";
 import {
   ATTENTION_GLYPH,
@@ -490,6 +491,9 @@ function technicalLines(dispatch: StoredDispatch): ViewLine[] {
     { spans: [span(`${ROW_INDENT}${padToDisplayWidth(UI_COPY.manager.technicalLabel("terminal"), 13)}${shortenId(dispatch.targetTerminalId)}`, "dim")] },
     { spans: [span(`${ROW_INDENT}${padToDisplayWidth(UI_COPY.manager.technicalLabel("origin"), 13)}${sanitizeLine(dispatch.originSessionId, 120)}`, "dim")] },
     { spans: [span(`${ROW_INDENT}${padToDisplayWidth(UI_COPY.manager.technicalLabel("workspace"), 13)}${sanitizeLine(dispatch.targetWorkspaceId, 120)}`, "dim")] },
+    ...(dispatch.worktreePath && isTaskWorktreePath(dispatch.worktreePath)
+      ? [{ spans: [span(`${ROW_INDENT}${padToDisplayWidth(UI_COPY.manager.technicalLabel("worktree"), 13)}${sanitizeLine(dispatch.worktreePath, 180)}`, "dim")] }]
+      : []),
   ];
 }
 

@@ -85,6 +85,9 @@ describe("human UI copy catalog", () => {
     expect(UI_COPY.manager.heading(2, 0, 0, true)).toBe("⚡自动 · 2 运行中");
     expect(UI_COPY.manager.heading(0, 0, 0, true)).toBe("⚡自动");
     expect(UI_COPY.manager.technicalLabel("workspace")).toBe("工作区");
+    expect(UI_COPY.manager.technicalLabel("worktree")).toBe("任务 worktree");
+    expect(UI_COPY.command.newTaskWorktreePlacement()).toContain("node_modules 等依赖不会带过去");
+    expect(UI_COPY.command.taskWorktreeRefusalReason("branch-unmerged")).toBe("分支未合并");
   });
 
   it("contains exact human renderer, notification, and follow-up copy", () => {

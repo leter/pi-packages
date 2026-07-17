@@ -123,6 +123,26 @@ describe("durable delivery intent and reservations", () => {
     ]);
   });
 
+  it("allows parallel write streams in distinct canonical worktrees", async () => {
+    const [first, second] = await registryPair();
+    first.confirmDeliveryIntent(intent());
+
+    second.confirmDeliveryIntent(
+      intent({
+        id: "hd_002",
+        payloadHash: "sha256:payload-002",
+        targetTerminalId: "term_target_2",
+        targetPaneId: "w1:p3",
+        targetCwd: "/repo.worktrees/task-b",
+        worktreePath: "/repo.worktrees/task-b",
+      }),
+    );
+
+    expect(new Set(second.listWriteLeases().map((lease) => lease.worktreePath))).toEqual(
+      new Set(["/repo/worktree-a", "/repo.worktrees/task-b"]),
+    );
+  });
+
   it("does not acquire a write lease for non-mutating work", async () => {
     const [registry] = await registryPair();
 

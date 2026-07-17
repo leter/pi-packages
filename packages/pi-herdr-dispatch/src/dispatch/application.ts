@@ -147,9 +147,43 @@ export class DispatchApplication {
     return this.#config.defaultDeadlineMinutes;
   }
 
+  async sharesCanonicalWorktree(worktreePath: string, cwd: string): Promise<boolean> {
+    return worktreePath === await this.#resolveWorktree(cwd);
+  }
+
   async assertCanCreateTarget(
     request: Omit<CreateProposalRequest, "target"> & { cwd: string },
   ): Promise<void> {
+    this.assertCanCreateCapacity(request);
+    if (request.mode !== "write") return;
+    const worktreePath = await this.#resolveWorktree(request.cwd);
+    this.#assertWorktreeLeaseAvailable(worktreePath);
+  }
+
+  assertCanCreateTargetAtWorktree(
+    request: Omit<CreateProposalRequest, "target">,
+    worktreePath: string,
+  ): void {
+    this.assertCanCreateCapacity(request);
+    if (request.mode === "write") this.#assertWorktreeLeaseAvailable(worktreePath);
+  }
+
+  #assertWorktreeLeaseAvailable(worktreePath: string): void {
+    const lease = this.#registry
+      .listWriteLeases()
+      .find((candidate) => candidate.worktreePath === worktreePath);
+    if (lease) {
+      throw new RegistryConflictError(
+        "worktree-leased",
+        `Worktree ${worktreePath} is leased by ${lease.dispatchId}`,
+        lease.dispatchId,
+      );
+    }
+  }
+
+  assertCanCreateCapacity(
+    request: Omit<CreateProposalRequest, "target">,
+  ): void {
     normalizeDispatchTask(request.task);
     if (request.mode !== "write" && request.mode !== "non-mutating") {
       throw new TypeError("mode must be write or non-mutating");
@@ -179,18 +213,6 @@ export class DispatchApplication {
         `Active dispatch limit reached for workspace ${this.#workspaceId}`,
       );
     }
-    if (request.mode !== "write") return;
-    const worktreePath = await this.#resolveWorktree(request.cwd);
-    const lease = this.#registry
-      .listWriteLeases()
-      .find((candidate) => candidate.worktreePath === worktreePath);
-    if (lease) {
-      throw new RegistryConflictError(
-        "worktree-leased",
-        `Worktree ${worktreePath} is leased by ${lease.dispatchId}`,
-        lease.dispatchId,
-      );
-    }
   }
 
   async listEligibleAgents(): Promise<readonly ProposalTarget[]> {
@@ -201,7 +223,7 @@ export class DispatchApplication {
     const occupied = new Set(
       this.#registry.listTargetOccupancy().map((record) => record.targetTerminalId),
     );
-    return snapshot.agents
+    const eligible = snapshot.agents
       .filter(
         (agent) =>
           agent.terminalId !== this.#originTerminalId &&
@@ -209,18 +231,27 @@ export class DispatchApplication {
           !occupied.has(agent.terminalId) &&
           agent.cwd !== undefined,
       )
-      .map((agent) =>
-        Object.freeze({
+    return Promise.all(
+      eligible.map(async (agent) => {
+        let worktreePath: string | undefined;
+        try {
+          worktreePath = await this.#resolveWorktree(agent.cwd!);
+        } catch {
+          // Non-Git Eligible Agents remain valid for non-mutating work.
+        }
+        return Object.freeze({
           terminalId: agent.terminalId,
           paneId: agent.paneId,
           workspaceId: agent.workspaceId,
           agentLabel: agent.agent ?? agent.name ?? agent.label ?? "unknown",
           ...(agent.name === undefined ? {} : { displayName: agent.name }),
           cwd: agent.cwd!,
+          ...(worktreePath === undefined ? {} : { worktreePath }),
           status: agent.agentStatus as "idle" | "done",
           statusProvenance: agent.screenDetectionSkipped ? "reported" : "screen-detected",
-        }),
-      );
+        });
+      }),
+    );
   }
 
   async createProposal(request: CreateProposalRequest): Promise<DispatchProposal> {

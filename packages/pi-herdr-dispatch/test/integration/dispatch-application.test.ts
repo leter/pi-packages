@@ -151,6 +151,7 @@ describe("DispatchApplication", () => {
     expect(eligible).toEqual([
       expect.objectContaining({
         terminalId: "term-target",
+        worktreePath: "/canonical/worktree",
         status: "done",
         statusProvenance: "screen-detected",
       }),
@@ -199,6 +200,12 @@ describe("DispatchApplication", () => {
         task: "Another write task",
       }),
     ).rejects.toMatchObject({ code: "worktree-leased" });
+    expect(() =>
+      leased.application.assertCanCreateTargetAtWorktree(
+        { mode: "write", task: "Planned isolated task" },
+        "/canonical/worktree",
+      ),
+    ).toThrowError(expect.objectContaining({ code: "worktree-leased" }));
   });
 
   it("persists delivering intent and reservations before one verified delivery becomes active", async () => {

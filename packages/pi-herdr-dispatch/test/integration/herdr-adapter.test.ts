@@ -1,16 +1,23 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HerdrAdapter, HerdrTargetLostError } from "../../src/herdr/adapter.js";
+import { TaskWorktreeService } from "../../src/domain/task-worktree.js";
 import { HerdrProtocolError } from "../../src/herdr/socket-client.js";
+import { openDispatchRegistry, type DispatchRegistry } from "../../src/registry/registry.js";
 import { FakeHerdrServer } from "../support/fake-herdr-server.js";
 
 const roots: string[] = [];
 const servers: FakeHerdrServer[] = [];
+const registries: DispatchRegistry[] = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
+  for (const registry of registries.splice(0)) registry.close();
   await Promise.all(servers.splice(0).map((server) => server.close()));
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -65,6 +72,88 @@ async function fakeServer(
 }
 
 describe("HerdrAdapter discovery and routing", () => {
+  it("passes a newly created Task Worktree cwd into pane creation", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "pi-herdr-adapter-task-worktree-"));
+    roots.push(parent);
+    const repository = join(parent, "repo");
+    await execFileAsync("git", ["init", "--quiet", "--initial-branch=main", repository]);
+    await writeFile(join(repository, "tracked.txt"), "base\n", "utf8");
+    await execFileAsync("git", ["-C", repository, "add", "tracked.txt"]);
+    await execFileAsync("git", [
+      "-C", repository,
+      "-c", "user.name=Test",
+      "-c", "user.email=test@example.invalid",
+      "commit", "--quiet", "-m", "base",
+    ]);
+    const taskWorktrees = new TaskWorktreeService({
+      unsettledWorktreePaths: () => [],
+      withRemovalGuard: (_worktreePath, cleanup) => cleanup(),
+    });
+    const task = await taskWorktrees.create(
+      await taskWorktrees.plan(repository, "Isolate pane"),
+    );
+    const created = pane({
+      pane_id: "p-created",
+      terminal_id: "term-created",
+      cwd: task.path,
+    });
+    const fake = await fakeServer((request, connection) => {
+      if (request.method === "session.snapshot") {
+        connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() });
+      } else if (request.method === "pane.split") {
+        expect(request.params).toEqual({
+          target_pane_id: "p-origin",
+          workspace_id: "w-current",
+          direction: "right",
+          cwd: task.path,
+          ratio: 0.5,
+          focus: false,
+          env: {},
+        });
+        connection.sendResponse(request.id, { type: "pane_info", pane: created });
+      }
+    });
+    const adapter = await HerdrAdapter.connect({
+      socketPath: fake.socketPath,
+      workspaceId: "w-current",
+    });
+
+    await expect(
+      adapter.createSplitPane({
+        targetPaneId: "p-origin",
+        direction: "right",
+        cwd: task.path,
+        ratio: 0.5,
+      }),
+    ).resolves.toEqual(expect.objectContaining({ cwd: task.path, paneId: "p-created" }));
+    const registry = await openDispatchRegistry(join(parent, "registry.sqlite"));
+    registries.push(registry);
+    registry.confirmDeliveryIntent({
+      id: "hd_task_worktree",
+      originSessionId: "session-origin",
+      originWorkspaceId: "w-current",
+      targetWorkspaceId: "w-current",
+      targetTerminalId: "term-created",
+      targetPaneId: "p-created",
+      targetAgentLabel: "codex",
+      targetCwd: task.path,
+      worktreePath: task.path,
+      mode: "write",
+      task: "Isolate pane",
+      constraints: [],
+      payload: "payload",
+      payloadHash: "sha256:payload",
+      deadlineAt: 2_000,
+      confirmedAt: 1_000,
+      maxActivePerTargetWorkspace: 4,
+      maxActiveGlobal: 8,
+    });
+    expect(registry.listWriteLeases()).toEqual([
+      expect.objectContaining({ worktreePath: task.path, targetTerminalId: "term-created" }),
+    ]);
+    adapter.close();
+  });
+
   it("validates protocol 16 and exposes only the captured current workspace", async () => {
     const fake = await fakeServer((request, connection) =>
       connection.sendResponse(request.id, { type: "session_snapshot", snapshot: snapshot() }),

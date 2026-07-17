@@ -202,6 +202,7 @@ export interface AgentRow {
   status: string;
   provenance: string;
   cwd: string;
+  worktree: string;
   terminalId: string;
 }
 
@@ -212,6 +213,7 @@ export function agentRow(target: ProposalTarget): AgentRow {
     status: UI_COPY.state.agentStatus(target.status),
     provenance: UI_COPY.state.provenance(target.statusProvenance === "reported"),
     cwd: shortenPath(target.cwd, 36),
+    worktree: target.worktreePath ? shortenPath(target.worktreePath, 36) : "—",
     terminalId: shortenId(target.terminalId),
   };
 }
@@ -226,7 +228,7 @@ export function formatAgentTable(targets: readonly ProposalTarget[]): string {
     rows.map((row) => [
       `${row.mark.glyph} ${row.label}`,
       `${row.status} ${row.provenance}`,
-      row.cwd,
+      UI_COPY.common.worktree(row.worktree),
       row.terminalId,
     ]),
   );

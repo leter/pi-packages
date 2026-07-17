@@ -73,8 +73,10 @@ function createAgentsTool(
   return {
     name: "herdr_agents_list",
     label: UI_COPY.tool.label("agents"),
-    description: "List Eligible Agents in the captured current Herdr workspace.",
-    promptSnippet: "List current-workspace Herdr Agents eligible for automatic dispatch",
+    description:
+      "List Eligible Agents and their canonical worktrees in the captured current Herdr workspace.",
+    promptSnippet:
+      "List current-workspace Herdr Agents eligible for automatic dispatch, including canonical worktrees",
     parameters: emptyParameters,
     async execute() {
       const targets = await application(runtime).listEligibleAgents();

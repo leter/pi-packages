@@ -9,6 +9,7 @@ import {
   loadDispatchConfig,
   type DispatchConfig,
 } from "../domain/config.js";
+import { TaskWorktreeService } from "../domain/task-worktree.js";
 import { HerdrAdapter } from "../herdr/adapter.js";
 import { OriginMonitor } from "../monitor/origin-monitor.js";
 import { AutoRunCoordinator } from "../settlement/auto-run.js";
@@ -44,6 +45,7 @@ export class DispatchRuntime {
   #followup?: DispatchFollowupService;
   #application?: DispatchApplication;
   #agentLauncher?: AgentLaunchService;
+  #taskWorktrees?: TaskWorktreeService;
   #ui?: ExtensionContext["ui"];
   #originSessionId?: string;
   #workspaceId?: string;
@@ -72,6 +74,10 @@ export class DispatchRuntime {
 
   get agentLauncher(): AgentLaunchService | undefined {
     return this.#agentLauncher;
+  }
+
+  get taskWorktrees(): TaskWorktreeService | undefined {
+    return this.#taskWorktrees;
   }
 
   get mutationUnavailableReason(): string | undefined {
@@ -182,6 +188,16 @@ export class DispatchRuntime {
             originPaneId: originPane.paneId,
             startupTimeoutMs: config.agentStartupTimeoutMs,
           });
+          this.#taskWorktrees = new TaskWorktreeService({
+            unsettledWorktreePaths: () =>
+              registry
+                .listUnsettled()
+                .flatMap((dispatch) =>
+                  dispatch.worktreePath === undefined ? [] : [dispatch.worktreePath],
+                ),
+            withRemovalGuard: (worktreePath, cleanup) =>
+              registry.withWorktreeCleanupGuard(worktreePath, cleanup),
+          });
         }
         await this.#monitor?.start();
         this.#updateWidget();
@@ -207,6 +223,7 @@ export class DispatchRuntime {
       this.#adapter = undefined;
       this.#application = undefined;
       this.#agentLauncher = undefined;
+      this.#taskWorktrees = undefined;
       this.#mutationUnavailableReason = UI_COPY.runtime.adapterUnavailable(errorMessage(error));
       return false;
     }
@@ -289,6 +306,7 @@ export class DispatchRuntime {
     this.#contextDelivery = undefined;
     this.#followup = undefined;
     this.#agentLauncher = undefined;
+    this.#taskWorktrees = undefined;
     this.#adapter?.close();
     this.#adapter = undefined;
     this.#application = undefined;

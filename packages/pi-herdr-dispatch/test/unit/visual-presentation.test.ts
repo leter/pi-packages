@@ -87,6 +87,7 @@ describe("visual vocabulary", () => {
         agentLabel: "codex",
         displayName: "调度助手",
         cwd: "/repo",
+        worktreePath: "/repo",
         status: "idle",
         statusProvenance: "screen-detected",
       },
@@ -96,6 +97,7 @@ describe("visual vocabulary", () => {
         workspaceId: "w1",
         agentLabel: "claude",
         cwd: "/repo",
+        worktreePath: "/repo",
         status: "idle",
         statusProvenance: "screen-detected",
       },
@@ -103,8 +105,8 @@ describe("visual vocabulary", () => {
 
     expect(table).toBe(
       "2 个可用 Agent\n" +
-        "  ○ 调度助手  空闲 ~屏测  /repo  term_chinese\n" +
-        "  ○ claude    空闲 ~屏测  /repo  term_ascii",
+        "  ○ 调度助手  空闲 ~屏测  worktree /repo  term_chinese\n" +
+        "  ○ claude    空闲 ~屏测  worktree /repo  term_ascii",
     );
   });
 
@@ -165,10 +167,11 @@ describe("visual vocabulary", () => {
         workspaceId: "w1",
         agentLabel: "claude",
         cwd: "/repo",
+        worktreePath: "/repo",
         status: "idle",
         statusProvenance: "screen-detected",
       },
-    ])).toBe("1 个可用 Agent\n  ○ claude  空闲 ~屏测  /repo  term_6569…9324");
+    ])).toBe("1 个可用 Agent\n  ○ claude  空闲 ~屏测  worktree /repo  term_6569…9324");
     expect(formatDispatchTable([], () => [], 0)).toBe(
       "没有未结算的派发。\n" +
         "用 /hd-new 发起一个,或直接让模型派发工作。",

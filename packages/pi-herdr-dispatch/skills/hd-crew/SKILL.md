@@ -21,8 +21,10 @@ Routing rules:
 
 - If the user names a specific Agent or Agent type, obey that choice whenever that Agent is Eligible; fall back to the default roles above only when the user leaves the choice to you.
 - Otherwise match a task to a role by its nature, not by which agent happens to be free. Torn between executor and bug hunter: investigating → AMP, fixing → Codex.
-- **Single-writer policy:** at most one `write` dispatch in flight per worktree at any time (normally Codex). Worktree Write Leases would serialize concurrent writers anyway — do not create the contention in the first place.
-- Fan out in parallel only tasks that are genuinely independent of each other, and only in `non-mutating` mode. Active-dispatch capacity is configurable — if a proposal is rejected for capacity, report that plainly; never assume a fixed limit.
+- **Task Worktree routing:** for a `write` task, prefer an Eligible Agent whose `canonicalWorktree` is a Task Worktree under an `<origin>.worktrees` container. Keep one write stream per worktree. Independent write tasks may run in parallel only when they target distinct Task Worktrees.
+- If no suitable Eligible Agent is seated in a Task Worktree, fall back to the existing shared-worktree dispatch and say plainly: "No Eligible Agent is seated in a Task Worktree; using the serialized shared worktree."
+- **Single-writer policy:** at most one `write` dispatch in flight per worktree at any time (normally Codex). Worktree Write Leases would serialize same-worktree writers anyway — do not create the contention in the first place.
+- Fan out in parallel only tasks that are genuinely independent of each other. Non-mutating tasks may use any suitable Eligible Agent; write tasks must use distinct Task Worktrees. Active-dispatch capacity is configurable — if a proposal is rejected for capacity, report that plainly; never assume a fixed limit.
 - If task B depends on task A's result, dispatch A only. A's summary arrives as an automatically delivered `HERDR_DISPATCH_RESULT` on a later user turn; dispatch B then, not before.
 
 ## Workflow
@@ -39,7 +41,7 @@ Absence from the eligible list only means "cannot be dispatched right now": the 
 
 ## Hard boundaries
 
-- Agent creation (`/hd-create`), reply (`/hd-reply`), cancellation (`/hd-cancel`), manual resolution (`/hd-resolve`), marking settled results as seen, and integration setup (`/hd-setup`) are user TUI actions. Point the user there; never attempt or simulate them.
+- Agent and Task Worktree creation (`/hd-create`), Task Worktree cleanup (`/hd-clean`), reply (`/hd-reply`), cancellation (`/hd-cancel`), manual resolution (`/hd-resolve`), marking settled results as seen, and integration setup (`/hd-setup`) are user TUI actions. Point the user there; never attempt or simulate them.
 - Never block or wait on dispatch completion, and never initiate a model turn yourself.
 - When a dispatch reports attention or blocked, park that branch, keep advancing independent branches, and tell the user plainly which branch is waiting on them.
 - Never read a target Agent's output unless the user explicitly asks; then perform exactly one bounded `herdr_agent_output_inspect`.

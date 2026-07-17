@@ -470,6 +470,30 @@ describe("dispatch view component", () => {
     expect(new Set(valuePrefixes).size).toBe(1);
   });
 
+  it("shows the retained Task Worktree path only in technical details", () => {
+    const record = dispatch({ worktreePath: "/repo.worktrees/fix-tests" });
+    const normal = plainAll(
+      buildDetailLines(record, [], { status: "none" }, 1_000_000, "session_origin", false),
+    ).join("\n");
+    const technical = plainAll(
+      buildDetailLines(record, [], { status: "none" }, 1_000_000, "session_origin", true),
+    ).join("\n");
+    expect(normal).not.toContain("/repo.worktrees/fix-tests");
+    expect(technical).toContain("任务 worktree");
+    expect(technical).toContain("/repo.worktrees/fix-tests");
+    const shared = plainAll(
+      buildDetailLines(
+        dispatch({ worktreePath: "/repo/project" }),
+        [],
+        { status: "none" },
+        1_000_000,
+        "session_origin",
+        true,
+      ),
+    ).join("\n");
+    expect(shared).not.toContain("任务 worktree");
+  });
+
   it("toggles technical details without leaking IDs in the default detail", () => {
     const { component } = harness();
     component.handleInput(ENTER);

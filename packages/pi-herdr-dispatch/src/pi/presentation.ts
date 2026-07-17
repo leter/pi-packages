@@ -12,6 +12,7 @@ ${safeJson(
       agent: target.agentLabel,
       displayName: target.displayName,
       cwd: target.cwd,
+      canonicalWorktree: target.worktreePath ?? null,
       status: target.status,
       statusProvenance: target.statusProvenance,
       occupied: false,

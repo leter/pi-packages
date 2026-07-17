@@ -17,6 +17,13 @@ import {
 import type { CreateProposalRequest, DispatchApplication } from "../dispatch/application.js";
 import type { HerdrPane } from "../herdr/protocol.js";
 import type { StoredDispatch } from "../registry/types.js";
+import type {
+  TaskWorktree,
+  TaskWorktreeEntry,
+  TaskWorktreePlan,
+  TaskWorktreeService,
+} from "../domain/task-worktree.js";
+import { firstTaskLine } from "../domain/task-worktree-path.js";
 import { launchableAgentTypes } from "./agent-launch-catalog.js";
 import {
   actionCandidates,
@@ -35,6 +42,7 @@ import {
   formatDispatchTable,
   formatInspectionText,
   sanitizedResultCard,
+  shortenPath,
 } from "./visual.js";
 import type { DispatchRuntime } from "./dispatch-runtime.js";
 import { selectDomainValue } from "./select-value.js";
@@ -57,14 +65,24 @@ export function registerDispatchCommands(
         if (targets.length === 0) throw new Error(UI_COPY.command.noEligibleAgents());
         const options = targets.map((target) => {
           const row = agentRow(target);
-          return `${row.mark.glyph} ${row.label} · ${row.status} ${row.provenance} · ${row.cwd} · ${row.terminalId}`;
+          return `${row.mark.glyph} ${row.label} · ${row.status} ${row.provenance} · ${UI_COPY.common.worktree(row.worktree)} · ${row.terminalId}`;
         });
         const selected = await ctx.ui.select(UI_COPY.command.chooseEligibleAgent(), options);
         if (!selected) return;
         const target = targets[options.indexOf(selected)];
         if (!target) throw new Error(UI_COPY.command.selectedAgentUnavailable());
         const request = await collectDispatchWizard(ctx, UI_COPY.command.completeTask());
-        if (request) await dispatchRequest(ctx, target.terminalId, request);
+        if (!request) return;
+        if (request.mode === "write" && target.worktreePath) {
+          try {
+            if (await app.sharesCanonicalWorktree(target.worktreePath, ctx.cwd)) {
+              ctx.ui.notify(UI_COPY.command.sharedWorktreeHint(), "info");
+            }
+          } catch {
+            // The write proposal's normal validation remains authoritative.
+          }
+        }
+        await dispatchRequest(ctx, target.terminalId, request);
       }),
   });
 
@@ -101,8 +119,42 @@ export function registerDispatchCommands(
         if (layout === undefined) return;
         const request = await collectDispatchWizard(ctx, UI_COPY.command.completeTask());
         if (!request) return;
+        let launchCwd = ctx.cwd;
+        let taskWorktree: TaskWorktree | undefined;
+        if (request.mode === "write") {
+          const placement = await selectDomainValue(
+            (title, options) => ctx.ui.select(title, options),
+            UI_COPY.command.taskWorktreePlacement(),
+            ["task-worktree", "current-directory"] as const,
+            (value) =>
+              value === "task-worktree"
+                ? UI_COPY.command.newTaskWorktreePlacement()
+                : UI_COPY.command.currentDirectoryPlacement(),
+          );
+          if (placement === undefined) return;
+          if (placement === "task-worktree") {
+            let plan: TaskWorktreePlan;
+            try {
+              const service = taskWorktrees(runtime);
+              plan = await service.plan(ctx.cwd, request.task);
+              application(runtime).assertCanCreateTargetAtWorktree(request, plan.path);
+            } catch (error) {
+              throw new Error(UI_COPY.command.agentCreationPreflightFailed(errorMessage(error)), {
+                cause: error,
+              });
+            }
+            try {
+              taskWorktree = await taskWorktrees(runtime).create(plan);
+              launchCwd = taskWorktree.path;
+            } catch (error) {
+              throw new Error(UI_COPY.command.taskWorktreeCreationFailed(errorMessage(error)), {
+                cause: error,
+              });
+            }
+          }
+        }
         try {
-          await application(runtime).assertCanCreateTarget({ ...request, cwd: ctx.cwd });
+          await application(runtime).assertCanCreateTarget({ ...request, cwd: launchCwd });
         } catch (error) {
           throw new Error(UI_COPY.command.agentCreationPreflightFailed(errorMessage(error)), {
             cause: error,
@@ -113,12 +165,14 @@ export function registerDispatchCommands(
           launcher,
           selectedType,
           layout,
-          ctx.cwd,
+          launchCwd,
           createAgentLabel(selectedType, request.task),
         );
         if (launched.status === "cancelled") {
           ctx.ui.notify(
-            UI_COPY.command.agentCreationCancelled(createdResourceLocation(launched.createdPane)),
+            UI_COPY.command.agentCreationCancelled(
+              createdResourceLocation(launched.createdPane, taskWorktree?.path),
+            ),
             "warning",
           );
           return;
@@ -131,6 +185,7 @@ export function registerDispatchCommands(
                 launched.error instanceof AgentLaunchError
                   ? launched.error.createdPane
                   : undefined,
+                taskWorktree?.path,
               ),
             ),
             { cause: launched.error },
@@ -352,6 +407,64 @@ export function registerDispatchCommands(
       }),
   });
 
+  registerCommandWithAlias(pi, "herdr-dispatch-clean", "hd-clean", {
+    description: UI_COPY.command.description("clean"),
+    handler: async (_args, ctx) =>
+      handle(ctx, async () => {
+        if (ctx.mode !== "tui") throw new Error(UI_COPY.command.cleanTuiOnly());
+        if (runtime.mutationUnavailableReason) throw new Error(runtime.mutationUnavailableReason);
+        const service = taskWorktrees(runtime);
+        const entries = await service.list(ctx.cwd);
+        if (entries.length === 0) {
+          ctx.ui.notify(UI_COPY.command.noTaskWorktrees(), "info");
+          return;
+        }
+        const removable = entries.filter((entry) => entry.removable);
+        const allOption =
+          removable.length > 1
+            ? UI_COPY.command.cleanAllTaskWorktrees(removable.length)
+            : undefined;
+        const entryOptions = new Map(
+          entries.map((entry) => [taskWorktreeCleanupLabel(entry), entry] as const),
+        );
+        const selected = await ctx.ui.select(UI_COPY.command.chooseTaskWorktreeCleanup(), [
+          ...(allOption ? [allOption] : []),
+          ...entryOptions.keys(),
+        ]);
+        if (!selected) return;
+        const selectedEntry = entryOptions.get(selected);
+        if (selectedEntry && !selectedEntry.removable) {
+          ctx.ui.notify(taskWorktreeCleanupLabel(selectedEntry), "warning");
+          return;
+        }
+        const selectedEntries =
+          selected === allOption ? removable : selectedEntry ? [selectedEntry] : [];
+        if (selectedEntries.length === 0) return;
+        const confirmed = await ctx.ui.confirm(
+          UI_COPY.command.taskWorktreeCleanupConfirm(selectedEntries.length),
+          UI_COPY.command.taskWorktreeCleanupConfirmBody(
+            selectedEntries.map((entry) => entry.path),
+          ),
+        );
+        if (!confirmed) return;
+        let removed = 0;
+        for (const entry of selectedEntries) {
+          try {
+            await service.remove(ctx.cwd, entry);
+            removed += 1;
+          } catch (error) {
+            ctx.ui.notify(
+              UI_COPY.command.taskWorktreeCleanupFailed(entry.path, errorMessage(error)),
+              "warning",
+            );
+          }
+        }
+        if (removed > 0) {
+          ctx.ui.notify(UI_COPY.command.taskWorktreeCleanupComplete(removed), "info");
+        }
+      }),
+  });
+
   registerCommandWithAlias(pi, "herdr-dispatch-reply", "hd-reply", {
     description: UI_COPY.command.description("reply"),
     getArgumentCompletions: completionFor("reply", runtime),
@@ -468,13 +581,12 @@ async function launchAgentWithLoader(
   });
 }
 
-function createdResourceLocation(pane?: HerdrPane): string | undefined {
-  return pane ? `pane ${pane.paneId} · tab ${pane.tabId}` : undefined;
+function createdResourceLocation(pane?: HerdrPane, worktreePath?: string): string | undefined {
+  return UI_COPY.command.createdResourceLocation(pane?.paneId, pane?.tabId, worktreePath);
 }
 
 function createAgentLabel(agentType: SupportedAgentType, task: string): string {
-  const summary = task.replace(/\r\n?/gu, "\n").trim().split("\n", 1)[0] ?? "";
-  return truncateToWidth(`${agentType} · ${summary}`, 48, "…");
+  return truncateToWidth(`${agentType} · ${firstTaskLine(task)}`, 48, "…");
 }
 
 function registerCommandWithAlias(
@@ -492,6 +604,21 @@ function agentLauncher(runtime: DispatchRuntime): AgentLaunchService {
     throw new Error(runtime.mutationUnavailableReason ?? UI_COPY.command.runtimeUnavailable());
   }
   return runtime.agentLauncher;
+}
+
+function taskWorktrees(runtime: DispatchRuntime): TaskWorktreeService {
+  if (!runtime.taskWorktrees) {
+    throw new Error(runtime.mutationUnavailableReason ?? UI_COPY.command.runtimeUnavailable());
+  }
+  return runtime.taskWorktrees;
+}
+
+function taskWorktreeCleanupLabel(entry: TaskWorktreeEntry): string {
+  return UI_COPY.command.taskWorktreeCleanupEntry(
+    shortenPath(entry.path, 54),
+    entry.branch,
+    entry.reasons.map((reason) => UI_COPY.command.taskWorktreeRefusalReason(reason)),
+  );
 }
 
 function application(runtime: DispatchRuntime): DispatchApplication {
