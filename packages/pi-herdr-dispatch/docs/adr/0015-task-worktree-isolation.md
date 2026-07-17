@@ -1,0 +1,43 @@
+# 0015 — Task Worktree isolation for write dispatches
+
+## Status
+
+Accepted (2026-07-17); implemented the same day. The implementation hardens decision 3 with a per-path cross-process creation lock, a pre-creation availability recheck, and a rollback that may force-remove only the resources owned by that failed creation (documented in DESIGN.md). The live acceptance item named in Consequences has not been run yet.
+
+## Context
+
+Every dispatched Agent works in the Origin Session cwd on whatever branch is checked out there. Two consequences hurt the emerging pipeline (implement → review → rework → human acceptance):
+
+- Write dispatches serialize on one Worktree Write Lease. The single-writer policy is currently a necessity, not a choice; genuinely independent write tasks cannot proceed in parallel.
+- A settled write task has no clean review object. Its changes are interleaved with the shared working tree, so a reviewer Agent cannot be pointed at one isolated diff.
+
+The lease layer already derives its identity from the target pane's cwd via `git rev-parse --show-toplevel` (`src/domain/worktree.ts`), so an Agent whose pane starts inside a separate Git worktree gets a correctly scoped lease with no changes to the safety layer. The binding is fixed at pane creation: an Existing Agent cannot be relocated (`cd` cannot be sent into a running Agent TUI), and asking the Agent to work outside its own cwd would bind the lease to the wrong worktree. Worktree creation is therefore only sound as part of Agent Launch.
+
+The existing boundary "the context does not create workspaces or worktrees" (CONTEXT.md) predates this need. Exposing worktree creation to models would reintroduce uncontrolled resource creation; keeping it inside the user-initiated Agent Launch wizard does not.
+
+## Decision
+
+1. **A Task Worktree is created only inside the Agent Launch wizard (`/hd-create`), as an explicit user choice.** There is no model tool, no standalone command, and no other extension path that creates worktrees. The CONTEXT.md boundary is amended from "never creates worktrees" to "creates a worktree only as a user-selected Agent Launch step".
+2. **The placement step appears only for write mode.** A write-mode launch shows a location choice defaulting to **new Task Worktree**, with **current directory** as the alternative. A non-mutating launch never shows the step and always uses the Origin Session cwd — read-only work has no isolation need. Forcing isolation was rejected: a serial write task in the shared worktree stays legitimate, and a fresh worktree has real friction (dependencies such as `node_modules` do not follow; installation still requires the existing explicit per-dispatch consent). The wizard copy discloses this friction at the choice.
+3. **Creation mechanics.** The extension runs `git worktree add <path> -b task/<slug>` against the Origin worktree, where `<path>` is `../<origin-dirname>.worktrees/<slug>` — one sibling container directory per repository holding all of its Task Worktrees, created on demand — and `<slug>` is derived from the task summary (lowercased, ASCII-safe, length-capped) with a numeric suffix on collision. The container sits outside the repository, so no `.gitignore` entry is needed and Agents scanning the main tree never descend into a nested worktree. The branch starts at the Origin worktree's current `HEAD`. Worktree creation happens **before** any pane exists; if it fails, the launch fails closed with nothing created. Esc keeps its ADR 0013 semantics at every later boundary.
+4. **The created pane's cwd is the Task Worktree.** Lease acquisition, cwd revalidation, and Follow-up Dispatch all flow through the existing canonical-worktree resolution unchanged; parallel write dispatches in distinct Task Worktrees hold distinct leases by construction.
+5. **`/hd-new` gains a soft hint, never a gate.** When a write-mode dispatch targets an Agent whose canonical worktree equals the Origin Session's canonical worktree, the wizard shows one non-blocking notice: the target sits in the shared worktree, `/hd-create` offers an isolated Task Worktree, and continuing serializes on the shared lease. A write dispatch to an Agent already sitting in a Task Worktree — the rework/follow-up path — passes without comment. Non-mutating dispatches are untouched. The Worktree Write Lease remains the hard backstop regardless of what the user chooses at the hint.
+6. **Cleanup is a user TUI command, never automatic.** Settlement never removes a Task Worktree — settlement is not merge, and rework and Follow-up Dispatch need the worktree to survive. Instead, `/hd-clean` (long form `/herdr-dispatch-clean`) scans the container directory, lists each Task Worktree as removable only when its branch is merged, its working tree is clean, and no unsettled dispatch holds it, and after one confirmation removes the selected entries with `git worktree remove` (never `--force`) plus `git branch -d`. Both git commands refuse dirty trees and unmerged branches on their own, so the worst outcome is a refusal with its reason displayed, never a lost change. Entries that fail a check stay listed with the failing reason. The dispatch detail's technical disclosure (`D`) shows the Task Worktree path so retained resources stay discoverable; an unused Task Worktree costs disk space and nothing else.
+7. **The model path never creates worktrees; it only routes into existing ones.** Natural-language dispatch (the hd-crew Skill over `herdr_dispatch_propose`) keeps the ADR 0013 boundary: no launch, no worktree creation, asleep or awake. The eligible-agents listing exposes each Agent's canonical worktree, and hd-crew's routing gains one rule: prefer sending a write task to an Eligible Agent already seated in a Task Worktree (one write stream per worktree); with none available, fall back to today's serialized shared-worktree dispatch and say so plainly. Isolation capacity is prepared by the user ahead of time via `/hd-create`. A Task Worktree's `task/<slug>` branch name is a label from its creating launch, not a contract — reuse by a later dispatch is expected, and review targets the worktree's diff, not its branch name.
+
+## Terminology
+
+CONTEXT.md gains (in the implementing change):
+
+- **Task Worktree** / 任务 worktree — a Git worktree and `task/<slug>` branch created by the user inside one Agent Launch to isolate one write-mode dispatch stream. _Avoid_: temporary checkout, model-created worktree, automatic cleanup.
+
+The Agent Launch definition drops "worktree creation" from its _Avoid_ list and instead names the optional user-selected Task Worktree step.
+
+## Consequences
+
+- Independent write tasks can run in parallel with correctly scoped leases, and every isolated write task yields a clean review object (`<base>...task/<slug>`) for a non-mutating review dispatch — the missing halves of the implement → review → rework pipeline.
+- Models still cannot create panes, worktrees, or branches through any extension path; the raw Herdr gate and launch catalog are unchanged. The new surface is one wizard step plus one `git worktree add` executed under explicit user selection.
+- Retained Task Worktrees and `task/` branches accumulate between `/hd-clean` runs; this is deliberate, consistent with the pane-retention philosophy of ADR 0013 (reversibility over tidiness), and costs only disk space.
+- Overnight write throughput is bounded by the isolation capacity the user prepared before sleeping: the model can fill existing Task Worktrees but never add one. This is the same authority split as Auto Run itself — the user sizes the run, the model drives within it.
+- A Task Worktree launch is more likely to need dependency installation, which keeps its existing explicit consent path; wizard copy must say so at the location choice.
+- README, DESIGN.md (boundary statement), CONTEXT.md, the hd-crew SKILL.md routing rule, and ui-copy entries for the wizard step, the `/hd-new` hint, and `/hd-clean` are updated in the implementing change, per the documentation contract. Live acceptance needs one new item covering launch-into-worktree, lease isolation across two parallel write dispatches, the follow-up path back into the same Task Worktree, and `/hd-clean` refusing a dirty or unmerged entry.
