@@ -1,0 +1,43 @@
+# 0016 — Persistent Task Board with user-approved drafts
+
+## Status
+
+Implemented (2026-07-17). Companion design points for roles, workflows, and escalation are recorded below as the proposed scope of ADR 0017 and are **not** part of this change.
+
+## Context
+
+Auto Run (ADR 0014) closed the orchestration loop, but the unattended "task list" lives only in the Origin Session's conversation context: the user writes a multi-step plan into the first user turn and hopes the woken model remembers it. That list is not durable, has no acceptance step, and `maxAutoRunDepth` (an anti-runaway relay bound, default 5) accidentally caps how many sequential tasks one night can process. Typing every task by hand into a wizard was rejected as too much friction; the user wants the model to draft tasks and the human to approve them with keystrokes.
+
+This ADR was produced through an explicit design interview; each numbered decision below was individually confirmed by the user.
+
+## Decision
+
+The mechanism is named the **Task Board** (product copy: 任务板). A Board Task is the human-facing unit of work; dispatches implement it.
+
+1. **The Task Board is durable Registry state** (schema v6, `tasks` table): id (`hdt_` sortable-random, internal — never shown in default human-facing rows), workspace scope, title, self-contained task text, mode (`write`/`non-mutating`), optional preferred Task Worktree, state, queue position (FIFO by approval time in V1), bound dispatch ID, return feedback, timestamps. Existing migration/backup/fail-closed policy applies unchanged. Accepted tasks follow the existing `retentionDays` policy; unaccepted tasks are never automatically purged.
+2. **Task states:** `draft → queued → dispatched → review → accepted`. Every Final Outcome of the bound dispatch (`done`, `blocked`, `failed`, `cancelled` — including manual and emergency resolution) moves `dispatched → review`; review never blocks dispatching the next queued task. Acceptance is terminal bookkeeping: it never merges, pushes, cleans worktrees, or touches ADR 0012 seen-state. A returned task (打回) moves `review → queued` carrying the user's feedback; its next dispatch is a fresh typed dispatch seeded with that feedback, preferring the previous target/worktree.
+3. **The model drafts; only the user promotes.** A new model tool `herdr_task_draft` creates bounded `draft` rows — in ordinary user turns ("split this requirement into tasks") and in Auto Run wake turns (follow-up work discovered while registering a result). Drafts are never dispatchable and consume nothing. No model path can approve, edit, reorder, delete, or queue a task; the Dispatch Registry access guard already denies covered direct-database access.
+4. **Approval and acceptance are checkbox interactions in the Dispatch Manager's new Task Board section** (also reachable via `/hd-task`, long form `/herdr-task`, which additionally offers manual task entry and a board listing; TUI-only). Keys, scoped to the board section: `space` toggles the current row, `a` selects all, `A` inverts, `Enter` submits the selection — in the draft group Enter approves into `queued`, in the review group Enter accepts. `x` acts on one row: delete a draft, or return a review task after entering feedback. Approval is the explicit per-task pre-authorization that decision 5 relies on.
+5. **A task-bound dispatch records Auto Run Depth 0 and consumes Run Quota.** `herdr_dispatch_propose` gains an optional `taskId`: the same transaction that records durable intent validates the task is `queued`, marks it `dispatched`, and binds the dispatch ID. Rationale for depth 0: the depth budget exists to kill result-induced runaway relays, not to bound queue length; every queued task passed an individual user keystroke, which is pre-authorization. Termination still holds — the queue is finite, the model cannot approve or requeue, and returning a task is a user action. Non-task follow-up dispatches (including in-chain research spin-offs) keep depth parent+1 exactly as verified in L14.
+6. **Run Quota bounds one armed session's total board throughput.** `/hd-auto on [N]` arms with a quota of N task-bound dispatches (config `defaultRunQuota`, default 10, range 1–50, when omitted). Each task-bound dispatch decrements it; at zero, queued tasks stay queued quietly with one notification, exactly like depth exhaustion. Re-arming resets the quota. `/hd-auto` reports remaining quota; the Manager border and widget expose board counts (draft-awaiting-approval and review groups render only when nonzero).
+7. **Wake turns stay thin.** The Auto Run preamble (English protocol string, outside the ui-copy catalog) gains one bounded line — queued task count and remaining quota — plus the instruction: register the result, advance the board, dispatch next; do not perform long analysis in a wake turn — investigation that deserves depth becomes a follow-up dispatch or a drafted task.
+8. **Assignment stays model-routed.** The extension never dispatches on its own; the hd-crew Skill gains the board rules: after handling a settlement, pull the oldest queued task that fits an Eligible Agent; sub-half-task verification rides an in-chain follow-up (depth+1), task-sized discoveries become drafts.
+
+## Terminology
+
+CONTEXT.md gains (in the implementing change): **Task Board** / 任务板; task states 草稿 / 排队 / 已派出 / 待验收 / 已验收; **Task Approval** / 批准; **Task Acceptance** / 验收; **Task Return** / 打回; **Run Quota** / 本次额度. _Avoid_: autonomous scheduler, model-approved task, auto-merge on acceptance.
+
+## Consequences
+
+- The unattended loop becomes: daytime conversation drafts tasks → user batch-approves → user preps Task Worktrees/Agents (车位) and arms with a quota → settlements wake the model, which registers, advances, and dispatches next at depth 0 → morning batch acceptance/returns. Total nightly work is min(queue, quota) dispatches × chains of depth ≤ `maxAutoRunDepth`, both user-sized.
+- Attention Conditions still never wake the model (ADR 0014 decision 3 unchanged): a wedged target parks its task in `dispatched` and holds its reservations until the user resolves it — one stuck agent idles its worktree for the night by design.
+- Registry schema rises to v6. DESIGN.md, CONTEXT.md, README, ui-copy entries, and the hd-crew Skill are updated in the implementing change, per the documentation contract.
+- Live acceptance L16 must cover: model drafting in a user turn and in a wake turn; batch approval via space/a/A/Enter; a quota-2 arming over a 3-task queue (third stays queued, notification fires); depth-0 recording on task-bound dispatches while an in-chain follow-up records depth+1; return-with-feedback requeue and redispatch preferring the original worktree; acceptance leaving worktrees, branches, and seen-state untouched; and a covered-path attempt to approve a task via `bash` being denied.
+
+## Post-review amendment (2026-07-17)
+
+**Decision 6 clarified — Run Quota applies only while Auto Run is armed.** The first implementation refused a task-bound dispatch whenever Auto Run was off ("quota unavailable"). That forced daytime, user-supervised board work to arm Auto Run first, which decision 6 never required: the quota exists to bound an *unattended* armed session's throughput. Amended behavior, confirmed by the user: while Auto Run is off, a task-bound dispatch in a user-initiated turn proceeds normally and consumes no Run Quota (every step is individually user-triggered, so there is no unattended total to bound); while armed, every task-bound dispatch consumes one unit exactly as decided. Tool results omit the remaining-quota figure while disarmed rather than reporting a misleading default.
+
+## Recorded for ADR 0017 (proposed, not in this change)
+
+Design interview points already agreed in direction: `team.json` with built-in default roles (coder / reviewer / bugfix / chore / researcher / advisor / oracle — role brief prepended to outbound task text, routing by pane-name match, oracle reserved for escalation and verdict arbitration); named workflows with staged pipelines (`dev`: coder → reviewer with `maxReworkCycles` and an escalation chain coder → bugfix → oracle; `research`; `quick`); a structured `verdict: pass | needs-rework` field on review-stage Result Envelopes; per-task rework budget separate from Auto Run Depth. Later still: an `acceptanceCommand` test gate, a morning digest, and explicit task dependencies/reordering.
