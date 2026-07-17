@@ -1,5 +1,10 @@
 import type { CurrentWorkspaceSnapshot } from "../herdr/adapter.js";
-import type { HerdrCreatedTab, HerdrPane, HerdrPaneLayout } from "../herdr/protocol.js";
+import type {
+  HerdrAgentSession,
+  HerdrCreatedTab,
+  HerdrPane,
+  HerdrPaneLayout,
+} from "../herdr/protocol.js";
 import type { ProposalTarget } from "./proposal.js";
 
 export const SUPPORTED_AGENT_TYPES = [
@@ -19,6 +24,20 @@ export const SCREEN_DETECTION_AGENT_TYPES = new Set<SupportedAgentType>([
   "droid",
   "grok",
 ]);
+
+export interface ReportedProvenanceEvidence {
+  screenDetectionSkipped: boolean;
+  agentSession?: HerdrAgentSession;
+}
+
+export function hasReportedProvenance(
+  agent: ReportedProvenanceEvidence,
+  expectedAgentType: string,
+): boolean {
+  return agent.screenDetectionSkipped === true ||
+    agent.agentSession?.source === `herdr:${expectedAgentType}`;
+}
+
 export type AgentLaunchLayout = "adaptive" | "right" | "down" | "new-tab";
 export type AgentSplitDirection = "right" | "down";
 
@@ -173,9 +192,10 @@ export class AgentLaunchService {
         if (agent.agentStatus === "blocked") {
           throw new AgentLaunchError("Created Agent requires input before it can receive a dispatch", createdPane);
         }
+        const reportedProvenance = hasReportedProvenance(agent, expectedAgent);
         if (
           (agent.agentStatus === "idle" || agent.agentStatus === "done") &&
-          (agent.screenDetectionSkipped || SCREEN_DETECTION_AGENT_TYPES.has(expectedAgent))
+          (reportedProvenance || SCREEN_DETECTION_AGENT_TYPES.has(expectedAgent))
         ) {
           assertNotAborted(signal, createdPane);
           return Object.freeze({
@@ -186,7 +206,7 @@ export class AgentLaunchService {
             ...(agent.name === undefined ? {} : { displayName: agent.name }),
             cwd: agent.cwd!,
             status: agent.agentStatus,
-            statusProvenance: agent.screenDetectionSkipped ? "reported" : "screen-detected",
+            statusProvenance: reportedProvenance ? "reported" : "screen-detected",
           });
         }
       }

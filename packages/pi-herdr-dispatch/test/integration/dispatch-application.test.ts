@@ -41,6 +41,10 @@ const agent = {
   name: "Pi target",
   screenDetectionSkipped: false,
 };
+const sessionReportedAgent = {
+  ...agent,
+  agentSession: { source: "herdr:pi", kind: "session", value: "pi-session-1" },
+};
 
 class FakeHerdr implements HerdrDispatchPort {
   delivery: HerdrDeliveryResult = {
@@ -62,12 +66,13 @@ class FakeHerdr implements HerdrDispatchPort {
   deliveryError?: Error;
   monitored: HerdrMonitorTarget[] = [];
   readLines?: 50 | 200;
+  snapshotAgent = agent;
 
   async currentWorkspaceSnapshot(): Promise<CurrentWorkspaceSnapshot> {
     return {
       workspace: { workspaceId: "w-current", label: "Current", focused: true },
       panes: [pane],
-      agents: [agent],
+      agents: [this.snapshotAgent],
       serverVersion: "0.7.3",
       protocol: 16,
     };
@@ -166,6 +171,18 @@ describe("DispatchApplication", () => {
     });
     expect(proposal.target.terminalId).toBe("term-target");
     expect(proposal.payload).toContain("ID: hd_test_1");
+  });
+
+  it("labels exact agent-session evidence as reported in Eligible Agent listings", async () => {
+    const { application, herdr } = await harness();
+    herdr.snapshotAgent = sessionReportedAgent;
+
+    await expect(application.listEligibleAgents()).resolves.toEqual([
+      expect.objectContaining({
+        agentLabel: "pi",
+        statusProvenance: "reported",
+      }),
+    ]);
   });
 
   it("uses the approved Board Task text, binds it transactionally, and returns remaining quota", async () => {
@@ -419,6 +436,27 @@ describe("DispatchApplication", () => {
     );
   });
 
+  it("revalidates exact agent-session evidence as reported provenance", async () => {
+    const { application, herdr } = await harness();
+    herdr.snapshotAgent = sessionReportedAgent;
+    herdr.resolved = {
+      pane: { ...pane, agentSession: sessionReportedAgent.agentSession },
+      agent: sessionReportedAgent,
+    };
+    const proposal = await application.createProposal({
+      target: "term-target",
+      mode: "non-mutating",
+      task: "Inspect",
+      deadlineMinutes: 15,
+      allowProjectDependencyInstall: false,
+    });
+
+    expect(proposal.target.statusProvenance).toBe("reported");
+    await expect(application.confirmProposal(proposal, origin)).resolves.toEqual(
+      expect.objectContaining({ status: "active" }),
+    );
+  });
+
   it("invalidates stale proposals before acquiring any reservation", async () => {
     const { application, registry, herdr } = await harness();
     const proposal = await application.createProposal({
@@ -487,11 +525,16 @@ describe("DispatchApplication", () => {
 
   it("supports one bounded explicit inspection while framing is left to the Pi adapter", async () => {
     const { application, herdr } = await harness();
+    herdr.snapshotAgent = sessionReportedAgent;
 
     const inspected = await application.inspectAgent("Pi target", 12);
 
     expect(herdr.readLines).toBe(50);
-    expect(inspected.target.terminalId).toBe("term-target");
+    expect(inspected.target).toMatchObject({
+      terminalId: "term-target",
+      agentLabel: "pi",
+      statusProvenance: "reported",
+    });
     expect(inspected.text.split("\n")).toHaveLength(12);
     expect(inspected.text).toContain("line 60");
   });

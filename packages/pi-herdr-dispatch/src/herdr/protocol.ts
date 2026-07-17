@@ -11,6 +11,12 @@ export interface HerdrWorkspace {
   focused: boolean;
 }
 
+export interface HerdrAgentSession {
+  source?: string;
+  kind?: string;
+  value?: string;
+}
+
 export interface HerdrPane {
   paneId: string;
   terminalId: string;
@@ -22,6 +28,7 @@ export interface HerdrPane {
   agent?: string;
   label?: string;
   cwd?: string;
+  agentSession?: HerdrAgentSession;
 }
 
 export interface HerdrAgent extends HerdrPane {
@@ -167,6 +174,7 @@ export function parsePane(value: Record<string, unknown>): HerdrPane {
   const agent = optionalString(value.agent, "pane.agent");
   const label = optionalString(value.label, "pane.label");
   const cwd = optionalString(value.cwd, "pane.cwd");
+  const agentSession = optionalAgentSession(value.agent_session, "pane.agent_session");
   return {
     paneId: string(value.pane_id, "pane.pane_id"),
     terminalId: string(value.terminal_id, "pane.terminal_id"),
@@ -178,6 +186,7 @@ export function parsePane(value: Record<string, unknown>): HerdrPane {
     ...(agent === undefined ? {} : { agent }),
     ...(label === undefined ? {} : { label }),
     ...(cwd === undefined ? {} : { cwd }),
+    ...(agentSession === undefined ? {} : { agentSession }),
   };
 }
 
@@ -222,6 +231,19 @@ function string(value: unknown, label: string): string {
 function optionalString(value: unknown, label: string): string | undefined {
   if (value === undefined || value === null) return undefined;
   return string(value, label);
+}
+
+function optionalAgentSession(value: unknown, label: string): HerdrAgentSession | undefined {
+  if (value === undefined) return undefined;
+  const session = record(value, label);
+  const source = optionalString(session.source, `${label}.source`);
+  const kind = optionalString(session.kind, `${label}.kind`);
+  const sessionValue = optionalString(session.value, `${label}.value`);
+  return {
+    ...(source === undefined ? {} : { source }),
+    ...(kind === undefined ? {} : { kind }),
+    ...(sessionValue === undefined ? {} : { value: sessionValue }),
+  };
 }
 
 function boolean(value: unknown, label: string): boolean {

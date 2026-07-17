@@ -5,6 +5,7 @@ import {
   AgentLaunchCancelledError,
   AgentLaunchService,
   AgentLaunchTimeoutError,
+  hasReportedProvenance,
   type HerdrAgentLaunchPort,
 } from "../../src/dispatch/agent-launch.js";
 import type { CurrentWorkspaceSnapshot } from "../../src/herdr/adapter.js";
@@ -138,6 +139,36 @@ describe("AgentLaunchService", () => {
     expect(herdr.currentWorkspaceSnapshot).toHaveBeenCalledTimes(2);
   });
 
+  it.each(["claude", "codex"] as const)(
+    "accepts %s readiness from an exact agent-session record",
+    async (agentType) => {
+      const integrated = snapshot();
+      integrated.agents[0]!.agent = agentType;
+      integrated.agents[0]!.name = agentType;
+      integrated.agents[0]!.screenDetectionSkipped = false;
+      integrated.agents[0]!.agentSession = {
+        source: `herdr:${agentType}`,
+        kind: "session",
+        value: `${agentType}-session-1`,
+      };
+      const herdr = port(integrated);
+      const launcher = service(herdr);
+
+      await expect(
+        launcher.launch({
+          agentType,
+          layout: "right",
+          cwd: "/repo",
+          label: `${agentType} · task`,
+        }),
+      ).resolves.toMatchObject({
+        agentLabel: agentType,
+        statusProvenance: "reported",
+      });
+      expect(herdr.currentWorkspaceSnapshot).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it.each(["amp", "droid", "grok"] as const)(
     "accepts reviewed screen-detected readiness for %s",
     async (agentType) => {
@@ -260,5 +291,41 @@ describe("adaptiveSplitDirection", () => {
     [{ width: 84, height: 72 }, "down"],
   ] as const)("maps %j to %s", (rect, expected) => {
     expect(adaptiveSplitDirection(rect)).toBe(expected);
+  });
+});
+
+describe("hasReportedProvenance", () => {
+  it("accepts either positive integration-authority signal", () => {
+    expect(
+      hasReportedProvenance({ screenDetectionSkipped: true }, "claude"),
+    ).toBe(true);
+    expect(
+      hasReportedProvenance(
+        {
+          screenDetectionSkipped: false,
+          agentSession: { source: "herdr:claude", kind: "session", value: "session-1" },
+        },
+        "claude",
+      ),
+    ).toBe(true);
+  });
+
+  it("fails closed without exact reported-provenance evidence", () => {
+    expect(hasReportedProvenance({ screenDetectionSkipped: false }, "claude")).toBe(false);
+    expect(
+      hasReportedProvenance(
+        { screenDetectionSkipped: false, agentSession: { kind: "session", value: "session-1" } },
+        "claude",
+      ),
+    ).toBe(false);
+    expect(
+      hasReportedProvenance(
+        {
+          screenDetectionSkipped: false,
+          agentSession: { source: "herdr:codex", kind: "session", value: "session-1" },
+        },
+        "claude",
+      ),
+    ).toBe(false);
   });
 });

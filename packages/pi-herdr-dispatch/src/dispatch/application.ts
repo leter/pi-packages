@@ -31,6 +31,7 @@ import type {
   FinalOutcome,
   StoredDispatch,
 } from "../registry/types.js";
+import { hasReportedProvenance } from "./agent-launch.js";
 import {
   createDispatchProposal,
   normalizeDispatchTask,
@@ -243,16 +244,19 @@ export class DispatchApplication {
         } catch {
           // Non-Git Eligible Agents remain valid for non-mutating work.
         }
+        const agentLabel = agent.agent ?? agent.name ?? agent.label ?? "unknown";
         return Object.freeze({
           terminalId: agent.terminalId,
           paneId: agent.paneId,
           workspaceId: agent.workspaceId,
-          agentLabel: agent.agent ?? agent.name ?? agent.label ?? "unknown",
+          agentLabel,
           ...(agent.name === undefined ? {} : { displayName: agent.name }),
           cwd: agent.cwd!,
           ...(worktreePath === undefined ? {} : { worktreePath }),
           status: agent.agentStatus as "idle" | "done",
-          statusProvenance: agent.screenDetectionSkipped ? "reported" : "screen-detected",
+          statusProvenance: hasReportedProvenance(agent, agentLabel)
+            ? "reported"
+            : "screen-detected",
         });
       }),
     );
@@ -550,17 +554,20 @@ export class DispatchApplication {
     if (!candidate.cwd) throw new ProposalTargetError("inspection target has no confirmed cwd");
     const read = await this.#herdr.readTail(candidate.paneId, requestedLines <= 50 ? 50 : 200);
     const lines = read.text.split(/\r?\n/u);
+    const agentLabel = candidate.agent ?? candidate.name ?? candidate.label ?? "unknown";
     return {
       target: {
         terminalId: candidate.terminalId,
         paneId: candidate.paneId,
         workspaceId: candidate.workspaceId,
-        agentLabel: candidate.agent ?? candidate.name ?? "unknown",
+        agentLabel,
         ...(candidate.name === undefined ? {} : { displayName: candidate.name }),
         cwd: candidate.cwd,
         status:
           candidate.agentStatus === "done" ? "done" : "idle",
-        statusProvenance: candidate.screenDetectionSkipped ? "reported" : "screen-detected",
+        statusProvenance: hasReportedProvenance(candidate, agentLabel)
+          ? "reported"
+          : "screen-detected",
       },
       text: lines.slice(-requestedLines).join("\n"),
     };
@@ -573,8 +580,17 @@ export class DispatchApplication {
     if (occupied) throw new StaleProposalError("proposal target became occupied");
     const resolved = await this.#herdr.resolveTerminal(proposal.target.terminalId);
     if (!resolved) throw new StaleProposalError("proposal target was lost");
-    const actualAgent = resolved.agent?.agent ?? resolved.pane.agent ?? resolved.agent?.name;
-    const provenance = resolved.agent?.screenDetectionSkipped === true ? "reported" : "screen-detected";
+    const actualAgent = resolved.agent?.agent ?? resolved.pane.agent ?? resolved.agent?.name ??
+      resolved.agent?.label ?? resolved.pane.label;
+    const provenance = actualAgent !== undefined && hasReportedProvenance(
+      {
+        screenDetectionSkipped: resolved.agent?.screenDetectionSkipped === true,
+        agentSession: resolved.agent?.agentSession ?? resolved.pane.agentSession,
+      },
+      actualAgent,
+    )
+      ? "reported"
+      : "screen-detected";
     if (
       resolved.pane.workspaceId !== proposal.target.workspaceId ||
       resolved.pane.cwd !== proposal.target.cwd ||

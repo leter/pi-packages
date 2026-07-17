@@ -65,7 +65,7 @@ Herdr statuses are interpreted as follows:
 - `blocked`: runtime attention only; it is not the `blocked` Final Outcome.
 - `unknown`: ineligible and never interpreted as completion.
 
-Herdr 0.7.3 exposes `screen_detection_skipped: true` only when recognized full-lifecycle integration authority is active; `agent explain` reports the reason as `full_lifecycle_hook_authority`. Proposals may label status as **reported** only when that value is explicitly `true`. A missing or `false` value is labelled **screen-detected (best effort)**; absence of evidence never becomes `reported`.
+Herdr exposes two positive signals for recognized integration authority: `screen_detection_skipped: true`, or an `agent_session.source` equal to `herdr:<agent>` for that exact Agent type. Proposals may label status as **reported** when either signal is present. A missing or `false` flag, absent session, session without `source`, or mismatched session source is labelled **screen-detected (best effort)**; absence of evidence never becomes `reported`. A present `agent_session` or session field with the wrong protocol type is rejected instead of being downgraded.
 
 Screen-detected Agents remain supported because they are the normal case on the current machine. Ambiguous transitions add attention and never settle a dispatch.
 
@@ -553,6 +553,8 @@ The live Herdr 0.7.3 spike is complete; methods and evidence are recorded in [SP
 - a real Pi TUI probe rendered the random ID with leading whitespace and exposed it on the first post-send bounded read, so V1 still performs bounded startup-window re-reads and matches the uniquely bounded marker within a rendered line.
 
 These results tighten behavior to attention/fail-closed. They do not introduce heuristic retargeting, revision cursors, or split delivery.
+
+Herdr 0.7.4 compatibility evidence recorded in [ADR 0019](./adr/0019-agent-session-provenance.md) adds a second positive signal: an exact `agent_session.source: herdr:<agent>`. An absent session, session without `source`, or mismatched source remains screen-detected; wrong protocol types are rejected.
 
 ## Test strategy
 

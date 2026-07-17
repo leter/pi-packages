@@ -8,7 +8,7 @@ A Pi extension under staged development for automatically dispatching work throu
 
 - Node.js 24 or newer (`node:sqlite` is required)
 - Pi `0.80.6` or newer (post-repair matrix validated on `0.80.7`)
-- Herdr `0.7.3`, socket protocol `16`. On Herdr `0.7.4` the snapshot no longer marks `claude`/`codex`/`opencode` status as integration-reported, so `/hd-create` for those types times out waiting for reported provenance; `/hd-new` dispatch and `amp`/`droid`/`grok` launches are unaffected (found during L15 acceptance, compat decision pending).
+- Herdr `0.7.4`, socket protocol `16`.
 - Pi running inside Herdr with `HERDR_SOCKET_PATH`, `HERDR_WORKSPACE_ID`, and `HERDR_PANE_ID`
 
 The extension normally dispatches to Existing Agents in the captured current workspace. `/hd-create` is the sole creation exception: a user may explicitly create one Agent pane or tab and, for write mode, may first create one isolated Task Worktree. The extension never creates workspaces or coordinators, and models cannot invoke Agent or worktree creation.
@@ -67,7 +67,7 @@ The readable `hd-*` aliases are the recommended interactive commands; the origin
 
 Non-mutating launches always use the Origin cwd and do not show a placement step. Write launches default to a new Task Worktree at `../<origin-dirname>.worktrees/<slug>` on branch `task/<slug>`; the current directory remains an explicit alternative. The choice warns that dependencies such as `node_modules` do not follow into a fresh worktree and still require the dispatch's existing explicit installation consent. Git creates the Task Worktree at the Origin's current `HEAD` before any pane exists, so creation failure leaves no Agent window. Slug/path/branch collisions receive a numeric suffix.
 
-The command never steals focus, waits up to `agentStartupTimeoutMs` for the permitted reported or screen-detected provenance, and allows Esc to stop waiting. Created windows and Task Worktrees are deliberately retained after cancellation, failure, dispatch races, and settlement; cancellation/failure notifications disclose retained resources. The fixed one-word Agent executable and Enter are submitted in one typed Herdr request, avoiding a half-staged launch command.
+The command never steals focus, waits up to `agentStartupTimeoutMs` for the permitted reported or screen-detected provenance, and allows Esc to stop waiting. Reported provenance requires either `screen_detection_skipped: true` or an `agent_session.source` matching `herdr:<agent>` for that exact Agent type; an absent session, session without `source`, or mismatched source remains screen-detected, while wrong protocol types are rejected. Created windows and Task Worktrees are deliberately retained after cancellation, failure, dispatch races, and settlement; cancellation/failure notifications disclose retained resources. The fixed one-word Agent executable and Enter are submitted in one typed Herdr request, avoiding a half-staged launch command.
 
 `/hd-new` remains valid for shared-worktree write work. When the selected Agent's canonical worktree equals the Origin's, it gives one non-blocking hint that `/hd-create` can prepare isolation and that continuing serializes on the shared lease. Agents already seated in Task Worktrees pass through silently. `/hd-clean` is the only cleanup path: it shows why dirty, unmerged, or unsettled-dispatch-held entries are refused, asks once, then uses `git worktree remove` without `--force` followed by `git branch -d`. Settlement never removes a Task Worktree.
 
