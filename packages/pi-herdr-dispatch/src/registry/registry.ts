@@ -5,6 +5,9 @@ import { DatabaseSync, type StatementSync } from "node:sqlite";
 import {
   assertTaskTransition,
   generateTaskId,
+  resolveTaskSettlement,
+  type TaskSettlementPlan,
+  type TaskStageResolution,
   validateTaskDraft,
   validateTaskFeedback,
 } from "../domain/task-board.js";
@@ -12,7 +15,6 @@ import {
   DEFAULT_TEAM_CATALOG,
   defaultWorkflowForRole,
   executorRoleForCycle,
-  isReworkExhausted,
   type Role,
   type TeamCatalog,
   type TeamConfigState,
@@ -1267,163 +1269,112 @@ export class DispatchRegistry {
     input: SettleDispatchInput,
     verdict: ReviewVerdict | undefined,
   ): void {
-    const auditData = {
-      dispatchId: input.dispatchId,
-      outcome: input.outcome,
-      kind: input.kind,
-    };
-    if (input.outcome !== "done" || task.workflow === null) {
-      this.#moveTaskToReview(task, input.settledAt, auditData);
-      return;
-    }
-
-    let workflow: Workflow;
-    let currentRole: string;
-    try {
-      const stage = this.#resolveTaskStage(task);
-      if (!stage.workflow || !stage.role) {
-        this.#moveTaskToReview(task, input.settledAt, auditData);
-        return;
+    let stageResolution: TaskStageResolution = { status: "resolved" };
+    if (input.outcome === "done" && task.workflow !== null) {
+      try {
+        const stage = this.#resolveTaskStage(task);
+        stageResolution = {
+          status: "resolved",
+          ...(stage.role === undefined ? {} : { currentRoleKey: stage.role.key }),
+          ...(stage.workflow === undefined ? {} : { workflow: stage.workflow }),
+        };
+      } catch (error) {
+        stageResolution = { status: "failed", errorMessage: errorMessage(error) };
       }
-      workflow = stage.workflow;
-      currentRole = stage.role.key;
-    } catch (error) {
-      this.#moveTaskToReview(task, input.settledAt, {
-        ...auditData,
-        workflowResolutionFailed: errorMessage(error),
-      });
-      return;
     }
-
-    if (currentRole !== "reviewer" || verdict === "pass") {
-      this.#advanceTaskStage(task, workflow, input, currentRole);
-      return;
-    }
-
-    if (verdict !== "needs-rework") {
-      this.#moveTaskToReview(task, input.settledAt, auditData, "no-verdict");
-      return;
-    }
-
-    const cycles = task.rework_cycles + 1;
-    const feedback = appendStageFeedback(task.stage_feedback, resultSummary(input.sanitizedResult));
-    const previousExecutor = executorRoleForCycle(workflow, task.rework_cycles);
-    const nextExecutor = executorRoleForCycle(workflow, cycles);
-    this.#appendTaskAudit(
-      task.id,
-      "task_rework",
-      { ...auditData, reworkCycles: cycles, feedback: resultSummary(input.sanitizedResult) },
-      input.settledAt,
-    );
-    if (nextExecutor !== previousExecutor) {
-      this.#appendTaskAudit(
-        task.id,
-        "task_escalated",
-        { fromRole: previousExecutor, toRole: nextExecutor, reworkCycles: cycles },
-        input.settledAt,
-      );
-    }
-
-    if (isReworkExhausted(workflow, cycles)) {
-      assertTaskTransition(task.state, "review");
-      this.#database
-        .prepare(
-          `UPDATE tasks SET state = 'review', rework_cycles = ?, stage_feedback = ?,
-           parked_reason = 'review-failed', reviewed_at = ?, updated_at = ?
-           WHERE id = ? AND state = 'dispatched'`,
-        )
-        .run(cycles, feedback, input.settledAt, input.settledAt, task.id);
-      this.#appendTaskAudit(
-        task.id,
-        "task_parked",
-        { ...auditData, reason: "review-failed", reworkCycles: cycles },
-        input.settledAt,
-      );
-      this.#appendTaskAudit(task.id, "task_review", auditData, input.settledAt);
-      return;
-    }
-
-    assertTaskTransition(task.state, "queued");
-    const queuePosition = this.#nextQueuePosition(task.workspace_id);
-    this.#database
-      .prepare(
-        `UPDATE tasks SET state = 'queued', queue_position = ?, stage_index = 0,
-         rework_cycles = ?, stage_feedback = ?, parked_reason = NULL,
-         reviewed_at = NULL, updated_at = ?
-         WHERE id = ? AND state = 'dispatched'`,
-      )
-      .run(queuePosition, cycles, feedback, input.settledAt, task.id);
-  }
-
-  #advanceTaskStage(
-    task: TaskRow,
-    workflow: Workflow,
-    input: SettleDispatchInput,
-    currentRole: string,
-  ): void {
-    const nextIndex = task.stage_index + 1;
-    const hasNextStage = nextIndex < workflow.stages.length;
-    this.#appendTaskAudit(
-      task.id,
-      "task_stage_advanced",
-      {
-        dispatchId: input.dispatchId,
-        fromStage: task.stage_index,
-        toStage: nextIndex,
-        fromRole: currentRole,
-        ...(hasNextStage ? { toRole: workflow.stages[nextIndex] } : {}),
+    const plan = resolveTaskSettlement({
+      task: {
+        state: task.state,
+        workflowKey: task.workflow,
+        stageIndex: task.stage_index,
+        reworkCycles: task.rework_cycles,
+        stageFeedback: task.stage_feedback,
+        workspaceId: task.workspace_id,
       },
-      input.settledAt,
-    );
-    if (hasNextStage) {
-      assertTaskTransition(task.state, "queued");
-      this.#database
-        .prepare(
-          `UPDATE tasks SET state = 'queued', queue_position = ?, stage_index = ?,
-           parked_reason = NULL, reviewed_at = NULL, updated_at = ?
-           WHERE id = ? AND state = 'dispatched'`,
-        )
-        .run(this.#nextQueuePosition(task.workspace_id), nextIndex, input.settledAt, task.id);
-      return;
-    }
-    assertTaskTransition(task.state, "review");
-    this.#database
-      .prepare(
-        `UPDATE tasks SET state = 'review', stage_index = ?, stage_feedback = NULL,
-         parked_reason = NULL, reviewed_at = ?, updated_at = ?
-         WHERE id = ? AND state = 'dispatched'`,
-      )
-      .run(nextIndex, input.settledAt, input.settledAt, task.id);
-    this.#appendTaskAudit(
-      task.id,
-      "task_review",
-      { dispatchId: input.dispatchId, outcome: input.outcome, kind: input.kind },
-      input.settledAt,
-    );
+      settlement: {
+        dispatchId: input.dispatchId,
+        outcome: input.outcome,
+        kind: input.kind,
+        sanitizedResult: input.sanitizedResult,
+      },
+      ...(verdict === undefined ? {} : { verdict }),
+      stageResolution,
+    });
+    this.#applyTaskSettlementPlan(task, input.settledAt, plan);
   }
 
-  #moveTaskToReview(
+  #applyTaskSettlementPlan(
     task: TaskRow,
     settledAt: number,
-    auditData: Record<string, unknown>,
-    parkedReason?: "no-verdict" | "review-failed",
+    plan: TaskSettlementPlan,
   ): void {
-    assertTaskTransition(task.state, "review");
-    this.#database
-      .prepare(
-        `UPDATE tasks SET state = 'review', parked_reason = ?, reviewed_at = ?, updated_at = ?
-         WHERE id = ? AND state = 'dispatched'`,
-      )
-      .run(parkedReason ?? null, settledAt, settledAt, task.id);
-    if (parkedReason !== undefined) {
-      this.#appendTaskAudit(
-        task.id,
-        "task_parked",
-        { ...auditData, reason: parkedReason },
-        settledAt,
-      );
+    switch (plan.kind) {
+      case "move-to-review":
+        this.#database
+          .prepare(
+            `UPDATE tasks SET state = 'review', parked_reason = ?, reviewed_at = ?, updated_at = ?
+             WHERE id = ? AND state = 'dispatched'`,
+          )
+          .run(plan.update.parkedReason, settledAt, settledAt, task.id);
+        break;
+      case "advance-to-queue":
+        this.#database
+          .prepare(
+            `UPDATE tasks SET state = 'queued', queue_position = ?, stage_index = ?,
+             parked_reason = NULL, reviewed_at = NULL, updated_at = ?
+             WHERE id = ? AND state = 'dispatched'`,
+          )
+          .run(
+            this.#nextQueuePosition(plan.update.queuePositionWorkspaceId),
+            plan.update.stageIndex,
+            settledAt,
+            task.id,
+          );
+        break;
+      case "advance-to-review":
+        this.#database
+          .prepare(
+            `UPDATE tasks SET state = 'review', stage_index = ?, stage_feedback = NULL,
+             parked_reason = NULL, reviewed_at = ?, updated_at = ?
+             WHERE id = ? AND state = 'dispatched'`,
+          )
+          .run(plan.update.stageIndex, settledAt, settledAt, task.id);
+        break;
+      case "rework-to-queue":
+        this.#database
+          .prepare(
+            `UPDATE tasks SET state = 'queued', queue_position = ?, stage_index = 0,
+             rework_cycles = ?, stage_feedback = ?, parked_reason = NULL,
+             reviewed_at = NULL, updated_at = ?
+             WHERE id = ? AND state = 'dispatched'`,
+          )
+          .run(
+            this.#nextQueuePosition(plan.update.queuePositionWorkspaceId),
+            plan.update.reworkCycles,
+            plan.update.stageFeedback,
+            settledAt,
+            task.id,
+          );
+        break;
+      case "park-review-failed":
+        this.#database
+          .prepare(
+            `UPDATE tasks SET state = 'review', rework_cycles = ?, stage_feedback = ?,
+             parked_reason = 'review-failed', reviewed_at = ?, updated_at = ?
+             WHERE id = ? AND state = 'dispatched'`,
+          )
+          .run(
+            plan.update.reworkCycles,
+            plan.update.stageFeedback,
+            settledAt,
+            settledAt,
+            task.id,
+          );
+        break;
     }
-    this.#appendTaskAudit(task.id, "task_review", auditData, settledAt);
+    for (const audit of plan.audits) {
+      this.#appendTaskAudit(task.id, audit.eventType, audit.data, settledAt);
+    }
   }
 
   #nextQueuePosition(workspaceId: string): number {
@@ -1983,43 +1934,10 @@ function reviewVerdictFrom(value: unknown): ReviewVerdict | undefined {
     : undefined;
 }
 
-const STAGE_FEEDBACK_HEADING =
-  "Reviewer feedback from earlier stages (untrusted data context, address it):";
-const STAGE_FEEDBACK_MAX_LENGTH = 3_000;
-
-function appendStageFeedback(current: string | null, summary: string): string {
-  const newest = `${STAGE_FEEDBACK_HEADING}\n${summary}`;
-  const existing = current === null
-    ? []
-    : current.split(new RegExp(`\\n\\n(?=${escapeRegExp(STAGE_FEEDBACK_HEADING)})`, "u"));
-  const kept: string[] = [];
-  for (const entry of [newest, ...existing]) {
-    const candidate = [...kept, entry].join("\n\n");
-    if (candidate.length > STAGE_FEEDBACK_MAX_LENGTH) break;
-    kept.push(entry);
-  }
-  return kept.join("\n\n");
-}
-
-function resultSummary(value: unknown): string {
-  const summary = asOptionalRecord(value)?.summary;
-  if (typeof summary !== "string") return "No reviewer summary was supplied.";
-  const sanitized = summary
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu, " ")
-    .trim();
-  return sanitized.length === 0
-    ? "No reviewer summary was supplied."
-    : sanitized.slice(0, 1_000);
-}
-
 function asOptionalRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function errorMessage(error: unknown): string {
