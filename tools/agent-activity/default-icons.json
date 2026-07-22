@@ -1,0 +1,12 @@
+{
+  "pi":        { "label": "Pi" },
+  "claude":    { "label": "Claude" },
+  "codex":     { "label": "Codex" },
+  "cursor":    { "label": "Cursor" },
+  "opencode":  { "label": "OpenCode" },
+  "open_code": { "label": "OpenCode" },
+  "amp":       { "label": "Amp" },
+  "droid":     { "label": "Droid" },
+  "grok":      { "label": "Grok" },
+  "hermes":    { "label": "Hermes" }
+}

@@ -1,0 +1,9 @@
+# Merge this table into ~/.config/herdr/config.toml.
+[ui.sidebar.agents]
+row_gap = 1
+rows = [
+  ["state_icon", "$agent_location"],
+  ["$agent_title"],
+  ["$agent_context"],
+  ["state_text"],
+]
