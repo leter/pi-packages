@@ -36,9 +36,9 @@ class FormattingTest(unittest.TestCase):
         self.assertEqual(
             sidebar["ui"]["sidebar"]["agents"]["rows"],
             [
-                ["state_icon", "$agent_location"],
-                ["$agent_title"],
-                ["$agent_context"],
+                ["state_icon", {"token": "$agent_location_active", "dim": False}, "$agent_location"],
+                [{"token": "$agent_title_active", "dim": False}, "$agent_title"],
+                [{"token": "$agent_context_active", "dim": False}, "$agent_context"],
                 ["state_text"],
             ],
         )
@@ -163,6 +163,16 @@ class TitleAndPresentationTest(unittest.TestCase):
         self.assertEqual(
             refresh.presentation_tokens("Pi", "Latest question", "fix-api", 30),
             {"agent_location": "Pi", "agent_title": "▸ Latest question", "agent_context": "⎇ fix-api"},
+        )
+
+    def test_active_title_and_worktree_use_bright_tokens(self):
+        self.assertEqual(
+            refresh.presentation_tokens("Pi", "Latest question", "fix-api", 30, active=True),
+            {
+                "agent_location_active": "Pi",
+                "agent_title_active": "▸ Latest question",
+                "agent_context_active": "⎇ fix-api",
+            },
         )
 
     def test_same_session_updates_title(self):
@@ -330,6 +340,21 @@ class ReportTest(unittest.TestCase):
         for old in ("agent_task", "agent_subject", "agent_name"):
             self.assertIn(old, command)
         self.assertNotIn("pane_role_key", " ".join(command))
+
+    def test_active_pane_reports_bright_tokens_and_clears_inactive_tokens(self):
+        state = {}
+        pane = {**self.pane, "focused": True, "terminal_title_stripped": "Review API"}
+        with patch.object(refresh.subprocess, "run") as run:
+            self.assertTrue(refresh.report(
+                pane, {"claude": "Claude"}, "Claude", "Claude", "fix-api", 30, state, 1_000
+            ))
+        command = run.call_args.args[0]
+        self.assertIn("agent_location_active=Claude", command)
+        self.assertIn("agent_title_active=▸ Review API", command)
+        self.assertIn("agent_context_active=⎇ fix-api", command)
+        self.assertIn("agent_location", command)
+        self.assertIn("agent_title", command)
+        self.assertIn("agent_context", command)
 
     def test_skips_report_when_visible_output_is_unchanged(self):
         state = {}

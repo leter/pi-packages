@@ -23,7 +23,7 @@ Row 1 contains at most two components. Workspace and Tab are added only when the
   Claude · working 4m
 ```
 
-Duplicate leaves in one Tab receive display-only ordinals such as `Pi 1` and `Pi 2`. Row 2 prefixes the current native terminal title with `▸ `. When Herdr provides an Agent Session identity, the plugin does not carry a title into a different Session. Agents without that identity, including some Cursor and Codex integrations, display their best-effort native terminal title without a cross-Session guarantee. Row 3 prefixes a linked Worktree basename with `⎇ `; main checkouts and missing Worktrees collapse the row. The plugin never invents a task name, workflow progress, role, or subject.
+Duplicate leaves in one Tab receive display-only ordinals such as `Pi 1` and `Pi 2`. Row 2 prefixes the current native terminal title with `▸ `. When Herdr provides an Agent Session identity, the plugin does not carry a title into a different Session. Agents without that identity, including some Cursor and Codex integrations, display their best-effort native terminal title without a cross-Session guarantee. Row 3 prefixes a linked Worktree basename with `⎇ `; main checkouts and missing Worktrees collapse the row. The selected Agent renders all three information rows without dimming, while inactive Agents keep the quieter treatment. The plugin never invents a task name, workflow progress, role, or subject.
 
 ## Data contract
 
@@ -73,9 +73,9 @@ Merge this layout into `~/.config/herdr/config.toml`:
 [ui.sidebar.agents]
 row_gap = 1
 rows = [
-  ["state_icon", "$agent_location"],
-  ["$agent_title"],
-  ["$agent_context"],
+  ["state_icon", { token = "$agent_location_active", dim = false }, "$agent_location"],
+  [{ token = "$agent_title_active", dim = false }, "$agent_title"],
+  [{ token = "$agent_context_active", dim = false }, "$agent_context"],
   ["state_text"],
 ]
 ```

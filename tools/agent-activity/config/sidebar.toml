@@ -2,8 +2,8 @@
 [ui.sidebar.agents]
 row_gap = 1
 rows = [
-  ["state_icon", "$agent_location"],
-  ["$agent_title"],
-  ["$agent_context"],
+  ["state_icon", { token = "$agent_location_active", dim = false }, "$agent_location"],
+  [{ token = "$agent_title_active", dim = false }, "$agent_title"],
+  [{ token = "$agent_context_active", dim = false }, "$agent_context"],
   ["state_text"],
 ]

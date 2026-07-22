@@ -621,14 +621,18 @@ def presentation_tokens(
     activity_title: str | None,
     worktree: str | None,
     width: int | None,
+    active: bool = False,
 ) -> dict[str, str]:
     context_width = max(0, width - 2) if width is not None else None
     display_title = f"▸ {activity_title}" if activity_title else None
     display_context = f"⎇ {worktree}" if worktree else None
+    location_token = "agent_location_active" if active else "agent_location"
+    title_token = "agent_title_active" if active else "agent_title"
+    context_token = "agent_context_active" if active else "agent_context"
     return {
-        **({"agent_location": location} if location else {}),
-        **({"agent_title": truncate_display(display_title, context_width) if context_width is not None else display_title} if display_title else {}),
-        **({"agent_context": truncate_display(display_context, context_width) if context_width is not None else display_context} if display_context else {}),
+        **({location_token: location} if location else {}),
+        **({title_token: truncate_display(display_title, context_width) if context_width is not None else display_title} if display_title else {}),
+        **({context_token: truncate_display(display_context, context_width) if context_width is not None else display_context} if display_context else {}),
     }
 
 
@@ -659,7 +663,7 @@ def report(
     entry = state[key]
     activity_title = current_activity_title(pane, entry, identity or agent_label)
     elapsed = format_elapsed(now_ms - since_ms)
-    rendered = presentation_tokens(location, activity_title, worktree, width)
+    rendered = presentation_tokens(location, activity_title, worktree, width, pane.get("focused") is True)
     rendered_states = state_labels(agent_label, status, elapsed)
     fingerprint = json.dumps({"tokens": rendered, "states": rendered_states}, sort_keys=True, ensure_ascii=False)
     if entry.get("fingerprint") == fingerprint:
@@ -668,7 +672,14 @@ def report(
     command = [herdr_bin(), "pane", "report-metadata", pane_id, "--source", SOURCE_ID]
     for state_name, value in rendered_states.items():
         command.extend(("--state-label", f"{state_name}={value}"))
-    for token in ("agent_location", "agent_title", "agent_context"):
+    for token in (
+        "agent_location",
+        "agent_location_active",
+        "agent_title",
+        "agent_title_active",
+        "agent_context",
+        "agent_context_active",
+    ):
         value = rendered.get(token)
         command.extend(("--token", f"{token}={value}")) if value else command.extend(("--clear-token", token))
     for token in CLEAR_TOKENS:

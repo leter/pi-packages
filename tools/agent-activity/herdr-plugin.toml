@@ -2,7 +2,7 @@ id = "local.agent-icons"
 name = "Agent Activity"
 version = "2.1.0"
 description = "Native Herdr Agent identity, scope, linked-worktree context, status, and elapsed time."
-min_herdr_version = "0.7.4"
+min_herdr_version = "0.7.5"
 platforms = ["linux"]
 
 [[actions]]
