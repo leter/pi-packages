@@ -1,9 +1,0 @@
-# Dispatch automatically by default
-
-Per-proposal confirmation made unattended operation stop at every send. Scoped Automation Grants removed repeated prompts but introduced setup, target scope, count, expiry, migration, and renewal concepts that the user explicitly rejected as too complicated. Persistent restart-inheriting policy would add still more authorization state and heuristic identity inheritance. The user instead explicitly chose to remove dispatch authorization and allow typed dispatch by default.
-
-Every `herdr_dispatch_propose` call and completed `/hd-new` wizard now creates one immutable Dispatch Proposal and immediately records durable intent and attempts delivery without another prompt. There is no `/hd-autonomy`, grant, policy, count, expiry, or renewal. Registry schema version 3 drops the obsolete `automation_grants` table during migration, while preserving dispatches, results, reservations, and audit history. Audit records mark delivery intent authorization as `automatic-default`.
-
-Automatic dispatch does not bypass operational safety checks. It remains TUI-only and current-workspace-only; selects an Eligible Agent; revalidates terminal identity, Agent label, status provenance, workspace, cwd and canonical worktree; enforces Target Occupancy, Worktree Write Leases, and concurrency limits; records durable intent before input; requires exact delivery echo for `active`; never automatically resends ambiguity; and accepts only a valid matching Result Envelope. Raw Herdr tasking remains denied because it would bypass those checks and Registry state.
-
-Reply, cancellation, manual/emergency resolution, project dependency-install choice in the manual wizard, and explicit output inspection keep their existing interaction contracts. Results still do not start an autonomous Origin model turn. This decision deliberately trades per-send human review for zero-setup unattended dispatch through the typed path.

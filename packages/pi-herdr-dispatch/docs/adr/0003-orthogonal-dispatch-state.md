@@ -1,3 +1,0 @@
-# Model lifecycle, attention, and final outcome separately
-
-A dispatch has a small primary lifecycle (`proposed → delivering → active → settled`), an independent set of concurrent Attention Conditions, and an optional Final Outcome. `delivering` is durable because SQLite cannot atomically commit a Herdr input side effect; recovery may therefore add `delivery-unverified` without guessing whether input arrived. A single expanded status enum was rejected because conditions such as overdue and monitoring-paused can coexist, creating a combinatorial state space and causing one operational fact to overwrite another.

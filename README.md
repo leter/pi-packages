@@ -4,41 +4,21 @@ A public monorepo for Pi extensions, skills, prompts, and themes maintained by [
 
 ## Packages
 
-| Package | Status | Description |
-|---|---|---|
-| [`pi-herdr-dispatch`](./packages/pi-herdr-dispatch) | Phase 5 review | Safely dispatch work from Pi to existing agents in a local Herdr workspace. |
-
-## Repository layout
-
-Each directory under [`packages/`](./packages) is an independent Pi package with its own documentation, manifest, source, and tests. Shared code will be introduced only after at least two packages need the same module.
+No Pi packages are currently maintained in this repository.
 
 ## Development
 
 ```bash
 npm ci
-npm run verify   # type-check + full test suite (scripts/verify.sh)
-npm run doctor   # environment diagnosis (scripts/doctor.sh)
+npm run verify
+npm run doctor
 ```
 
-`scripts/verify.sh` also supports a single package (`verify.sh pi-herdr-dispatch`) and the Herdr live contract tests (`verify.sh live`, inside a Herdr pane). Agent-facing conventions live in [AGENTS.md](./AGENTS.md).
-
-During local development, install a package by absolute path:
-
-```bash
-pi install "$PWD/packages/pi-herdr-dispatch"
-```
-
-Then use `/reload` after source changes. Packages that are still marked as design or development are not installable yet.
-
-## Distribution plan
-
-- The whole repository may be installed from Git once a root Pi manifest is published.
-- Stable Git releases use repository tags such as `v0.1.0`.
-- Individual packages may later be published separately to npm for selective installation and independent updates.
+Each future directory under `packages/` is an independent Pi package.
 
 ## Security
 
-Pi extensions execute with the current user's full permissions. Review a package's source and documentation before installing it. Never commit API keys, `.env` files, local session data, pane output, or Registry databases.
+Pi extensions execute with the current user's full permissions. Review package source before installation. Never commit API keys, local session data, or runtime databases.
 
 ## License
 
