@@ -20,6 +20,8 @@ mode="${1:-all}"
 case "$mode" in
   all)
     self_check
+    npm run check:tools
+    npm run test:tools
     if compgen -G "packages/*/package.json" >/dev/null; then
       npm run check
       npm test

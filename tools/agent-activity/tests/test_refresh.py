@@ -153,6 +153,12 @@ class AgentLocationTest(unittest.TestCase):
         pane = self.pane("a", "p1", tokens={"pane_role_key": "reviewer", "dispatch_subject": "obsolete"})
         self.assertEqual(self.locations([pane])["terminal:a"], ("Pi", "Pi"))
 
+    def test_location_width_reserves_space_for_state_icon(self):
+        pane = self.pane("a", "p1", name="very-long-agent-name")
+        self.widths["w1"] = 10
+        location = self.locations([pane])["terminal:a"][0]
+        self.assertLessEqual(refresh.display_width(location), 8)
+
 
 class TitleAndPresentationTest(unittest.TestCase):
     @staticmethod
@@ -287,6 +293,22 @@ class WorktreeTest(unittest.TestCase):
         with patch.object(refresh.subprocess, "run", return_value=failed):
             self.assertEqual(refresh.linked_worktree_basenames([pane], {"w1": "fix-api"}), {"terminal:t1": "fix-api"})
 
+    def test_main_checkout_does_not_fall_back_to_workspace_worktree(self):
+        pane = {"terminal_id": "t1", "workspace_id": "w1", "cwd": "/repo"}
+        completed = subprocess.CompletedProcess([], 0, "worktree /repo\n\nworktree /repo.worktrees/fix-api\n", "")
+        with patch.object(refresh.subprocess, "run", return_value=completed):
+            self.assertEqual(refresh.linked_worktree_basenames([pane], {"w1": "fix-api"}), {})
+
+    def test_failed_git_probe_is_cached_for_matching_pane_cwds(self):
+        panes = [
+            {"terminal_id": "t1", "cwd": "/outside"},
+            {"terminal_id": "t2", "cwd": "/outside"},
+        ]
+        failed = subprocess.CompletedProcess([], 1, "", "")
+        with patch.object(refresh.subprocess, "run", return_value=failed) as run:
+            self.assertEqual(refresh.linked_worktree_basenames(panes), {})
+        self.assertEqual(run.call_count, 1)
+
 
 class ActivityStateTest(unittest.TestCase):
     def test_timestamp_changes_only_when_status_changes(self):
@@ -327,6 +349,11 @@ class ReportTest(unittest.TestCase):
             "agent": "claude",
             "agent_status": "working",
         }
+
+    def test_invalid_pane_is_not_counted_as_a_processed_report(self):
+        self.assertIsNone(refresh.report(
+            {"pane_id": "p1"}, {"claude": "Claude"}, None, None, None, None, {}, 1_000
+        ))
 
     def test_reports_native_fields_and_clears_old_tokens(self):
         state = {}
@@ -369,6 +396,48 @@ class ReportTest(unittest.TestCase):
             refresh.report(self.pane, {"claude": "Claude"}, "Claude", "Claude", None, 30, state, 1_000)
             refresh.report(self.pane, {"claude": "Claude"}, "Claude", "Claude", None, 30, state, 61_000)
         self.assertEqual(run.call_count, 2)
+
+
+class RefreshFailureIsolationTest(unittest.TestCase):
+    @staticmethod
+    def pane(number):
+        return {
+            "pane_id": f"p{number}",
+            "terminal_id": f"t{number}",
+            "workspace_id": "w1",
+            "tab_id": "tab1",
+            "agent": "pi",
+            "agent_status": "idle",
+        }
+
+    def refresh_with_reports(self, panes, reports):
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            refresh, "state_dir", return_value=Path(directory)
+        ), patch.object(refresh, "labels_config", return_value={"pi": "Pi"}), patch.object(
+            refresh, "panes", return_value=panes
+        ), patch.object(refresh, "workspace_context", return_value=({}, {})), patch.object(
+            refresh, "tab_context", return_value={}
+        ), patch.object(refresh, "pane_context", return_value=({}, {})), patch.object(
+            refresh, "sidebar_widths", return_value={}
+        ), patch.object(refresh, "agent_locations", return_value={}), patch.object(
+            refresh, "linked_worktree_basenames", return_value={}
+        ), patch.object(refresh, "report", side_effect=reports) as report:
+            result = refresh.refresh(now_ms=1_000)
+        return result, report.call_count
+
+    def test_one_failing_pane_does_not_discard_other_reports(self):
+        panes = [self.pane(1), self.pane(2), self.pane(3)]
+        failure = subprocess.CalledProcessError(1, ["herdr"], stderr="gone")
+        result, calls = self.refresh_with_reports(panes, [True, failure, True])
+        self.assertEqual(result, refresh.REFRESH_PARTIAL)
+        self.assertEqual(calls, 3)
+
+    def test_skipped_pane_does_not_hide_total_report_failure(self):
+        panes = [self.pane(1), self.pane(2), self.pane(3)]
+        failure = subprocess.CalledProcessError(1, ["herdr"], stderr="gone")
+        result, calls = self.refresh_with_reports(panes, [None, failure, failure])
+        self.assertEqual(result, refresh.REFRESH_FAILED)
+        self.assertEqual(calls, 3)
 
 
 class ScopeQueryFailureTest(unittest.TestCase):
@@ -437,11 +506,32 @@ class WatcherAndManifestTest(unittest.TestCase):
     def test_watcher_exits_after_sustained_failures(self):
         sleeps = []
         with tempfile.TemporaryDirectory() as directory, patch.object(refresh, "state_dir", return_value=Path(directory)), patch.object(
-            refresh, "refresh", return_value=1
+            refresh, "refresh", return_value=refresh.REFRESH_FAILED
         ), patch.object(refresh, "script_signature", return_value=(1, 1)):
             result = refresh.watch(sleep=lambda seconds: sleeps.append(seconds))
-        self.assertEqual(result, 1)
+        self.assertEqual(result, refresh.REFRESH_FAILED)
         self.assertEqual(sleeps, [15, 15, 15])
+
+    def test_partial_pane_failures_do_not_stop_watcher(self):
+        sleeps = []
+        results = [
+            refresh.REFRESH_PARTIAL,
+            refresh.REFRESH_PARTIAL,
+            refresh.REFRESH_PARTIAL,
+            refresh.REFRESH_PARTIAL,
+            refresh.REFRESH_FAILED,
+            refresh.REFRESH_FAILED,
+            refresh.REFRESH_FAILED,
+            refresh.REFRESH_FAILED,
+        ]
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            refresh, "state_dir", return_value=Path(directory)
+        ), patch.object(refresh, "refresh", side_effect=results), patch.object(
+            refresh, "script_signature", return_value=(1, 1)
+        ):
+            result = refresh.watch(sleep=lambda seconds: sleeps.append(seconds))
+        self.assertEqual(result, refresh.REFRESH_FAILED)
+        self.assertEqual(len(sleeps), 7)
 
 
 if __name__ == "__main__":

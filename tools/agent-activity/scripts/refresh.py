@@ -22,6 +22,9 @@ REFRESH_SECONDS = 15
 STATE_VERSION = 4
 PRUNE_GRACE_MS = 2 * 60_000
 MAX_CONSECUTIVE_REFRESH_FAILURES = 4
+REFRESH_OK = 0
+REFRESH_FAILED = 1
+REFRESH_PARTIAL = 2
 AGENT_STATES = ("working", "idle", "blocked", "done", "unknown")
 ROW_SEPARATOR = " · "
 CLEAR_TOKENS = (
@@ -411,7 +414,9 @@ def agent_locations(
             continue
         leaf = leaves[key]
         display_leaf = f"{leaf} {ordinals[key]}" if key in ordinals else leaf
-        location = compose_path(parents_by_key.get(key, []), display_leaf, widths.get(workspace_id))
+        width = widths.get(workspace_id)
+        location_width = max(0, width - 2) if width is not None else None
+        location = compose_path(parents_by_key.get(key, []), display_leaf, location_width)
         if location:
             locations[key] = (location, leaf)
     return locations
@@ -440,6 +445,8 @@ def linked_worktree_basenames(
 ) -> dict[str, str]:
     """Resolve Pane cwd first, then fall back to the Workspace's linked worktree."""
     catalogs: list[list[Path]] = []
+    failed_probes: set[Path] = set()
+    main_checkouts: set[str] = set()
     resolved: dict[str, str] = {}
     for pane in current_panes:
         key = pane_key(pane)
@@ -451,27 +458,35 @@ def linked_worktree_basenames(
             cwd = Path(cwd_raw).resolve()
             roots = next((roots for roots in catalogs if root_for_cwd(cwd, roots)), None)
             if roots is None:
-                try:
-                    completed = subprocess.run(
-                        ["git", "-C", str(cwd), "worktree", "list", "--porcelain"],
-                        text=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.DEVNULL,
-                        check=False,
+                if cwd in failed_probes:
+                    roots = []
+                else:
+                    try:
+                        completed = subprocess.run(
+                            ["git", "-C", str(cwd), "worktree", "list", "--porcelain"],
+                            text=True,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
+                    except OSError:
+                        completed = None
+                    roots = (
+                        parse_worktree_roots(completed.stdout)
+                        if completed is not None and completed.returncode == 0
+                        else []
                     )
-                except OSError:
-                    completed = None
-                roots = (
-                    parse_worktree_roots(completed.stdout)
-                    if completed is not None and completed.returncode == 0
-                    else []
-                )
-                if roots:
-                    catalogs.append(roots)
+                    if roots:
+                        catalogs.append(roots)
+                    else:
+                        failed_probes.add(cwd)
             selected = root_for_cwd(cwd, roots)
-            if selected is not None and roots and selected != roots[0] and selected.name:
-                resolved[key] = selected.name
-        if key not in resolved and isinstance(workspace_id, str) and workspace_worktrees:
+            if selected is not None and roots:
+                if selected == roots[0]:
+                    main_checkouts.add(key)
+                elif selected.name:
+                    resolved[key] = selected.name
+        if key not in resolved and key not in main_checkouts and isinstance(workspace_id, str) and workspace_worktrees:
             if fallback := workspace_worktrees.get(workspace_id):
                 resolved[key] = fallback
     return resolved
@@ -652,13 +667,13 @@ def report(
     width: int | None,
     state: dict[str, dict[str, Any]],
     now_ms: int,
-) -> bool:
+) -> bool | None:
     pane_id = pane.get("pane_id")
     status = pane.get("agent_status")
     agent_label = agent_type_label(pane, labels)
     key = pane_key(pane)
     if not isinstance(pane_id, str) or not isinstance(status, str) or agent_label is None or key is None:
-        return False
+        return None
     since_ms = update_activity_state(state, pane, now_ms)
     entry = state[key]
     activity_title = current_activity_title(pane, entry, identity or agent_label)
@@ -722,12 +737,13 @@ def refresh(all_panes: bool = False, *, now_ms: int | None = None) -> int:
             current_time = now_ms if now_ms is not None else time.time_ns() // 1_000_000
             prune_state(state, current_panes, current_time)
             updated = 0
+            processed = 0
             for pane in current_panes:
                 try:
                     key = pane_key(pane)
                     workspace_id = pane.get("workspace_id")
                     location, identity = locations.get(key, (None, None)) if key else (None, None)
-                    updated += int(report(
+                    report_result = report(
                         pane,
                         labels,
                         location,
@@ -736,7 +752,10 @@ def refresh(all_panes: bool = False, *, now_ms: int | None = None) -> int:
                         widths.get(workspace_id) if isinstance(workspace_id, str) else None,
                         state,
                         current_time,
-                    ))
+                    )
+                    if report_result is not None:
+                        updated += int(report_result)
+                        processed += 1
                 except (OSError, subprocess.CalledProcessError) as error:
                     pane_id = pane.get("pane_id", "unknown")
                     detail = error.stderr.strip() if isinstance(error, subprocess.CalledProcessError) and error.stderr else str(error)
@@ -745,12 +764,12 @@ def refresh(all_panes: bool = False, *, now_ms: int | None = None) -> int:
                 save_state(state)
         if failures:
             print("agent activity: " + "; ".join(failures), file=sys.stderr)
-            return 1
+            return REFRESH_PARTIAL if processed else REFRESH_FAILED
         print(f"agent activity refreshed {updated} pane(s)")
-        return 0
+        return REFRESH_OK
     except (OSError, ValueError, RuntimeError) as error:
         print(f"agent activity: {error}", file=sys.stderr)
-        return 1
+        return REFRESH_FAILED
 
 
 def append_watch_error(message: str) -> None:
@@ -800,9 +819,9 @@ def watch(*, sleep: Callable[[float], None] = time.sleep) -> int:
                     append_watch_error(f"unexpected refresh failure: {error}")
                 except OSError:
                     pass
-            consecutive_failures = 0 if result == 0 else consecutive_failures + 1
+            consecutive_failures = consecutive_failures + 1 if result == REFRESH_FAILED else 0
             if consecutive_failures >= MAX_CONSECUTIVE_REFRESH_FAILURES:
-                return 1
+                return REFRESH_FAILED
             sleep(REFRESH_SECONDS)
             try:
                 current = script_signature(script)

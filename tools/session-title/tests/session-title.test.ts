@@ -42,7 +42,7 @@ function harness(classify: TitleClassifier, entries: unknown[] = []) {
     titles,
     appended,
     getSessionName: () => sessionName,
-    setSessionName: (value: string) => { sessionName = value; },
+    setSessionName: (value: string | undefined) => { sessionName = value; },
     ctx,
   };
 }
@@ -220,6 +220,44 @@ test("a result from a shut down session cannot overwrite the next session", asyn
   resolveDecision?.({ action: "update", title: "Stale title" });
   await flush();
   assert.deepEqual(h.titles, []);
+  assert.deepEqual(h.appended, []);
+});
+
+test("session info events without a name preserve the effective title", async () => {
+  let currentTitle: string | undefined;
+  const classify: TitleClassifier = async (_input, current) => {
+    currentTitle = current;
+    return { action: "keep" };
+  };
+  const h = harness(classify);
+  h.handlers.get("session_start")?.({}, h.ctx);
+  h.setSessionName("Existing title");
+  h.handlers.get("session_info_changed")?.({ name: "Existing title" }, h.ctx);
+  h.handlers.get("session_info_changed")?.({}, h.ctx);
+  h.handlers.get("input")?.({ text: "New work", source: "interactive" }, h.ctx);
+  await flush();
+
+  assert.equal(currentTitle, "Existing title");
+  assert.deepEqual(h.titles, ["Existing title"]);
+});
+
+test("clearing the session name invalidates an in-flight AI decision", async () => {
+  let resolveDecision: ((value: { action: "update"; title: string }) => void) | undefined;
+  const classify: TitleClassifier = () => new Promise((resolve) => { resolveDecision = resolve; });
+  const h = harness(classify);
+  h.handlers.get("session_start")?.({}, h.ctx);
+  h.setSessionName("Existing title");
+  h.handlers.get("session_info_changed")?.({ name: "Existing title" }, h.ctx);
+  h.handlers.get("input")?.({ text: "Old work", source: "interactive" }, h.ctx);
+  await flush();
+
+  h.setSessionName(undefined);
+  h.handlers.get("session_info_changed")?.({ name: undefined }, h.ctx);
+  resolveDecision?.({ action: "update", title: "AI Title" });
+  await flush();
+
+  assert.equal(h.getSessionName(), undefined);
+  assert.deepEqual(h.titles, ["Existing title"]);
   assert.deepEqual(h.appended, []);
 });
 

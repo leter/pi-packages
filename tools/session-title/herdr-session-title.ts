@@ -219,6 +219,12 @@ export function createSessionTitleExtension(classify: TitleClassifier = classify
     });
 
     pi.on("session_info_changed", (event, ctx) => {
+      if (typeof event.name !== "string" || !event.name) {
+        generation += 1;
+        activeController?.abort();
+        activeController = undefined;
+        return;
+      }
       if (event.name !== activityTitle) {
         generation += 1;
         activeController?.abort();
