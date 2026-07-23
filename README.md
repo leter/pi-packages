@@ -4,7 +4,21 @@ A public monorepo for Pi extensions, skills, prompts, and themes maintained by [
 
 ## Packages
 
-No Pi packages are currently maintained in this repository.
+No Pi packages are currently maintained under `packages/`.
+
+## Plugins
+
+| Directory | What it is |
+| --- | --- |
+| `agent-activity/` | Herdr sidebar plugin for Agent identity, scope, and status |
+| `session-title/` | Pi extension that keeps the terminal title aligned with the latest instruction |
+
+Install from the repository root:
+
+```bash
+bash agent-activity/scripts/install-local.sh
+bash session-title/scripts/install-local.sh
+```
 
 ## Development
 

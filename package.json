@@ -10,8 +10,8 @@
   "scripts": {
     "check": "npm run check --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "check:tools": "tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck tools/session-title/herdr-session-title.ts tools/session-title/tests/session-title.test.ts",
-    "test:tools": "PYTHONDONTWRITEBYTECODE=1 python3 tools/agent-activity/tests/test_refresh.py && node --import tsx --test tools/session-title/tests/session-title.test.ts",
+    "check:tools": "tsc --noEmit --strict --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck session-title/herdr-session-title.ts session-title/tests/session-title.test.ts",
+    "test:tools": "PYTHONDONTWRITEBYTECODE=1 python3 agent-activity/tests/test_refresh.py && node --import tsx --test session-title/tests/session-title.test.ts",
     "verify": "bash scripts/verify.sh",
     "doctor": "bash scripts/doctor.sh"
   },

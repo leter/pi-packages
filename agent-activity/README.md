@@ -62,7 +62,7 @@ The plugin uses Herdr's current layout snapshot to derive a conservative sidebar
 ## Install or update
 
 ```bash
-bash tools/agent-activity/scripts/install-local.sh
+bash agent-activity/scripts/install-local.sh
 ```
 
 The installed plugin ID remains `local.agent-icons` for compatibility. Existing label overrides in `~/.config/herdr/plugins/config/local.agent-icons/icons.json` are preserved.
@@ -89,5 +89,5 @@ herdr server reload-config
 Then run the `local.agent-icons.setup` action once or execute:
 
 ```bash
-python3 tools/agent-activity/scripts/refresh.py
+python3 agent-activity/scripts/refresh.py
 ```

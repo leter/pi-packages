@@ -17,7 +17,7 @@ Chinese titles target 8–14 characters. Every title has a hard limit of 28 term
 From the repository root:
 
 ```bash
-bash tools/session-title/scripts/install-local.sh
+bash session-title/scripts/install-local.sh
 ```
 
 The installer copies the tracked source to `~/.pi/agent/extensions/herdr-session-title.ts`. Run `/reload` in Pi afterward.
@@ -27,5 +27,5 @@ The repository file is authoritative. Do not edit the installed copy directly.
 ## Test
 
 ```bash
-node --import tsx --test tools/session-title/tests/session-title.test.ts
+node --import tsx --test session-title/tests/session-title.test.ts
 ```
